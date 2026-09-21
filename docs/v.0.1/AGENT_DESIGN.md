@@ -79,6 +79,7 @@
   "success": true,
   "data": {
     "id": null,
+    "expected_updated_at": null,
     "title": "経験者Webエンジニア採用",
     "target_profile": "20代後半のWebエンジニア",
     "background": "経験者採用の応募数が減少している",
@@ -122,7 +123,7 @@ flowchart TD
     VALIDATE -- いいえ --> END_INVALID([INVALID_ARGUMENT])
     VALIDATE -- はい --> LOAD[Itemと所属Turnを取得]
     LOAD --> AUTHORIZE{現在の親Sessionかつ完了Turnか}
-    AUTHORIZE -- いいえ --> END_FORBIDDEN([ITEM_ACCESS_DENIED])
+    AUTHORIZE -- いいえ --> END_NOT_FOUND([ITEM_NOT_FOUND])
     AUTHORIZE -- はい --> STATUS{context_status}
     STATUS -- active --> CONTENT[contentを採用]
     STATUS -- quarantined --> OVERRIDE[context_overrideを採用]
@@ -131,7 +132,7 @@ flowchart TD
     ORDER --> END_OK([元Itemを返す])
 ```
 
-出力には`item_id`、`turn_id`、`item_type`、`content_source`、安全な内容を含める。子SessionのItem、生の隔離内容、存在しないItemは返さない。主な失敗は`INVALID_ARGUMENT`、`ITEM_NOT_FOUND`、`ITEM_ACCESS_DENIED`。
+出力には`item_id`、`turn_id`、`item_type`、`content_source`、安全な内容を含める。子SessionのItem、生の隔離内容、存在しないItemは返さない。別のSessionのItem、未完了TurnのItem、存在しないItemは存在確認による情報漏えいを防ぐため区別せず`ITEM_NOT_FOUND`として扱う。主な失敗は`INVALID_ARGUMENT`、`ITEM_NOT_FOUND`。
 
 ### `search_long_term_memory`
 **利用Agent:** 親エージェント、施策立案エージェント、コンテンツ制作エージェント
@@ -343,6 +344,7 @@ flowchart TD
 ```json
 {
   "id": null,
+  "expected_updated_at": null,
   "title": "経験者Webエンジニア採用",
   "target_profile": "20代後半のWebエンジニア",
   "background": "経験者採用の応募数が減少している",
@@ -355,15 +357,19 @@ flowchart TD
 flowchart TD
     START([propose_campaign開始]) --> SOURCE{現在のTurnに施策立案結果があるか}
     SOURCE -- いいえ --> END_SOURCE([INVALID_PROPOSAL_SOURCE])
-    SOURCE -- はい --> AUTHORIZE{既存Campaignの会社所有権は正常か}
-    AUTHORIZE -- いいえ --> END_FORBIDDEN([PROPOSAL_ACCESS_DENIED])
+    SOURCE -- はい --> AUTHORIZE{既存Campaignは現在の会社に属するか}
+    AUTHORIZE -- いいえ --> END_NOT_FOUND([CAMPAIGN_NOT_FOUND])
     AUTHORIZE -- はい --> VALIDATE{施策案Schemaは正常か}
     VALIDATE -- いいえ --> END_INVALID([INVALID_CAMPAIGN_PROPOSAL])
     VALIDATE -- はい --> RESULT[実際の施策内容をTool Resultへ保存]
     RESULT --> COMPLETE([親Turnを完了])
 ```
 
-新規案では`id = null`、既存施策の変更案では会社所有権を検証済みのCampaign IDを`id`へ指定する。成功時は入力した施策内容を正規化してTool Resultへ返し、UIが編集可能なフォームとして表示して親Turnを完了する。主な失敗は`INVALID_PROPOSAL_SOURCE`、`PROPOSAL_ACCESS_DENIED`、`INVALID_CAMPAIGN_PROPOSAL`、`CAMPAIGN_NOT_FOUND`。
+新規案では`id = null`、既存施策の変更案では会社所有権を検証済みのCampaign IDを`id`へ指定する。別会社のCampaignは存在しないCampaignと区別せず`CAMPAIGN_NOT_FOUND`として扱う。
+
+既存施策の変更案では、所有権の検証で取得したCampaignの`updated_at`を、アプリケーションが`expected_updated_at`へ設定する。値はLLMに生成させず、新規案では`null`とする。UIはこの値をフォームに保持し、最終承認時に施策upsert APIのRequest Bodyへそのまま設定する。承認までの間に別のSessionまたは別のマーケターが施策を更新した場合、APIが`409 CAMPAIGN_CONFLICT`を返す。
+
+成功時は入力した施策内容を正規化してTool Resultへ返し、UIが編集可能なフォームとして表示して親Turnを完了する。主な失敗は`INVALID_PROPOSAL_SOURCE`、`INVALID_CAMPAIGN_PROPOSAL`、`CAMPAIGN_NOT_FOUND`。
 
 ### `get_post`
 **利用Agent:** 親エージェント、施策立案エージェント、コンテンツ制作エージェント
@@ -436,7 +442,7 @@ flowchart TD
     START([get_marketing_metrics開始]) --> VALIDATE{検索Scopeが一つだけか}
     VALIDATE -- いいえ --> END_INVALID([INVALID_ARGUMENT])
     VALIDATE -- はい --> AUTHORIZE{対象が現在の会社に属するか}
-    AUTHORIZE -- いいえ --> END_FORBIDDEN([METRICS_ACCESS_DENIED])
+    AUTHORIZE -- いいえ --> END_NOT_FOUND([METRICS_NOT_FOUND])
     AUTHORIZE -- はい --> LOAD[post_metricsを取得]
     LOAD --> SCOPE{Campaign集計か}
     SCOPE -- はい --> AGGREGATE[投稿単位の値を集計]
@@ -445,7 +451,7 @@ flowchart TD
     SINGLE --> END_OK
 ```
 
-未計測の場合は失敗ではなく`status: pending`を返す。主な失敗は`INVALID_ARGUMENT`、`METRICS_ACCESS_DENIED`、`METRICS_NOT_FOUND`、`METRICS_QUERY_FAILED`。
+未計測の場合は失敗ではなく`status: pending`を返す。別会社の対象は存在しない対象と区別せず`METRICS_NOT_FOUND`として扱う。主な失敗は`INVALID_ARGUMENT`、`METRICS_NOT_FOUND`、`METRICS_QUERY_FAILED`。
 
 ### `propose_x_post`
 **利用Agent:** 親エージェント
@@ -464,15 +470,15 @@ flowchart TD
 flowchart TD
     START([propose_x_post開始]) --> SOURCE{現在のTurnにコンテンツ制作結果があるか}
     SOURCE -- いいえ --> END_SOURCE([INVALID_PROPOSAL_SOURCE])
-    SOURCE -- はい --> AUTHORIZE{Campaignの会社所有権は正常か}
-    AUTHORIZE -- いいえ --> END_FORBIDDEN([PROPOSAL_ACCESS_DENIED])
+    SOURCE -- はい --> AUTHORIZE{Campaignは現在の会社に属するか}
+    AUTHORIZE -- いいえ --> END_NOT_FOUND([CAMPAIGN_NOT_FOUND])
     AUTHORIZE -- はい --> VALIDATE{本文と遷移先URLは正常か}
     VALIDATE -- いいえ --> END_INVALID([INVALID_POST_PROPOSAL])
     VALIDATE -- はい --> RESULT[実際の投稿内容をTool Resultへ保存]
     RESULT --> COMPLETE([親Turnを完了])
 ```
 
-成功時は入力した投稿内容を正規化してTool Resultへ返し、UIが編集可能なフォームとして表示して親Turnを完了する。X向け文字数の最終検証はUTM付きURL結合後に投稿APIでも実施する。主な失敗は`INVALID_PROPOSAL_SOURCE`、`PROPOSAL_ACCESS_DENIED`、`CAMPAIGN_NOT_FOUND`、`INVALID_POST_PROPOSAL`。
+成功時は入力した投稿内容を正規化してTool Resultへ返し、UIが編集可能なフォームとして表示して親Turnを完了する。X向け文字数の最終検証はUTM付きURL結合後に投稿APIでも実施する。別会社のCampaignは存在しないCampaignと区別せず`CAMPAIGN_NOT_FOUND`として扱う。主な失敗は`INVALID_PROPOSAL_SOURCE`、`CAMPAIGN_NOT_FOUND`、`INVALID_POST_PROPOSAL`。
 
 ### `run_campaign_planner`
 **利用Agent:** 親エージェント
@@ -616,9 +622,12 @@ flowchart TD
 - 親Agentがエラーを観測しても、施策保存やX投稿を自動再実行しない
 - 施策upsert APIとX投稿APIは永続的な冪等性レコードで保護し、同じ`Idempotency-Key`の完了済みRequestには保存済みResponseを返す。`outcome_unknown`の手動照合後は解決後の確定Responseを返す
 - 冪等Responseの再返却では新しいAPI実行Turn、`user_message`、API Resultを作成せず、Responseには最初の`agent_turn_id`を含める
-- `X_POST_OUTCOME_UNKNOWN`と`X_POST_SAVE_FAILED`は、外部投稿の状態確認なしに再投稿しない
+- `X_POST_OUTCOME_UNKNOWN`は、外部投稿の状態確認なしに再投稿しない
+- `X_POST_SAVE_FAILED`は、Xへ投稿済みでDB保存だけが失敗した状態を示す。X投稿結果を`external_result`へ保持しており、UIが同じ`Idempotency-Key`で再送するとDB保存だけを再実行する。Xへは再投稿しない
+- `X_POST_SAVE_FAILED`のResponseは確定Responseではなく、API実行Turnは再送で完了するまで終端にならない。`api_result`は再送で確定した時点で保存するため、親Agentが観測するのは確定後の結果である
+- `CAMPAIGN_CONFLICT`を観測した親Agentは、`get_campaign`で最新の施策を取得し、その内容を踏まえて新しい提案を作成する。上書きを自動再実行しない
 - `outcome_unknown`の間は対応する内容を`get_post`と`search_posts`へ公開せず、手動照合後は元Itemを変更せず新しい監査Turnの確定結果をContextへ含める
-- 認証または親Session所有権を検証できない場合は安全な保存先がないため、そのRequestのAPI ResultをAgent履歴へ保存しない
+- 認証、CSRF検証、または親Session所有権を検証できない場合は安全な保存先がないため、そのRequestのAPI ResultをAgent履歴へ保存しない
 - `AGENT_SESSION_NOT_FOUND`では、UIが利用可能な親Sessionを選択または作成し、マスク済みエラーを新しい`user_message`として送信した後に親Agentワークフローを開始する
 
 ```mermaid
@@ -658,7 +667,7 @@ flowchart TD
     LOAD_HISTORY --> ESTIMATE_CONTEXT
 
     ESTIMATE_CONTEXT -- いいえ --> NEED_MEMORY{長期記憶の想起が必要か}
-    ESTIMATE_CONTEXT -- はい --> COMPACTION_LIMIT{ステップ・コスト上限内か}
+    ESTIMATE_CONTEXT -- はい --> COMPACTION_LIMIT{ステップ・コスト・経過時間の上限内か}
     COMPACTION_LIMIT -- いいえ --> SAVE_LIMIT_ERROR
     COMPACTION_LIMIT -- はい --> COMPACT_CONTEXT[[古い完了Turnを要約]]
     COMPACT_CONTEXT --> COMPACTION_RESULT{要約に成功したか}
@@ -676,7 +685,7 @@ flowchart TD
     NEED_MEMORY -- はい --> SEARCH_MEMORY[会社単位でベクトル検索]
     SEARCH_MEMORY --> MEMORY[(Long-term Memory)]
     MEMORY --> ADD_MEMORY[関連する記憶をContextへ追加]
-    ADD_MEMORY --> LIMIT{ステップ・コスト上限内か}
+    ADD_MEMORY --> LIMIT{ステップ・コスト・経過時間の上限内か}
     NEED_MEMORY -- いいえ --> LIMIT
 
     LIMIT -- いいえ --> SAVE_LIMIT_ERROR[上限到達エラーを保存]
@@ -737,6 +746,51 @@ flowchart TD
     SAVE_TOOL_ERROR --> UPDATE_CONTEXT
 
 ```
+
+### Turnの上限
+- Turnには、ステップ数、コスト、経過時間の3つの上限を設ける。いずれもアプリケーション設定とし、コードへ直書きしない
+- 経過時間の上限は、関数の最大実行時間（300秒。`CODING_STANDARDS.md`の17.1）より短い値とする。既定は200秒とする。Turnの終了保存、Response返却、Leaseの余裕を残すためである
+- 経過時間はTurnの`started_at`から計測する
+- 上限の確認は、LLM呼び出し、Tool実行、Context圧縮の前に行う（上記のフローの「上限内か」）
+- LLM呼び出し、Tool実行、外部API呼び出しのタイムアウトは、残り時間を超えない値にする。設定値が残り時間より長い場合は、残り時間に切り詰める
+- サブエージェントの内部ループは、親Turnの経過時間の上限を共有する。子だけが別の時間枠を持たない
+- 上限に達した場合は、エラーコードを保存してTurnを`failed`で終了する。経過時間は`TURN_TIME_LIMIT_EXCEEDED`、ステップ数は`TURN_STEP_LIMIT_EXCEEDED`、コストは`TURN_COST_LIMIT_EXCEEDED`とする。3つとも同じ経路で終了する
+- 復旧できないInput Guardrailの検出でTurnを`blocked`で終了する場合は`TURN_BLOCKED`、Context圧縮に失敗して未圧縮でも上限を超える場合は`CONTEXT_COMPACTION_FAILED`、LLM呼び出しの失敗などで継続できない場合は`AGENT_EXECUTION_FAILED`を保存する。エラーコードと、メッセージ送信APIのHTTP Statusの対応は`API_DESIGN.md`の5.3に従う
+- UIは、時間内に完了できなかったことをユーザーへ表示する。Agentは自動で再実行しない
+
+### 中断されたTurnの復旧
+関数が最大実行時間（300秒）で強制終了されると、Turnは`pending`または`running`のまま残る。次の手順で、中断されたTurnを`failed`へ確定する。
+
+```mermaid
+flowchart TD
+    TRIGGER([次のTurn開始・Turn状態の取得・定期処理]) --> FIND[pendingまたはrunningのTurnを取得]
+    FIND --> API_TURN{api_idempotency_requestsから参照されるか}
+    API_TURN -- はい --> SKIP([対象外: 冪等性のLeaseと復旧に従う])
+    API_TURN -- いいえ --> STALE{開始から復旧判定時間を超えたか}
+    STALE -- いいえ --> KEEP([実行中として扱う])
+    STALE -- はい --> UPDATE[statusを条件に同一Transactionで更新]
+    UPDATE --> UPDATED{更新できたか}
+    UPDATED -- いいえ --> DONE([他の処理が更新済み])
+    UPDATED -- はい --> RESULT[Turnをfailedへ・実行中のtool_executionをcancelledへ]
+    RESULT --> LOG[WARNINGログを記録]
+    LOG --> END([UIへ中断エラーを返す])
+```
+
+- 対象は、`status`が`pending`または`running`で、`api_idempotency_requests.agent_turn_id`から参照されない（API実行Turnではない）Turnとする。子Sessionのターンも同じ規則で個別に対象とする
+- 判定は、`started_at`（未開始なら`created_at`）から復旧判定時間が経過したかで行う。復旧判定時間は、関数の最大実行時間（300秒）に余裕を加えた値とし、既定は330秒とする。Turnの経過時間の上限（200秒）より長くし、実行中のTurnを誤って中断させない
+- 更新は、`WHERE id = :id AND status IN ('pending', 'running')`の条件付きUPDATEで行う。更新できなかった場合は、他の処理が更新済みなので何もしない
+- 更新内容は、`status = failed`、`error_code = TURN_INTERRUPTED`、マスク済みの`error_message`、`completed_at`とする。同じTransactionで、`pending`または`running`の`tool_executions`を`cancelled`へ更新する
+- 終端状態になったTurnには、Item、Tool実行、LLM呼び出しを追加しない。中断されたTurnの処理が遅れて書き込もうとしても、書き込みは`status = running`を条件とするため失敗する
+- `failed`のTurnは、次のContextへ含めない。ユーザーの入力も含まれないため、UIは中断エラーを表示し、ユーザーが同じ依頼を再送する。Agentは自動で再実行しない
+- `TURN_INTERRUPTED`は再試行可能（`retryable = true`）とする。ただし、再試行は新しいTurnとして実行する
+- 実行する契機は、次の3つとする。いずれも同じ処理を呼ぶ
+  - 同じSessionの新しいTurnを開始するとき（Session行をロックしてTurn番号を採番する前に、同じSessionの中断Turnを復旧する）
+  - Turnの状態を返す処理（`API_DESIGN.md`のTurn取得API 5.4とSession履歴取得API 5.6）
+  - Vercel Cronによる定期処理（1日1回）。前の2つで拾えなかったTurnの回収用とする。Hobbyプランのcronは1日1回までで実行時刻にも幅があるため、ユーザーが待つ場面の復旧には使わない
+- 復旧処理は冪等とし、同じTurnを何度確認しても結果が変わらない
+- 中断時に完了していなかったLLM呼び出しは、`llm_calls`へ記録されない場合がある。OrcaRouter側の利用量との差になり得る（既知の制約）
+- API実行Turnは対象外である。施策のupsertは同じキーの再送で、X投稿は`external_result`の有無に従って、API設計書の冪等性の仕組みで復旧する
+- 同じSessionで前のTurnが実行中（`pending`または`running`で、復旧判定時間の前）のときに、新しいAgent Turnを開始する要求は、`409 TURN_IN_PROGRESS`で拒否する。判定は、Session行をロックした同じTransaction内で、中断Turnの復旧の後に行い、実行中のTurnがなければ新しいTurnを作成する。API実行Turnは実行中のTurnとして数えない
 
 ### Context Checkpoint
 - Context Checkpointは、長くなった親セッションの古い会話履歴を要約し、LLMへ送るContext量を抑えるために使用する
