@@ -1,0 +1,10 @@
+.git
+.github
+.env
+**/.env
+**/.next
+**/__pycache__
+**/.pytest_cache
+**/node_modules
+**/*.pyc
+dbml-error.log
