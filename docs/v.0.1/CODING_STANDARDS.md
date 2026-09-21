@@ -48,6 +48,10 @@
 | 型チェック | `pyright`（`strict` モードを推奨） |
 | テスト | `pytest` + `pytest-asyncio` + `pytest-cov` |
 | 設定の置き場所 | `pyproject.toml` に集約する |
+| 実行環境 | Vercel Functions（Python）。Next.js と同じ Vercel プロジェクトで公開する（17 章） |
+| DB | Neon（PostgreSQL + pgvector）（17.2） |
+| ベクトル型 | `pgvector-python`（SQLAlchemy の `Vector` 型） |
+| Agent SDK | OpenAI Agents SDK。LLM と Embedding は OrcaRouter 経由で呼ぶ（17.3） |
 | pre-commit | 導入する（ruff、型チェックの軽量版、秘密情報の検知） |
 
 - 必須: Linter、フォーマッタ、型チェック、テストは CI で実行し、失敗したら merge しない。
@@ -72,6 +76,7 @@
 
 - 必須: 日時は `_at`（例: `created_at`）、ID は `_id`（例: `company_id`）で終える。
 - 必須: 単位を持つ値は名前に単位を含める（例: `response_time_ms`）。
+- 例外: テストの関数名は、日本語を含む固定の形式に従う（14 章）。
 - 必須: 略語は一般的なもの（`id`、`url`、`utm`）に限る。独自略語を作らない。
 - 推奨: 用語は `DATABASE.dbml` と設計書の語彙に合わせる（Campaign、Post、Turn、Item など）。同じ概念に別名を付けない。
 
@@ -233,29 +238,48 @@ class AppError(Exception):
 
 ## 11. 非同期・並行処理
 
-- 必須: **非同期（`async def`）で統一する。** 同期関数との混在は、下記の例外を除き禁止する。
+- 必須: **非同期で統一しない。** 非同期処理が必要な API（I/O の待ち時間が発生する処理。DB、外部API、LLM の呼び出しなど）だけを非同期（`async def`）にする。I/O を伴わない純粋な処理（入力の検証・正規化、計算、UTM の組み立て、ドメインのロジックなど）は、同期関数（`def`）で書く。
+- 必須: 同期と非同期は、次の基準で使い分ける。
+
+| 処理 | 書き方 |
+| --- | --- |
+| DB アクセス、外部API（X、LLM、Embedding）の呼び出し、それらを呼ぶエンドポイント・サービス | 非同期（`async def`） |
+| 検証、変換、計算、文字列の組み立て、ドメインのルールなど、I/O を伴わない処理 | 同期（`def`） |
+| 重い CPU 処理（パスワードのハッシュ化など） | 同期関数（`def`）として書き、非同期の中から呼ぶときは `asyncio.to_thread` を使う |
+
+- 必須: 呼び出しの向きを守る。
+  - 非同期関数から、同期の純粋関数を呼んでよい。
+  - 同期関数から、非同期関数を呼ばない（`asyncio.run` や `asyncio.get_event_loop` で無理に呼ばない）。非同期の処理が必要になったら、呼び出し側ごと非同期にする。
+  - 同期関数の中では、ブロッキングする I/O（同期のHTTP、DB アクセス、`time.sleep`）を行わない。同期関数は「純粋な処理」に限る。
 - 必須: 使う部品は次のとおり。
 
 | 用途 | 使うもの |
 | --- | --- |
-| Web | FastAPI（`async def` のルーター） |
+| Web | FastAPI。非同期処理が必要なルーターは `async def`、不要なルーターは `def` |
 | DB | SQLAlchemy 2.0 の非同期API（`AsyncEngine`、`AsyncSession`）+ psycopg（v3）の非同期接続 |
 | 外部API | `httpx.AsyncClient` |
-| テスト | `pytest-asyncio`（14 章） |
+| テスト | 非同期のコードは `pytest-asyncio`、同期のコードは通常の `pytest`（14 章） |
 
+- 必須: **非同期を使う場合は、5 分（300 秒）のタイムアウトを設ける。** 理由は、Vercel Functions の Hobby プランでは 1 回の実行が最大 300 秒（`maxDuration`）で打ち切られ、こちらの応答を返せないためである（17.1）。
+  - 非同期の処理全体を `asyncio.timeout` で囲み、上限は 300 秒とする。値は定数（例: `ASYNC_TIMEOUT_SECONDS = 300`）として 1 か所に定義する。
+  - 300 秒は関数の最大実行時間と同じ値なので、この上限は最後の防波堤とする。個々の外部呼び出しにはこれより短いタイムアウトを付け（下記）、Agent の Turn には経過時間の上限（既定 200 秒）を設ける。
+  - タイムアウトしたときは、処理を中断してエラー（`API_DESIGN.md` のエラーコード）を返し、再実行しても結果が変わらない状態にしておく（冪等）。
+  - プランを変更して `maxDuration` を変える場合は、この値も見直す。
 - 必須: 非同期関数の中でブロッキング処理（同期のHTTP、同期のDBドライバ、`time.sleep`、重いCPU処理）を呼ばない。やむを得ない場合は `asyncio.to_thread` で別スレッドへ逃がし、理由をコメントに書く。
 - 必須: SQLAlchemy の遅延読み込み（lazy load）に頼らない。関連の取得は `selectinload` などで明示し、モデルの関連は `lazy="raise"` を既定にする。`AsyncSession` は `expire_on_commit=False` で作成する。
-- 必須: 外部呼び出しには、タイムアウトを付ける（`httpx` のタイムアウト、または `asyncio.timeout`）。
+- 必須: 外部呼び出しには、個別のタイムアウトを付ける（`httpx` のタイムアウト、または `asyncio.timeout`）。上記の 300 秒より短くし、Turn の残り時間を超えない値にする（`AGENT_DESIGN.md` の「Turnの上限」）。
 - 必須: `asyncio.create_task` で起動したタスクは、参照を保持し、例外を回収する（結果を待たずに放置しない）。
 - 必須: 同時実行で整合性が問題になる処理は、DBの制約またはロック（`SELECT ... FOR UPDATE`、一意制約）で守る。プロセス内のロックだけに頼らない（サーバーが複数になると効かない）。
 - 必須: バックグラウンド処理・定期処理は、同じ入力で複数回実行しても結果が変わらない（冪等な）作りにする。
+- 必須: Response を返した後の処理に頼らない。必要な処理は Response を返す前に完了させる（17.1）。
 - 推奨: 複数の独立した外部呼び出しは、`asyncio.TaskGroup` で並行実行する。ただし、同一の `AsyncSession` を複数のタスクで共有しない。
 
 ---
 
 ## 12. DB
 
-- ORM は SQLAlchemy 2.0、ドライバは psycopg（v3）とし、非同期API（`AsyncSession`）で使う（11 章）。PostgreSQL の拡張 `vector`（pgvector）を使う。
+- ORM は SQLAlchemy 2.0、ドライバは psycopg（v3）とする。DB アクセスは I/O を伴うため、非同期API（`AsyncSession`）で使う（11 章）。PostgreSQL の拡張 `vector`（pgvector）を使う。
+- 本番のDBは Neon とする。接続方式と使えない機能は 17.2 に従う。ベクトル列は `pgvector-python` の `Vector(1536)` で定義する。
 - 必須: テーブル・カラム・制約は `DATABASE.dbml` を正とする。モデルの定義を変える場合は、先に DBML を更新する。
 - 必須: SQL は必ずパラメータ化する。文字列連結で SQL を組み立てない。
 - 必須: **会社単位の分離。** 業務データを取得・更新するクエリは、会社の条件（`company_id`、または会社を継承する親）を必ず含める。会社の条件がないクエリは、レビューで指摘する。
@@ -279,6 +303,7 @@ class AppError(Exception):
 - 必須: 本番へ適用する前に、空のDBと、本番相当のデータのDBの両方で適用を確認する。
 - 必須: 破壊的な変更（列の削除、型の変更、NOT NULL の追加）は、段階的に行う（追加 → 移行 → 切り替え → 削除）。
 - 推奨: 巻き戻し（downgrade）を書く。書けない変更は、その旨をマイグレーションに明記する。
+- 必須: マイグレーションは Neon の **直接接続**（プールを経由しない接続）で適用する（17.2）。最初のマイグレーションで `CREATE EXTENSION IF NOT EXISTS vector` を実行する。
 - 適用は **手動** で行う。デプロイ時に自動適用しない。適用の手順と担当は、運用手順書に別途まとめる。
 - 埋め込みモデルは OrcaRouter 経由の `openai/text-embedding-3-small`（1536 次元）とする。
   - `DATABASE.dbml` の `vector` 列は `vector(1536)` にし、HNSW 索引（コサイン距離、`vector_cosine_ops`）をマイグレーションで追加する。DBML の変更とマイグレーションは同じ PR に含める。
@@ -289,10 +314,18 @@ class AppError(Exception):
 
 ## 14. テスト
 
-- テストフレームワークは `pytest` とし、非同期テストは `pytest-asyncio` で実行する。`pyproject.toml` で `asyncio_mode = "auto"` を指定する。
+- テストフレームワークは `pytest` とし、非同期のコードのテストは `pytest-asyncio` で実行する。同期の純粋関数のテストは、通常の `def` のテストとして書く。`pyproject.toml` で `asyncio_mode = "auto"` を指定する。
 - 必須: API のテストは `httpx.AsyncClient`（`ASGITransport`）でアプリを直接呼ぶ。カバレッジの計測は `pytest-cov` を使う。
 - 必須: 新しい機能とバグ修正には、テストを付ける。バグ修正は、まず再現するテストを書く。
-- 必須: テストの名前は、対象・条件・期待が分かる形にする（例: `test_publish_post_returns_error_when_x_api_times_out`）。
+- 必須: **テストのメソッド名（関数名）は `test_<テスト観点>_<変数とテスト仕様>` の形に固定する。**
+  - `<テスト観点>`: 何を確かめるテストかを、具体的な日本語で書く（例: `投稿の公開エラー処理`、`会社間の分離`）。この部分に `_` は使わず、日本語を続けて書く。
+  - `<変数とテスト仕様>`: 条件になる変数（コード上の名前をそのまま `snake_case` で書く）と、期待する結果（テスト仕様）を書く。変数の値や状態と、期待する結果の両方が分かるようにする。
+  - 例:
+    - `test_投稿の公開エラー処理_x_apiがタイムアウトのときX_POST_UNRESOLVEDを返す`
+    - `test_会社間の分離_company_idが他社のcampaign_idなら404を返す`
+    - `test_UTMの組み立て_utm_contentが空のときパラメータを付けない`
+  - 「動作する」「正常」のような曖昧な語だけの名前にしない。名前だけで、何が失敗したのか分かるようにする。
+  - Python は日本語の識別子を使えるので、名前を日本語のまま書く。1 行は 100 文字以内に収める（全角文字は 2 文字分で数えられる）。`ruff` で非 ASCII の名前や関数名の大文字小文字を検査するルール（`N802`、`PLC2401`）を有効にしている場合は、テストのファイルを対象から外す。
 - 必須: テストは、準備（Arrange）・実行（Act）・検証（Assert）の順に書く。1 つのテストで検証する内容は 1 つにする。
 - 必須: テストは互いに独立させ、実行順に依存させない。
 - 必須: **外部APIを実際に呼ばない。** X、GA4、OrcaRouter、Embedding は、フェイクまたはモックへ差し替える。LLMの応答も固定のフェイクを使う。
@@ -349,7 +382,9 @@ class AppError(Exception):
 
 ### 16.2 プルリクエスト
 
-- 推奨: 1 つの PR は、レビュー可能な大きさ（目安: 変更 400 行以内）にする。
+- 必須: **PR のファイルサイズ（変更行数・変更ファイル数）の制限は設けない。** 大きさを理由に、開発の途中で PR を分けない。
+- 必須: **完結した開発単位で PR を作成する。** 1 つの PR は、1 つの目的（機能、修正、設計変更など）を達成し、単独でレビューと merge ができる単位にする。マイグレーションと DBML、実装と対応する設計書・テストなど、一緒に変更しないと不整合になるものは、同じ PR に含める。
+- 必須: 複数の目的を 1 つの PR に混ぜない。目的が複数ある場合は、目的ごとに PR を分ける。未完成の状態で merge しない（分割は「完結した単位」で行う）。
 - 必須: PR の説明に、変更の目的、変更内容、テスト方法を書く。設計書に影響する場合は、対応する設計書の変更を同じ PR に含める。
 - 必須: CI（Linter、型チェック、テスト）が成功してから、レビューを依頼する。
 - 承認は 1 人以上とする。
@@ -366,6 +401,43 @@ class AppError(Exception):
 
 ---
 
+## 17. 実行環境（Vercel Functions・Neon・OpenAI Agents SDK）
+
+### 17.1 Vercel Functions
+
+- 必須: `/api/v1/*` は、Next.js と同じ Vercel プロジェクトで、同一オリジンとして公開する（書き換え規則で FastAPI へ振り分ける）。別ドメインに分けない。Cookie（`SameSite=Lax`）と Origin 検証（7 章）が前提とする構成である。
+- 必須: Origin の許可リストは、環境ごとのオリジンを環境変数から設定する。プレビュー環境は URL がデプロイごとに変わるため、許可の方法を決める。【要決定】
+- 必須: 関数の最大実行時間（`maxDuration`）は **300 秒** とし、明示的に設定する。300 秒は Hobby の上限である（2026-09-21 時点。Pro は最大 800 秒）。プランを変更する場合は、この値と Lease を見直す。
+- 必須: `API_DESIGN.md` の Lease（`lease_expires_at`）は、`maxDuration`（300 秒）より長くする（例: 330 秒）。短いと、実行中の Request の実行権が別の Request に渡る。
+- 必須: 1 回の Request の処理（Agent の 1 ターン、外部API呼び出し、DB 保存の合計）が 300 秒に収まるように、ステップ数・コスト・外部呼び出しのタイムアウトの上限を設定する。上限に達する前に処理を終える余裕を持たせる。非同期処理には 5 分（300 秒）のタイムアウトを設ける（11 章）。Agent の Turn には、経過時間の上限（既定 200 秒）を設ける（`AGENT_DESIGN.md` の「Turnの上限」）。
+- 必須: 処理が途中で停止しても整合が取れる作りにする。時間切れになると、Vercel が本文のない 504 を返す。API 設計書の冪等性（Lease、Fencing Token、`outcome_unknown`）と、`AGENT_DESIGN.md` の「中断されたTurnの復旧」で対応する。
+- 必須: Request と Response の本文は、プラットフォームの上限（4.5 MB）以下にする。
+- 必須: モジュールレベルに、Request 固有の状態（ユーザー、Session、トランザクション）を持たない。同じインスタンスが複数の Request を処理する。
+- 必須: 定期処理（投稿から 7 日後の計測など）は、Vercel Cron から API を呼んで実行する。エンドポイントは Cron 専用のシークレットで保護し、認証済みユーザーの API と共用しない。【要決定】プランごとの実行頻度の制限を確認する
+- 推奨: 同時に開いているファイルと接続の数を抑える。関数全体で 1,024 個の上限を共有する（DB 接続も含む）。
+
+### 17.2 Neon
+
+- 必須: アプリケーションは **プール経由の接続**（接続文字列のホスト名に `-pooler` を含むもの。PgBouncer の transaction モード）を使う。マイグレーションは **直接接続** を使う。環境変数は別名にする（例: `DATABASE_URL`、`DATABASE_URL_DIRECT`）。
+- 禁止: プール経由の接続で使えない機能を使わない。
+  - セッション単位の advisory lock（`pg_advisory_lock`）。トランザクション単位（`pg_advisory_xact_lock`）は使ってよい
+  - `SET` / `RESET`、`LISTEN` / `NOTIFY`、SQL レベルの `PREPARE` / `DEALLOCATE`
+  - `PRESERVE ROWS` / `DELETE ROWS` の一時テーブル
+- 必須: prepared statement は、ドライバ（psycopg）のプロトコルレベルのものだけを使う。プール経由で問題なく動くことを、結合テストで確認する。
+- 必須: `SET LOCAL`（`hnsw.ef_search` の変更など）を使う場合は、プール経由で動くことを確認してから使う。【要検証】
+- 必須: SQLAlchemy の接続プールは小さくする。Vercel の関数は複数のインスタンスが並行して動くため、Neon 側のプールに任せる。【要決定】`pool_size` または `NullPool`
+- 推奨: 結合テストの一部を、PgBouncer（transaction モード）経由で実行する。
+
+### 17.3 OpenAI Agents SDK と OrcaRouter
+
+- 必須: LLM と Embedding の呼び出しは OrcaRouter 経由とする。SDK には `AsyncOpenAI(base_url=<OrcaRouter>, api_key=...)` を `set_default_openai_client` で登録する。呼び出し API の種別（Responses または Chat Completions）は、OrcaRouter の対応に合わせて設定する。【要確認】
+- 必須: SDK の初期化と設定は `clients/` に集約する。SDK の型（`Agent`、`Runner` など）は `agents/` 層に閉じ込め、`api` と `services` から直接 import しない。
+- 必須: SDK のトレースは、既定では OpenAI のトレース基盤へ送られる。送信先と内容を明示的に設定し、既定では無効にする（`set_tracing_disabled(True)`）。有効にする場合は `trace_include_sensitive_data=False` にする。
+- 必須: 1 回の LLM 呼び出しごとに、OrcaRouter の request ID、トークン数、確定コスト、応答時間を `llm_calls` へ記録する（`DATABASE.dbml`）。
+- 【要決定】SDK の Runner・履歴の仕組みと、`agent_turns` / `agent_items` / チェックポイントの対応（SDK に任せる範囲と自前の範囲）。`AGENT_DESIGN.md` に対応表を追加する。
+
+---
+
 ## 付録A. PR チェックリスト
 
 - [ ] `ruff`、型チェック、テストが CI で成功している
@@ -377,6 +449,11 @@ class AppError(Exception):
 - [ ] 例外を握りつぶしていない。エラーメッセージに内部情報を含めていない
 - [ ] ログに機密情報を出していない
 - [ ] 異常系・境界値・会社間分離のテストがある
+- [ ] Neon のプール経由で使えない機能（セッション単位の advisory lock、`SET` など）を使っていない
+- [ ] 非同期にしたのは非同期処理が必要な部分だけで、I/O を伴わない純粋な処理は同期関数（`def`）になっている。非同期処理に 300 秒のタイムアウトがある
+- [ ] テストのメソッド名が `test_<テスト観点>_<変数とテスト仕様>` の形になっている
+- [ ] PR が完結した開発単位になっている（1 つの目的で、単独でレビュー・merge できる。関連する設計書・マイグレーション・テストを含む）
+- [ ] 1 回の処理が関数の最大実行時間に収まる。途中で停止した場合の再開手順がある
 
 ## 付録B. 決定事項と未決事項（2026-09-21 時点）
 
@@ -393,11 +470,11 @@ class AppError(Exception):
 | 7 | コメントの言語 | 日本語 |
 | 8 | docstring の書式 | Google スタイル |
 | 9 | ディレクトリ構成 | 6.1 の案 |
-| 10 | 認証方式（API層） | 署名付き Cookie（ステートレス）、アイドル 8 時間 + 絶対上限 7 日、CSRF は Origin 検証 + ダブルサブミットトークン、登録 API なし（事前登録）。`API_DESIGN.md` へ反映が必要 |
+| 10 | 認証方式（API層） | 署名付き Cookie（ステートレス）、アイドル 8 時間 + 絶対上限 7 日、CSRF は Origin 検証 + ダブルサブミットトークン、登録 API なし（事前登録）。`API_DESIGN.md` の 2.8・2.9 に反映済み |
 | 11 | 再試行の上限・バックオフ | 最大 3 回、指数バックオフ |
 | 12 | 構造化ログのライブラリ | structlog |
 | 13 | LLMの入出力をログへ残す範囲 | 本文は残さず、メタデータだけ残す。本文は `agent_items`（DB）で確認する |
-| 14 | 同期 / 非同期 | 非同期（`async def`）で統一 |
+| 14 | 同期 / 非同期 | 統一しない。非同期処理が必要な API だけ非同期（`async def`）にし、I/O を伴わない純粋な処理は同期（`def`）で書く（11 章）。以前の「非同期で統一」から変更 |
 | 15 | ORM・ドライバ | SQLAlchemy 2.0（非同期）+ psycopg |
 | 16 | マイグレーションのツール・適用方法 | Alembic・手動 |
 | 17 | 埋め込みモデルと次元数 | `openai/text-embedding-3-small`（OrcaRouter 経由）・1536 次元 |
@@ -407,10 +484,25 @@ class AppError(Exception):
 | 21 | コミットメッセージの形式 | 種別プレフィックス（英語 6 種）＋日本語の要約 |
 | 22 | PR の承認人数 | 1 人以上 |
 | 23 | テストフレームワーク | pytest + pytest-asyncio（`asyncio_mode = "auto"`） |
+| 24 | 実行環境 | Vercel Functions（Python / FastAPI）。フロントは Next.js（TypeScript）で、同じプロジェクトから同一オリジンで公開 |
+| 25 | DB | Neon（PostgreSQL）+ pgvector。ベクトル型は `pgvector-python` |
+| 26 | Agent SDK | OpenAI Agents SDK。LLM と Embedding は引き続き OrcaRouter 経由 |
+| 27 | バックエンドの主なライブラリ | Pydantic、SQLAlchemy + Alembic、pytest |
+| 28 | 関数の最大実行時間 | `maxDuration` = 300 秒（Hobby の上限）。Lease は 300 秒より長くする（例: 330 秒） |
+| 29 | Turn の経過時間の上限 | 既定 200 秒（`maxDuration` より短くする）。`AGENT_DESIGN.md` の「Turnの上限」 |
+| 30 | 実行中の Turn がある Session への新規 Turn | `409 TURN_IN_PROGRESS` で拒否する。`API_DESIGN.md` の 2.10 |
+| 31 | 非同期処理のタイムアウト | 非同期を使う場合は 5 分（300 秒）のタイムアウトを設ける。Vercel Functions Hobby プランの `maxDuration`（300 秒）に合わせた値（11 章） |
+| 32 | テストのメソッド名 | `test_<テスト観点>_<変数とテスト仕様>` に固定する（日本語。14 章）。以前の「対象・条件・期待が分かる形」を具体化 |
+| 33 | PR の大きさ | ファイルサイズ（行数）の制限は設けない。完結した開発単位で PR を作成する（16.2）。以前の「目安: 変更 400 行以内」を廃止 |
 
 ### 未決・他文書待ち
 
 | 項目 | 備考 |
 | --- | --- |
-| 認証方式（#10）の API設計書への反映 | 反映案を `docs/v.0.1/API_DESIGN_反映案.patch`（2.8 認証とCSRF、2.9 認証API）と `REQUIREMENTS.md`（NFR-SEC-007）の反映案に作成済み。取り込み後に本行を削除する。規約の 7 章には反映済み |
-| DBML の `vector(1536)` 反映（#17） | `DATABASE.dbml` の反映案（`vector(1536)`、HNSW 索引は SQL migration で追加と明記）を作成済み。取り込み後に本行を削除する。HNSW 索引のマイグレーションは実装開始時に追加する |
+| Origin 許可リストとプレビュー環境（17.1） | プレビュー URL の許可方法を決める |
+| Vercel Cron の実行頻度（17.1） | プランごとの制限を確認する |
+| Turn の復旧判定時間と実行契機（17.1） | 既定案は 330 秒（`maxDuration` に余裕を加えた値）。Vercel Cron の頻度はプランの制限に従う |
+| Neon 接続プールの設計（17.2） | `pool_size` または `NullPool`。`SET LOCAL` と prepared statement は結合テストで確認する |
+| SDK と自前ループの境界（17.3） | `AGENT_DESIGN.md` に、SDK に任せる範囲と自前の範囲の対応表を追加する |
+| OrcaRouter 経由の API 種別（17.3） | Responses / Chat Completions のどちらを使うか確認する |
+| フロントエンドの規約 | TypeScript、Next.js、Vitest、scss、UI コンポーネント、TanStack Query は本書の対象外。別書で定める（UI コンポーネントのライブラリは未定） |

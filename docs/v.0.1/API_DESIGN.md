@@ -24,7 +24,7 @@ APIはAgent履歴を入力元として参照せず、Request Bodyの最終フォ
 - Pathの`session_id`が正の整数である
 - Sessionが認証済みマーケターに属する
 - Sessionが`agent = parent`かつ`parent_session_id = null`の親Sessionである
-- Requestがサイズ上限内で、安全にJSON解析・マスクできる
+- Requestがサイズ上限内（プラットフォームの上限は4.5MB）で、安全にJSON解析・マスクできる
 
 親Sessionと安全なRequestを確定した後、冪等性を検証する。完了済みの同一RequestはSessionが後からアーカイブされていても保存済みResponseを返す。新しい処理を開始する場合はSessionがアーカイブされていないことを追加検証し、最初のRequestだけに実行権を付与する。実行権を得たRequestはAPI実行Turnを作成してマスク済みRequestを保存し、以下のSchema・業務条件を検証する。
 
@@ -67,6 +67,8 @@ UIは承認操作ごとにUUIDを生成し、`Idempotency-Key` Headerと監査�
   - `external_result`が未保存なら、期限切れを条件とする専用の復旧Transactionで、`status`、旧`execution_token`、`lease_expires_at`をCompare-and-setし、`outcome_unknown`のAPI Result保存と元Turnの完了を同時に行う。この復旧遷移には有効なLeaseを要求せず、自動再投稿しない
 - Lease再取得時に`agent_turn_id`が設定済みなら同じAPI実行Turnを再利用し、最終Request Itemは`Idempotency-Key`由来の安定したItemキーで重複保存を防ぐ。未設定の場合だけ、冪等性行をロックしたTransaction内でTurnを一度作成して関連付ける
 - `retryable = true`は原則として、新しいユーザー承認と新しいキーによる再実行が可能であることを示す。同じキーの`failed` Requestを再実行する意味ではない。`IDEMPOTENCY_REQUEST_IN_PROGRESS`と`X_POST_SAVE_FAILED`だけは、同じキーで再送する
+- `lease_expires_at`は、関数の最大実行時間（Vercelの`maxDuration`）より長い値とする。短いと、実行中のRequestの実行権が別のRequestへ渡る。MVPでは`maxDuration`を300秒とし、Leaseは300秒より長い値（例: 330秒）とする
+- 関数が最大実行時間を超えると、Vercelが本文のない`504`を返す。UIは、本文のない`504`を処理結果の不明として扱い、`Retry-After`に従って同じ`Idempotency-Key`で再送する。サーバー側では、期限切れのLeaseと`external_effect_started_at`、`external_result`の状態で、再開または`outcome_unknown`の確定を行う
 - 冪等性レコードは監査と遅延再送への応答に使用するため、MVPでは削除しない
 
 ### 2.4 承認監査とAPI Result
@@ -146,7 +148,7 @@ Agent履歴へ保存しない認証・Session・JSON解析・冪等性Headerエ�
 | `401 Unauthorized` | 未認証、または認証Cookieの期限切れ・署名不正 |
 | `403 Forbidden` | CSRF検証に失敗した。テナント境界違反には使用しない |
 | `404 Not Found` | Session・Campaignなどの対象が存在しない、または別のマーケター・別会社に属する |
-| `409 Conflict` | 同じ冪等性キーの処理中、異なるRequestへのキー再利用、または施策上書きの競合 |
+| `409 Conflict` | 同じ冪等性キーの処理中、異なるRequestへのキー再利用、施策上書きの競合、または同じSessionでAgent Turnを実行中 |
 | `422 Unprocessable Entity` | 施策内容やX投稿内容の業務検証に失敗 |
 | `502 Bad Gateway` | X APIが明確な失敗を返した |
 | `504 Gateway Timeout` | X APIの実行結果を確定できない |
@@ -167,7 +169,7 @@ Agent履歴へ保存しない認証・Session・JSON解析・冪等性Headerエ�
 #### CSRF対策
 状態変更API（POST・PATCH・DELETE）には、次の2つをどちらも適用する。
 
-1. `Origin` Header（なければ`Referer`）が許可リストのオリジンと一致する。許可リストは環境変数で設定する
+1. `Origin` Header（なければ`Referer`）が許可リストのオリジンと一致する。許可リストは環境変数で設定する。UIとAPIは同じVercelプロジェクトから同一オリジンで公開し、環境ごとのオリジン（プレビュー環境を含む）を許可リストへ設定する。プレビュー環境の許可方法は【要決定】
 2. 署名付きダブルサブミットトークンを検証する。ログイン成功時に発行する`csrf_token` Cookie（`HttpOnly`なし、`Secure`、`SameSite=Lax`）の値と、`X-CSRF-Token` Headerの値が一致し、かつトークンの署名が有効で`marketer_id`に束縛されている
 
 ログインAPIは`csrf_token` Cookieをまだ持たないため、1だけを適用する。ログアウトAPIは未ログインでも同じ結果を返すため、同様に1だけを適用する（強制ログアウトの影響は小さいと判断）。
@@ -230,6 +232,20 @@ Agent履歴へ保存しない認証・Session・JSON解析・冪等性Headerエ�
   "error": null
 }
 ```
+
+### 2.10 Agent Turnの同時実行
+Agent Turnを開始するAPI（会話の送信API。本書では未定義）は、同じ親Sessionで前のAgent Turnが実行中の場合、新しいTurnを開始せず拒否する。二重送信や、前の処理が終わる前の再送で、同じSessionに複数のTurnが並行して走ることを防ぐ。
+
+| HTTP Status | Code | 条件 | 再試行 |
+| --- | --- | --- | :---: |
+| `409` | `TURN_IN_PROGRESS` | 同じSessionに、`pending`または`running`のAgent Turnがある | ○（前のTurnの完了後） |
+
+- 判定は、Session行をロックした同じTransaction内で行う。先に、同じSessionの中断されたTurnを復旧する（`AGENT_DESIGN.md`の「中断されたTurnの復旧」）。復旧後も実行中のTurnがある場合だけ拒否する
+- 拒否したRequestはAgent履歴へ保存せず、`agent_turn_id = null`とする
+- 実行中のTurnとして数えるのは、`pending`または`running`のAgent Turnとする。API実行Turn（`api_idempotency_requests`から参照されるTurn）は数えない。承認APIは`IDEMPOTENCY_REQUEST_IN_PROGRESS`などの冪等性の仕組みで保護する
+- `TURN_IN_PROGRESS`と`IDEMPOTENCY_REQUEST_IN_PROGRESS`は別のエラーである。前者は同じSessionの別のTurnが実行中であることを、後者は同じ`Idempotency-Key`のRequestを処理中であることを示す
+- UIは、Turnの実行中は送信ボタンを無効にする。`TURN_IN_PROGRESS`を受けた場合は、前のTurnの完了を待ってから再送を促す
+- Turnの実行時間には上限がある（`AGENT_DESIGN.md`の「Turnの上限」）。実行中のまま残ったTurnは、復旧判定時間の経過後に`TURN_INTERRUPTED`で終了するため、`TURN_IN_PROGRESS`は無期限には続かない
 
 ## 3. X投稿API
 

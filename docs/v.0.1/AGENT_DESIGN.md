@@ -667,7 +667,7 @@ flowchart TD
     LOAD_HISTORY --> ESTIMATE_CONTEXT
 
     ESTIMATE_CONTEXT -- いいえ --> NEED_MEMORY{長期記憶の想起が必要か}
-    ESTIMATE_CONTEXT -- はい --> COMPACTION_LIMIT{ステップ・コスト上限内か}
+    ESTIMATE_CONTEXT -- はい --> COMPACTION_LIMIT{ステップ・コスト・経過時間の上限内か}
     COMPACTION_LIMIT -- いいえ --> SAVE_LIMIT_ERROR
     COMPACTION_LIMIT -- はい --> COMPACT_CONTEXT[[古い完了Turnを要約]]
     COMPACT_CONTEXT --> COMPACTION_RESULT{要約に成功したか}
@@ -685,7 +685,7 @@ flowchart TD
     NEED_MEMORY -- はい --> SEARCH_MEMORY[会社単位でベクトル検索]
     SEARCH_MEMORY --> MEMORY[(Long-term Memory)]
     MEMORY --> ADD_MEMORY[関連する記憶をContextへ追加]
-    ADD_MEMORY --> LIMIT{ステップ・コスト上限内か}
+    ADD_MEMORY --> LIMIT{ステップ・コスト・経過時間の上限内か}
     NEED_MEMORY -- いいえ --> LIMIT
 
     LIMIT -- いいえ --> SAVE_LIMIT_ERROR[上限到達エラーを保存]
@@ -746,6 +746,50 @@ flowchart TD
     SAVE_TOOL_ERROR --> UPDATE_CONTEXT
 
 ```
+
+### Turnの上限
+- Turnには、ステップ数、コスト、経過時間の3つの上限を設ける。いずれもアプリケーション設定とし、コードへ直書きしない
+- 経過時間の上限は、関数の最大実行時間（300秒。`CODING_STANDARDS.md`の17.1）より短い値とする。既定は200秒とする。Turnの終了保存、Response返却、Leaseの余裕を残すためである
+- 経過時間はTurnの`started_at`から計測する
+- 上限の確認は、LLM呼び出し、Tool実行、Context圧縮の前に行う（上記のフローの「上限内か」）
+- LLM呼び出し、Tool実行、外部API呼び出しのタイムアウトは、残り時間を超えない値にする。設定値が残り時間より長い場合は、残り時間に切り詰める
+- サブエージェントの内部ループは、親Turnの経過時間の上限を共有する。子だけが別の時間枠を持たない
+- 経過時間の上限に達した場合は、エラーコード`TURN_TIME_LIMIT_EXCEEDED`を保存してTurnを`failed`で終了する。ステップ・コストの上限到達と同じ経路とする
+- UIは、時間内に完了できなかったことをユーザーへ表示する。Agentは自動で再実行しない
+
+### 中断されたTurnの復旧
+関数が最大実行時間（300秒）で強制終了されると、Turnは`pending`または`running`のまま残る。次の手順で、中断されたTurnを`failed`へ確定する。
+
+```mermaid
+flowchart TD
+    TRIGGER([次のTurn開始・Turn状態の取得・定期処理]) --> FIND[pendingまたはrunningのTurnを取得]
+    FIND --> API_TURN{api_idempotency_requestsから参照されるか}
+    API_TURN -- はい --> SKIP([対象外: 冪等性のLeaseと復旧に従う])
+    API_TURN -- いいえ --> STALE{開始から復旧判定時間を超えたか}
+    STALE -- いいえ --> KEEP([実行中として扱う])
+    STALE -- はい --> UPDATE[statusを条件に同一Transactionで更新]
+    UPDATE --> UPDATED{更新できたか}
+    UPDATED -- いいえ --> DONE([他の処理が更新済み])
+    UPDATED -- はい --> RESULT[Turnをfailedへ・実行中のtool_executionをcancelledへ]
+    RESULT --> LOG[WARNINGログを記録]
+    LOG --> END([UIへ中断エラーを返す])
+```
+
+- 対象は、`status`が`pending`または`running`で、`api_idempotency_requests.agent_turn_id`から参照されない（API実行Turnではない）Turnとする。子Sessionのターンも同じ規則で個別に対象とする
+- 判定は、`started_at`（未開始なら`created_at`）から復旧判定時間が経過したかで行う。復旧判定時間は、関数の最大実行時間（300秒）に余裕を加えた値とし、既定は330秒とする【要決定】。Turnの経過時間の上限（200秒）より長くし、実行中のTurnを誤って中断させない
+- 更新は、`WHERE id = :id AND status IN ('pending', 'running')`の条件付きUPDATEで行う。更新できなかった場合は、他の処理が更新済みなので何もしない
+- 更新内容は、`status = failed`、`error_code = TURN_INTERRUPTED`、マスク済みの`error_message`、`completed_at`とする。同じTransactionで、`pending`または`running`の`tool_executions`を`cancelled`へ更新する
+- 終端状態になったTurnには、Item、Tool実行、LLM呼び出しを追加しない。中断されたTurnの処理が遅れて書き込もうとしても、書き込みは`status = running`を条件とするため失敗する
+- `failed`のTurnは、次のContextへ含めない。ユーザーの入力も含まれないため、UIは中断エラーを表示し、ユーザーが同じ依頼を再送する。Agentは自動で再実行しない
+- `TURN_INTERRUPTED`は再試行可能（`retryable = true`）とする。ただし、再試行は新しいTurnとして実行する
+- 実行する契機は、次の3つとする。いずれも同じ処理を呼ぶ
+  - 同じSessionの新しいTurnを開始するとき（Session行をロックしてTurn番号を採番する前に、同じSessionの中断Turnを復旧する）
+  - Turnの状態を返す処理
+  - Vercel Cronによる定期処理。前の2つで拾えなかったTurnの回収用とする。実行頻度はプランの制限に従う【要決定】
+- 復旧処理は冪等とし、同じTurnを何度確認しても結果が変わらない
+- 中断時に完了していなかったLLM呼び出しは、`llm_calls`へ記録されない場合がある。OrcaRouter側の利用量との差になり得る（既知の制約）
+- API実行Turnは対象外である。施策のupsertは同じキーの再送で、X投稿は`external_result`の有無に従って、API設計書の冪等性の仕組みで復旧する
+- 同じSessionで前のTurnが実行中（`pending`または`running`で、復旧判定時間の前）のときに、新しいAgent Turnを開始する要求は、`409 TURN_IN_PROGRESS`で拒否する。判定は、Session行をロックした同じTransaction内で、中断Turnの復旧の後に行い、実行中のTurnがなければ新しいTurnを作成する。API実行Turnは実行中のTurnとして数えない
 
 ### Context Checkpoint
 - Context Checkpointは、長くなった親セッションの古い会話履歴を要約し、LLMへ送るContext量を抑えるために使用する
