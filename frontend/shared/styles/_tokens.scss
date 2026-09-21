@@ -1,0 +1,86 @@
+:root {
+  --palette-paper-50: #f7f9f8;
+  --palette-paper-100: #eaf0ed;
+  --palette-ink-900: #10231a;
+  --palette-ink-700: #34463d;
+  --palette-ink-500: #66756d;
+  --palette-green-800: #0b4b37;
+  --palette-green-700: #0e5a42;
+  --palette-lime-400: #c9f04f;
+  --palette-white: #ffffff;
+  --palette-red-600: #a13d30;
+
+  --color-background-primary: var(--palette-paper-50);
+  --color-background-secondary: var(--palette-paper-100);
+  --color-surface: var(--palette-white);
+  --color-text-primary: var(--palette-ink-900);
+  --color-text-secondary: var(--palette-ink-500);
+  --color-text-on-brand: var(--palette-white);
+  --color-brand-primary: var(--palette-green-700);
+  --color-brand-strong: var(--palette-green-800);
+  --color-accent: var(--palette-lime-400);
+  --color-border: rgb(20 33 27 / 14%);
+  --color-border-strong: rgb(20 33 27 / 28%);
+  --color-focus-ring: var(--palette-green-700);
+  --color-danger: var(--palette-red-600);
+
+  --font-family-sans: "Noto Sans CJK JP", "Noto Sans JP", "Hiragino Sans", "Yu Gothic UI", "Yu Gothic", Meiryo, sans-serif;
+  --font-family-latin: Arial, Helvetica, sans-serif;
+  --font-family-mono: "IBM Plex Mono", "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  --font-size-xs: 0.75rem;
+  --font-size-sm: 0.875rem;
+  --font-size-md: 1rem;
+  --font-size-lg: 1.125rem;
+  --font-size-xl: 1.375rem;
+  --font-size-heading-sm: clamp(1.8rem, 6vw, 2.6rem);
+  --font-size-heading-md: clamp(2.4rem, 6.6vw, 5.6rem);
+  --font-size-display: clamp(3.6rem, 11vw, 9.5rem);
+  --font-weight-regular: 400;
+  --font-weight-medium: 550;
+  --font-weight-semibold: 650;
+  --font-weight-bold: 750;
+  --line-height-tight: 1.08;
+  --line-height-heading: 1.2;
+  --line-height-body: 1.85;
+  --letter-spacing-tight: -0.045em;
+  --letter-spacing-wide: 0.08em;
+
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-5: 1.5rem;
+  --space-6: 2rem;
+  --space-7: 3rem;
+  --space-8: 4rem;
+  --space-9: 6rem;
+  --space-10: 8rem;
+  --space-page: clamp(1.25rem, 5vw, 4.5rem);
+  --space-section: clamp(5rem, 12vw, 10rem);
+
+  --border-width-thin: 1px;
+  --border-width-medium: 2px;
+  --radius-sm: 0.5rem;
+  --radius-md: 1rem;
+  --radius-lg: 1.75rem;
+  --radius-pill: 999px;
+  --shadow-panel: 0 1.75rem 5rem rgb(13 77 56 / 12%);
+  --focus-ring-width: 0.1875rem;
+  --focus-ring-offset: 0.25rem;
+
+  --layout-max-width: 75rem;
+  --layout-text-width: 42rem;
+  --header-height: 5.25rem;
+
+  --duration-fast: 140ms;
+  --duration-normal: 220ms;
+  --duration-slow: 620ms;
+  --easing-standard: cubic-bezier(0.2, 0, 0, 1);
+  --easing-emphasized: cubic-bezier(0.16, 1, 0.3, 1);
+  --motion-distance-sm: 0.125rem;
+  --motion-distance-md: 0.75rem;
+  --delay-stage-1: 120ms;
+  --delay-stage-2: 440ms;
+  --delay-stage-3: 820ms;
+  --delay-stage-4: 1280ms;
+}
