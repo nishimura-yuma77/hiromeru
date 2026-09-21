@@ -4,18 +4,21 @@ Project hiromeru {
     AI支援型XマーケティングシステムのMVPデータベーススキーマ。
 
     PostgreSQL拡張:
-    - vector: 長期記憶の埋め込みベクトル
+    - vector: 長期記憶、施策、投稿の検索用埋め込みベクトル
 
     DBMLでは完全に表現できないアプリケーション不変条件:
-    - 承認済みの施策または投稿を編集すると改訂番号が増加し、再承認が必要になる。
+    - 提案Tool Resultは変更せず、UIフォームの中間編集は保存しない。Agentへの再相談内容とAPIが受け取った最終フォーム値をエージェント履歴へ追記する。
     - 会社は業務データを所有し、マーケターはそのデータを操作する主体となる。
     - 施策に紐づく投稿は同じ会社に所属しなければならない。
     - 業務データを操作するマーケターは、そのデータを所有する会社に所属しなければならない。
     - 記憶と、それに紐づく施策または投稿は同じ会社に所属しなければならない。
-    - 記憶の埋め込みベクトルは、単一設定されたモデルと次元数を使用して記憶内容から生成する。
+    - 記憶、施策検索、投稿検索用の埋め込みベクトルは、単一設定されたモデルと次元数を使用して生成する。
+    - 施策と施策検索用の埋め込みベクトルは同じトランザクションで保存・更新し、埋め込み生成に失敗した場合は施策を保存しない。
+    - 投稿検索用の埋め込みベクトルはXへの投稿前に生成し、X投稿成功後に投稿と同じトランザクションで保存する。埋め込み生成に失敗した場合はXへ投稿しない。
     - 投稿計測、エージェントターン、エージェントアイテム、ツール実行、LLM呼び出しなどの子レコードは、必須の親レコードから会社所有権を継承する。
-    - Xへ公開できるのは承認済み改訂の投稿だけとする。
-    - エージェントが生成した施策案は人間が承認するまでエージェント履歴に保持し、承認後に業務データとして保存する。
+    - Xへ公開できるのは、認証済みUIの承認・公開ボタンから最終フォーム値をX投稿APIへ送信し、認証、会社所有権、入力Schemaを検証できた投稿だけとする。
+    - 施策案と未公開投稿案は人間が承認するまでエージェント履歴に保持し、承認後の施策登録・更新とX投稿はLLMを介さずアプリケーションAPIで実行する。
+    - 承認APIのPathで指定できるのは、認証済みマーケターが所有する未アーカイブの親エージェントセッションだけとする。最終RequestとAPI結果は、そのセッションに作成した新しいターンへ保存する。
     - 公開済み投稿と完了済み監査記録は通常のCRUD操作で削除してはならない。
     - エージェントセッションは順序付けられたターンを持ち、各ターンは順序付けられたアイテムを持つ。アイテムはセッションを直接参照しない。
     - エージェントアイテムの内容は追記後に変更しない。コンテキスト状態のみactiveからquarantinedへ変更できる。
@@ -49,19 +52,8 @@ Enum campaign_status {
   archived
 }
 
-Enum post_status {
-  draft
-  pending_approval
-  approved
-  publishing
-  published
-  publish_failed
-  archived
-}
-
 Enum post_metric_status {
   pending
-  processing
   completed
   failed
 }
@@ -76,11 +68,6 @@ Enum agent_type {
   parent
   campaign_planner
   content_creator
-}
-
-Enum agent_session_status {
-  active
-  archived
 }
 
 Enum agent_item_type {
@@ -153,17 +140,13 @@ Enum security_enforcement {
 
 Table users {
   id bigint [pk, increment, note: '【ユーザーID】']
-  email varchar(320) [not null, note: '【メールアドレス】']
-  auth_provider varchar(100) [not null, note: '【認証プロバイダー】']
-  auth_subject varchar(255) [not null, note: '【認証主体識別子】認証プロバイダーが発行する不変のユーザー識別子。']
-  status user_status [not null, default: 'active', note: '【ユーザーステータス】']
-  last_signed_in_at timestamptz [note: '【最終サインイン日時】']
+  email varchar(255) [not null, note: '【メールアドレス】']
+  password varchar(255) [not null, note: '【パスワード】']
   created_at timestamptz [not null, default: `now()`, note: '【作成日時】']
   updated_at timestamptz [not null, default: `now()`, note: '【更新日時】']
 
   indexes {
     email [unique]
-    (auth_provider, auth_subject) [unique]
   }
 
   Note: '認証主体だけを管理する。業務操作はマーケターが行う。'
@@ -181,13 +164,10 @@ Table companies {
 Table marketers {
   id bigint [pk, increment, note: '【マーケターID】']
   user_id bigint [not null, unique, note: '【ユーザーID】']
+  name varchar(255) [not null, note: '【個人名】']
   company_id bigint [not null, unique, note: '【会社ID】']
   created_at timestamptz [not null, default: `now()`, note: '【作成日時】']
   updated_at timestamptz [not null, default: `now()`, note: '【更新日時】']
-
-  indexes {
-    (id, company_id) [unique]
-  }
 
   Note: '現行機能における業務操作主体。MVPでは各ユーザーと各会社に紐づくマーケタープロファイルは最大1件とする。'
 }
@@ -203,18 +183,12 @@ Table campaigns {
   target_profile text [not null, note: '【ターゲット像】施策でリーチする対象者の属性、状況、課題、動機。']
   background text [not null, note: '【実施背景】']
   objective text [not null, note: '【施策目的】']
-  plan text [not null, note: '【施策内容】承認済みまたは提案中のマーケティング戦略と実行内容。']
-  status campaign_status [not null, default: 'draft', note: '【施策ステータス】']
-  revision int [not null, default: 1, note: '【改訂番号】1以上とし、承認対象の内容を変更するたびに増加させる。']
-  approved_revision int [note: '【承認済み改訂番号】承認済みステータスでは改訂番号と一致させる。']
-  submitted_at timestamptz [note: '【承認申請日時】']
-  approved_at timestamptz [note: '【承認日時】']
+  plan text [not null, note: '【施策内容】承認済みのマーケティング戦略と実行内容。提案中の内容はエージェント履歴へ保持する。']
   created_at timestamptz [not null, default: `now()`, note: '【作成日時】']
   updated_at timestamptz [not null, default: `now()`, note: '【更新日時】']
   archived_at timestamptz [note: '【アーカイブ日時】']
 
   indexes {
-    (company_id, status)
     (company_id, created_at)
   }
 }
@@ -222,44 +196,60 @@ Table campaigns {
 Ref: campaigns.company_id > companies.id [delete: restrict]
 Ref: campaigns.created_by_marketer_id > marketers.id [delete: restrict]
 
+Table campaign_embeddings {
+  campaign_id bigint [pk, note: '【施策ID】']
+  embedding vector [not null, note: '【施策埋め込みベクトル】ターゲット像、実施背景、施策目的、施策内容を正規化したテキストから生成する。単一の埋め込みモデルと次元数を決定後、vector(n)とHNSWコサイン距離インデックスを設定する。']
+  content_hash varchar(64) [not null, note: '【埋め込み元ハッシュ】正規化した埋め込み元テキストのSHA-256。内容が変わっていない場合の再生成を防ぐ。']
+  created_at timestamptz [not null, default: `now()`, note: '【作成日時】']
+  updated_at timestamptz [not null, default: `now()`, note: '【更新日時】']
+
+  indexes {
+    content_hash
+  }
+
+  Note: '施策の意味検索に使用する1対1の検索Projection。施策のタイトルは埋め込み元に含めない。埋め込みを生成してからDBトランザクションを開始し、施策と本レコードを同じトランザクションで保存・更新する。'
+}
+
+Ref: campaign_embeddings.campaign_id > campaigns.id [delete: cascade]
+
 Table posts {
   id bigint [pk, increment, note: '【投稿ID】']
   company_id bigint [not null, note: '【会社ID】']
   created_by_marketer_id bigint [not null, note: '【作成者マーケターID】']
   campaign_id bigint [not null, note: '【施策ID】']
   body text [not null, note: '【投稿本文】現行のXテキスト文字数規則をアプリケーションで検証する。']
-  status post_status [not null, default: 'draft', note: '【投稿ステータス】']
-  revision int [not null, default: 1, note: '【改訂番号】1以上とし、本文または遷移先を変更するたびに増加させる。']
-  approved_revision int [note: '【承認済み改訂番号】Xへ投稿する前に改訂番号と一致させる。']
-  scheduled_at timestamptz [note: '【投稿予定日時】']
-  approved_at timestamptz [note: '【承認日時】']
-  published_at timestamptz [note: '【投稿日時】']
-  x_post_id varchar(255) [unique, note: '【X投稿ID】']
-  last_publish_error text [note: '【最終投稿エラー】マスク済みエラーだけを保存し、認証情報とトークンは保存しない。']
+  x_post_id varchar(255) [not null, unique, note: '【X投稿ID】']
   created_at timestamptz [not null, default: `now()`, note: '【作成日時】']
   updated_at timestamptz [not null, default: `now()`, note: '【更新日時】']
-  archived_at timestamptz [note: '【アーカイブ日時】']
-
-  indexes {
-    (company_id, status)
-    (campaign_id, status)
-    (status, scheduled_at)
-  }
 }
 
 Ref: posts.company_id > companies.id [delete: restrict]
 Ref: posts.created_by_marketer_id > marketers.id [delete: restrict]
 Ref: posts.campaign_id > campaigns.id [delete: restrict]
 
+Table post_embeddings {
+  post_id bigint [pk, note: '【投稿ID】']
+  embedding vector [not null, note: '【投稿埋め込みベクトル】投稿本文からURLを除去して正規化したテキストから生成する。単一の埋め込みモデルと次元数を決定後、vector(n)とHNSWコサイン距離インデックスを設定する。']
+  content_hash varchar(64) [not null, note: '【埋め込み元ハッシュ】URLを除去して正規化した投稿本文のSHA-256。']
+  created_at timestamptz [not null, default: `now()`, note: '【作成日時】']
+
+  indexes {
+    content_hash
+  }
+
+  Note: '公開済み投稿の意味検索に使用する1対1の検索Projection。EmbeddingはXへの投稿前に生成し、X投稿成功後にposts、post_tracking_links、post_metricsと同じDBトランザクションで保存する。公開済み投稿本文はMVPでは更新しない。'
+}
+
+Ref: post_embeddings.post_id > posts.id [delete: cascade]
+
 Table post_tracking_links {
   id bigint [pk, increment, note: '【トラッキングリンクID】']
   post_id bigint [not null, unique, note: '【投稿ID】']
   landing_url text [not null, note: '【遷移先URL】']
-  utm_source varchar(255) [not null, default: 'x', note: '【UTM流入元】']
-  utm_medium varchar(255) [not null, default: 'social', note: '【UTMメディア】']
-  utm_campaign varchar(255) [not null, note: '【UTMキャンペーン】']
-  utm_content varchar(255) [not null, note: '【UTMコンテンツ】']
-  utm_term varchar(255) [note: '【UTMキーワード】']
+  utm_source varchar(255) [not null, default: 'x', note: '【UTM流入元】現状x固定']
+  utm_medium varchar(255) [not null, default: 'social', note: '【UTMメディア】現状social固定']
+  utm_campaign varchar(255) [not null, note: '【UTMキャンペーン】campaignの一意の識別子']
+  utm_content varchar(255) [not null, note: '【UTMコンテンツ】postの一意の識別子']
   tracked_url text [not null, note: '【トラッキングURL】UTMパラメータを付与した遷移先URL。']
   created_at timestamptz [not null, default: `now()`, note: '【作成日時】']
   updated_at timestamptz [not null, default: `now()`, note: '【更新日時】']
@@ -290,24 +280,6 @@ Table post_metrics {
 
 Ref: post_metrics.post_id > posts.id [delete: restrict]
 
-Table post_metric_failures {
-  id bigint [pk, increment, note: '【計測失敗ID】']
-  post_id bigint [not null, note: '【投稿ID】']
-  source post_metric_failure_source [not null, note: '【失敗発生元】']
-  error_code varchar(100) [note: '【エラーコード】']
-  error_message text [not null, note: '【エラーメッセージ】マスク済みエラーだけを保存し、認証情報とトークンは保存しない。']
-  retryable boolean [not null, note: '【再試行可否】']
-  failed_at timestamptz [not null, default: `now()`, note: '【失敗日時】']
-
-  indexes {
-    (post_id, failed_at)
-    (retryable, failed_at)
-  }
-
-  Note: '失敗した計測試行をすべて保持し、この履歴から再試行上限を判定する。'
-}
-
-Ref: post_metric_failures.post_id > post_metrics.post_id [delete: cascade]
 
 Table agent_memories {
   id bigint [pk, increment, note: '【エージェント記憶ID】']
@@ -352,36 +324,30 @@ Ref: memory_posts.post_id > posts.id [delete: cascade]
 
 Table agent_sessions {
   id bigint [pk, increment, note: '【エージェントセッションID】']
-  company_id bigint [not null, note: '【会社ID】']
   marketer_id bigint [not null, note: '【マーケターID】']
   parent_session_id bigint [note: '【親エージェントセッションID】サブエージェントを呼び出したセッション。']
   agent agent_type [not null, note: '【エージェント種別】']
-  title varchar(255) [note: '【セッションタイトル】']
-  status agent_session_status [not null, default: 'active', note: '【セッションステータス】']
-  next_turn_number int [not null, default: 1, note: '【次回ターン番号】セッション行をロックして原子的に採番する。1以上とする。']
+  title varchar(255) [note: '【セッションタイトル】セッション一覧での識別に使用し、会話内容から自動生成できる。']
   archived_at timestamptz [note: '【アーカイブ日時】']
   created_at timestamptz [not null, default: `now()`, note: '【作成日時】']
   updated_at timestamptz [not null, default: `now()`, note: '【更新日時】']
 
   indexes {
-    (id, company_id, marketer_id) [unique]
-    (company_id, updated_at)
+    (id, marketer_id) [unique]
     (marketer_id, updated_at)
     (parent_session_id, created_at)
-    (status, updated_at)
   }
 
-  Note: '1つのエージェントが所有する再開可能な会話。サブエージェントにはparent_session_idで親と紐づく個別セッションを割り当てる。タスク完了はセッション完了ではなくターンで表現する。'
+  Note: '1つのエージェントが所有する再開可能な会話。ユーザーが切り替えるのは親セッションだけとし、サブエージェントにはparent_session_idで親と紐づく内部セッションを割り当てる。'
 }
 
-Ref: agent_sessions.company_id > companies.id [delete: restrict]
-Ref: agent_sessions.(marketer_id, company_id) > marketers.(id, company_id) [delete: restrict]
-Ref: agent_sessions.(parent_session_id, company_id, marketer_id) > agent_sessions.(id, company_id, marketer_id) [delete: restrict]
+Ref: agent_sessions.marketer_id > marketers.id [delete: restrict]
+Ref: agent_sessions.(parent_session_id, marketer_id) > agent_sessions.(id, marketer_id) [delete: restrict]
 
 Table agent_turns {
   id bigint [pk, increment, note: '【エージェントターンID】']
   session_id bigint [not null, note: '【エージェントセッションID】']
-  turn_number int [not null, note: '【ターン番号】セッション内で単調増加させる。1以上とする。']
+  turn_number int [not null, note: '【ターン番号】セッション行をロックし、セッション内の最大ターン番号に1を加えて採番する。1以上とする。']
   status agent_turn_status [not null, default: 'pending', note: '【ターンステータス】']
   next_item_number int [not null, default: 1, note: '【次回アイテム番号】ターン行をロックして原子的に採番する。1以上とする。']
   error_code varchar(100) [note: '【エラーコード】']
