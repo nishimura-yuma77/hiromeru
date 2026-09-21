@@ -1,0 +1,520 @@
+Project hiromeru {
+  database_type: 'PostgreSQL'
+  Note: '''
+    MVP database schema for the AI-assisted X marketing system.
+
+    PostgreSQL extensions:
+    - vector: long-term memory embeddings
+
+    Application invariants that DBML cannot fully express:
+    - Editing an approved campaign or post increments its revision and requires approval again.
+    - Companies own business data, while marketers are the actors operating on that data.
+    - A post linked to a campaign must belong to the same company.
+    - A marketer acting on business data must belong to the company that owns the data.
+    - A memory and its related campaigns or posts must belong to the same company.
+    - Memory embeddings are generated only from content with the single configured embedding model and dimensions.
+    - Child records such as post metrics, agent turns, agent items, tool executions, and LLM calls inherit company ownership from their required parent.
+    - Only an approved post revision may be published to X.
+    - Agent-generated campaign proposals remain in agent history until human approval; the approved campaign is then persisted as business data.
+    - Published posts and completed audit records must not be deleted by normal CRUD operations.
+    - An agent session contains ordered turns, and each turn contains ordered items. Items do not directly reference sessions.
+    - Agent item content is append-only. Only context status may transition from active to quarantined.
+    - Effective provider context uses content for active items and context_override for quarantined items. Sensitive values must be redacted before they are written.
+    - Raw reasoning and hidden chain-of-thought are not stored in agent items.
+    - Subagents are invoked as tools. Their resumable task IDs are stored in the tool call and result content, while parent_session_id retains the session hierarchy.
+    - Context checkpoints are created only at completed turn boundaries. Reconstruction uses the latest valid checkpoint followed by later turns.
+    - Quarantining an item invalidates every checkpoint whose compacted turn range contains that item.
+    - A turn is sealed when it enters a terminal status. No items, tool executions for its tool-call items, or LLM calls may be added afterward.
+    - Turn step and cost limits are application configuration. Used steps and cost are derived from related LLM calls; limit termination is recorded in the turn error code.
+    - Each tool execution belongs to exactly one tool_call item, and each tool_result item references its tool_call item in the same turn.
+    - External content remains classified as untrusted data even after passing guardrail checks.
+    - Security events are audit records only. Agent item context status is the source of truth for context inclusion.
+    - Security events record findings that require observation or enforcement; successful Guardrail and Agent Firewall checks are not duplicated.
+    - JSONB content schemas and tool-specific input and output schemas are validated by the application before insertion.
+    - Forgetting a memory permanently deletes its content and embedding.
+    - CHECK constraints described in notes must be added in SQL migrations.
+  '''
+}
+
+Enum user_status {
+  active
+  disabled
+}
+
+Enum campaign_status {
+  draft
+  pending_approval
+  approved
+  rejected
+  archived
+}
+
+Enum post_status {
+  draft
+  pending_approval
+  approved
+  publishing
+  published
+  publish_failed
+  archived
+}
+
+Enum post_metric_status {
+  pending
+  processing
+  completed
+  failed
+}
+
+Enum post_metric_failure_source {
+  x
+  ga4
+  system
+}
+
+Enum agent_type {
+  parent
+  campaign_planner
+  content_creator
+}
+
+Enum agent_session_status {
+  active
+  archived
+}
+
+Enum agent_item_type {
+  user_message
+  assistant_message
+  tool_call
+  tool_result
+}
+
+Enum agent_item_context_status {
+  active
+  quarantined
+}
+
+Enum agent_context_class {
+  conversation
+  untrusted_data
+}
+
+Enum agent_content_source {
+  user_input
+  user_document
+  agent_output
+  web_content
+  web_search
+  database
+  long_term_memory
+  external_api
+  mcp_tool
+  system
+}
+
+Enum agent_turn_status {
+  pending
+  running
+  completed
+  failed
+  cancelled
+  blocked
+}
+
+Enum tool_execution_status {
+  pending
+  running
+  waiting_for_approval
+  completed
+  failed
+  cancelled
+  blocked
+}
+
+Enum security_event_type {
+  prompt_injection
+  sensitive_data
+  unauthorized_tool_call
+  unsafe_external_action
+}
+
+Enum security_detector {
+  application
+  orcarouter_guardrail
+  orcarouter_firewall
+}
+
+Enum security_enforcement {
+  observed
+  sanitized
+  blocked
+}
+
+Table users {
+  id bigint [pk, increment]
+  email varchar(320) [not null]
+  auth_provider varchar(100) [not null]
+  auth_subject varchar(255) [not null, note: 'The immutable user ID issued by the authentication provider.']
+  status user_status [not null, default: 'active']
+  last_signed_in_at timestamptz
+  created_at timestamptz [not null, default: `now()`]
+  updated_at timestamptz [not null, default: `now()`]
+
+  indexes {
+    email [unique]
+    (auth_provider, auth_subject) [unique]
+  }
+
+  Note: 'Authentication identities only. Business actions are performed by marketers.'
+}
+
+Table companies {
+  id bigint [pk, increment]
+  name varchar(255) [not null]
+  created_at timestamptz [not null, default: `now()`]
+  updated_at timestamptz [not null, default: `now()`]
+
+  Note: 'The owner of campaign-related and operational business data.'
+}
+
+Table marketers {
+  id bigint [pk, increment]
+  user_id bigint [not null, unique]
+  company_id bigint [not null, unique]
+  created_at timestamptz [not null, default: `now()`]
+  updated_at timestamptz [not null, default: `now()`]
+
+  indexes {
+    (id, company_id) [unique]
+  }
+
+  Note: 'The business actor for all current product features. Each user and company has at most one marketer profile in the MVP.'
+}
+
+Ref: marketers.user_id > users.id [delete: restrict]
+Ref: marketers.company_id > companies.id [delete: restrict]
+
+Table campaigns {
+  id bigint [pk, increment]
+  company_id bigint [not null]
+  created_by_marketer_id bigint [not null]
+  title varchar(255) [not null]
+  target_profile text [not null, note: 'The attributes, context, challenges, and motivations of the people this campaign aims to reach.']
+  background text [not null]
+  objective text [not null]
+  plan text [not null, note: 'The approved or proposed marketing strategy and execution details.']
+  status campaign_status [not null, default: 'draft']
+  revision int [not null, default: 1, note: 'Must be greater than zero and increment whenever approval-relevant content changes.']
+  approved_revision int [note: 'Must equal revision while status is approved.']
+  submitted_at timestamptz
+  approved_at timestamptz
+  created_at timestamptz [not null, default: `now()`]
+  updated_at timestamptz [not null, default: `now()`]
+  archived_at timestamptz
+
+  indexes {
+    (company_id, status)
+    (company_id, created_at)
+  }
+}
+
+Ref: campaigns.company_id > companies.id [delete: restrict]
+Ref: campaigns.created_by_marketer_id > marketers.id [delete: restrict]
+
+Table posts {
+  id bigint [pk, increment]
+  company_id bigint [not null]
+  created_by_marketer_id bigint [not null]
+  campaign_id bigint [not null]
+  body text [not null, note: 'The application must validate the current X text length rules.']
+  status post_status [not null, default: 'draft']
+  revision int [not null, default: 1, note: 'Must be greater than zero and increment whenever the body or destination changes.']
+  approved_revision int [note: 'Must equal revision before publishing.']
+  scheduled_at timestamptz
+  approved_at timestamptz
+  published_at timestamptz
+  x_post_id varchar(255) [unique]
+  last_publish_error text [note: 'Sanitized error only; credentials and tokens must never be stored.']
+  created_at timestamptz [not null, default: `now()`]
+  updated_at timestamptz [not null, default: `now()`]
+  archived_at timestamptz
+
+  indexes {
+    (company_id, status)
+    (campaign_id, status)
+    (status, scheduled_at)
+  }
+}
+
+Ref: posts.company_id > companies.id [delete: restrict]
+Ref: posts.created_by_marketer_id > marketers.id [delete: restrict]
+Ref: posts.campaign_id > campaigns.id [delete: restrict]
+
+Table post_tracking_links {
+  id bigint [pk, increment]
+  post_id bigint [not null, unique]
+  landing_url text [not null]
+  utm_source varchar(255) [not null, default: 'x']
+  utm_medium varchar(255) [not null, default: 'social']
+  utm_campaign varchar(255) [not null]
+  utm_content varchar(255) [not null]
+  utm_term varchar(255)
+  tracked_url text [not null]
+  created_at timestamptz [not null, default: `now()`]
+  updated_at timestamptz [not null, default: `now()`]
+
+  indexes {
+    (utm_source, utm_medium, utm_campaign, utm_content)
+  }
+
+  Note: 'UTM generation is deterministic application logic and must not invoke an LLM.'
+}
+
+Ref: post_tracking_links.post_id > posts.id [delete: cascade]
+
+Table post_metrics {
+  post_id bigint [pk]
+  scheduled_at timestamptz [not null, note: 'The first-week measurement is scheduled for seven days after publication.']
+  status post_metric_status [not null, default: 'pending']
+  x_pv_count bigint [note: 'First-week X post view count; must be zero or greater.']
+  landing_user_count bigint [note: 'Users reaching the application page through this post; must be zero or greater.']
+  measured_at timestamptz
+
+  indexes {
+    (status, scheduled_at)
+  }
+
+  Note: 'The post primary key makes metric collection idempotent. Both counts and measured_at must be present when status is completed.'
+}
+
+Ref: post_metrics.post_id > posts.id [delete: restrict]
+
+Table post_metric_failures {
+  id bigint [pk, increment]
+  post_id bigint [not null]
+  source post_metric_failure_source [not null]
+  error_code varchar(100)
+  error_message text [not null, note: 'Sanitized error only; credentials and tokens must never be stored.']
+  retryable boolean [not null]
+  failed_at timestamptz [not null, default: `now()`]
+
+  indexes {
+    (post_id, failed_at)
+    (retryable, failed_at)
+  }
+
+  Note: 'Each failed metric collection attempt is retained. Retry limits are evaluated from this history.'
+}
+
+Ref: post_metric_failures.post_id > post_metrics.post_id [delete: cascade]
+
+Table agent_memories {
+  id bigint [pk, increment]
+  company_id bigint [not null]
+  content text [not null]
+  embedding vector [not null, note: 'The vector generated from content. Set to vector(n) and add an HNSW cosine index after selecting the single embedding model and dimensions.']
+
+  indexes {
+    company_id
+  }
+
+  Note: 'Company-level long-term memory. A memory may exist without any campaign or post relation.'
+}
+
+Ref: agent_memories.company_id > companies.id [delete: restrict]
+
+Table memory_campaigns {
+  memory_id bigint [not null]
+  campaign_id bigint [not null]
+
+  indexes {
+    (memory_id, campaign_id) [pk]
+    campaign_id
+  }
+}
+
+Ref: memory_campaigns.memory_id > agent_memories.id [delete: cascade]
+Ref: memory_campaigns.campaign_id > campaigns.id [delete: cascade]
+
+Table memory_posts {
+  memory_id bigint [not null]
+  post_id bigint [not null]
+
+  indexes {
+    (memory_id, post_id) [pk]
+    post_id
+  }
+}
+
+Ref: memory_posts.memory_id > agent_memories.id [delete: cascade]
+Ref: memory_posts.post_id > posts.id [delete: cascade]
+
+Table agent_sessions {
+  id bigint [pk, increment]
+  company_id bigint [not null]
+  marketer_id bigint [not null]
+  parent_session_id bigint
+  agent agent_type [not null]
+  title varchar(255)
+  status agent_session_status [not null, default: 'active']
+  next_turn_number int [not null, default: 1, note: 'Atomically allocated under a session row lock; must be greater than zero.']
+  archived_at timestamptz
+  created_at timestamptz [not null, default: `now()`]
+  updated_at timestamptz [not null, default: `now()`]
+
+  indexes {
+    (id, company_id, marketer_id) [unique]
+    (company_id, updated_at)
+    (marketer_id, updated_at)
+    (parent_session_id, created_at)
+    (status, updated_at)
+  }
+
+  Note: 'A resumable conversation owned by one agent. A subagent receives its own session linked through parent_session_id. Task completion is represented by turns, not by completing the session.'
+}
+
+Ref: agent_sessions.company_id > companies.id [delete: restrict]
+Ref: agent_sessions.(marketer_id, company_id) > marketers.(id, company_id) [delete: restrict]
+Ref: agent_sessions.(parent_session_id, company_id, marketer_id) > agent_sessions.(id, company_id, marketer_id) [delete: restrict]
+
+Table agent_turns {
+  id bigint [pk, increment]
+  session_id bigint [not null]
+  turn_number int [not null, note: 'Allocated monotonically within the session; must be greater than zero.']
+  status agent_turn_status [not null, default: 'pending']
+  next_item_number int [not null, default: 1, note: 'Atomically allocated under a turn row lock; must be greater than zero.']
+  error_code varchar(100)
+  error_message text [note: 'Sanitized error only.']
+  started_at timestamptz
+  completed_at timestamptz
+  created_at timestamptz [not null, default: `now()`]
+  updated_at timestamptz [not null, default: `now()`]
+
+  indexes {
+    (session_id, turn_number) [unique]
+    (id, session_id) [unique]
+    (session_id, created_at)
+    (status, created_at)
+  }
+
+  Note: 'One agent loop from a single input to an assistant response or subagent tool result. A turn may contain multiple LLM calls and tool executions. Step and cost usage are derived from related LLM calls.'
+}
+
+Ref: agent_turns.session_id > agent_sessions.id [delete: restrict]
+
+Table tool_executions {
+  id bigint [pk, increment]
+  tool_call_item_id bigint [not null, unique]
+  status tool_execution_status [not null, default: 'pending']
+  attempt_count int [not null, default: 0, note: 'The number of internal attempts for this logical tool call; must be zero or greater.']
+  created_at timestamptz [not null, default: `now()`]
+  completed_at timestamptz
+
+  Note: 'Minimal operational state for one logical tool_call item. Tool name, call ID, and arguments are stored in the tool_call content; output and final error are stored in the tool_result content. Internal retry details remain in application logs. The application ensures tool_call_item_id references an item whose item_type is tool_call.'
+}
+
+Ref: tool_executions.tool_call_item_id > agent_items.id [delete: restrict]
+
+Table llm_calls {
+  id bigint [pk, increment]
+  agent_turn_id bigint [not null]
+  orcarouter_request_id varchar(255) [unique, note: 'Used to retrieve settled usage and cost from OrcaRouter.']
+  input_tokens int [note: 'OrcaRouter usage.prompt_tokens; must be zero or greater.']
+  output_tokens int [note: 'OrcaRouter usage.completion_tokens; must be zero or greater.']
+  cost_usd decimal(18,8) [note: 'Exact billed cost returned by OrcaRouter; must be zero or greater. Convert to JPY only for display.']
+  response_time_ms int [note: 'Must be zero or greater.']
+  succeeded boolean [not null]
+  error_code varchar(100)
+  error_message text [note: 'Sanitized error only.']
+  called_at timestamptz [not null, default: `now()`]
+
+  indexes {
+    (agent_turn_id, called_at)
+    (id, agent_turn_id) [unique]
+  }
+
+  Note: 'The MVP uses one configured model. Failed calls may not have token usage or cost.'
+}
+
+Ref: llm_calls.agent_turn_id > agent_turns.id [delete: restrict]
+
+Table agent_items {
+  id bigint [pk, increment]
+  agent_turn_id bigint [not null]
+  related_tool_call_item_id bigint
+  llm_call_id bigint
+  item_number int [not null, note: 'Allocated monotonically within the turn; must be greater than zero.']
+  idempotency_key varchar(255) [not null, note: 'Stable application-generated key used to prevent duplicate persistence during retries and crash recovery.']
+  item_type agent_item_type [not null]
+  context_class agent_context_class [not null, note: 'Classified from provenance by the application. Passing a guardrail does not promote untrusted_data to conversation.']
+  content_source agent_content_source [not null]
+  context_status agent_item_context_status [not null, default: 'active']
+  quarantine_reason varchar(100)
+  context_override jsonb [note: 'Required for a quarantined item. Provider context uses this safe replacement instead of content.']
+  quarantined_at timestamptz
+  content jsonb [not null, note: 'Immutable redacted content. Tool inputs belong to tool_call items and outputs belong to tool_result items.']
+  created_at timestamptz [not null, default: `now()`]
+
+  indexes {
+    (id, agent_turn_id) [unique]
+    (agent_turn_id, item_number) [unique]
+    (agent_turn_id, idempotency_key) [unique]
+    (related_tool_call_item_id, item_type) [unique]
+    llm_call_id
+  }
+
+  Note: 'Ordered history within one turn. Content is immutable; context_status may only transition from active to quarantined. A tool_result requires related_tool_call_item_id; other item types require it to be null. The referenced item must have item_type tool_call. CHECK constraints require quarantine fields and context_override exactly when context_status is quarantined.'
+}
+
+Ref: agent_items.agent_turn_id > agent_turns.id [delete: restrict]
+Ref: agent_items.(related_tool_call_item_id, agent_turn_id) > agent_items.(id, agent_turn_id) [delete: restrict]
+Ref: agent_items.(llm_call_id, agent_turn_id) > llm_calls.(id, agent_turn_id) [delete: restrict]
+
+Table agent_context_checkpoints {
+  id bigint [pk, increment]
+  session_id bigint [not null]
+  compacted_through_turn_id bigint [not null]
+  summary text [not null, note: 'Redacted context summary; raw reasoning is not included.']
+  invalidated_at timestamptz
+  invalidation_reason varchar(100)
+  created_at timestamptz [not null, default: `now()`]
+
+  indexes {
+    (session_id, compacted_through_turn_id)
+    (session_id, created_at)
+  }
+
+  Note: 'An additive checkpoint created only after the referenced turn completes. Original items are retained. Resume uses the newest non-invalidated checkpoint plus later turns. A SQL partial unique index permits at most one non-invalidated checkpoint per turn boundary.'
+}
+
+Ref: agent_context_checkpoints.(compacted_through_turn_id, session_id) > agent_turns.(id, session_id) [delete: restrict]
+
+Table security_events {
+  id bigint [pk, increment]
+  agent_turn_id bigint [not null]
+  agent_item_id bigint
+  llm_call_id bigint
+  event_type security_event_type [not null]
+  detector security_detector [not null]
+  source agent_content_source [not null]
+  enforcement security_enforcement [not null]
+  external_event_id varchar(255) [note: 'OrcaRouter Match ID or Firewall Event ID. Null for application-detected events.']
+  summary text [not null, note: 'A redacted description; never store the detected secret itself.']
+  metadata jsonb [not null, default: '{}', note: 'Allow-listed and redacted diagnostic values only.']
+  detected_at timestamptz [not null, default: `now()`]
+
+  indexes {
+    (event_type, detected_at)
+    (detector, external_event_id) [unique]
+    agent_turn_id
+    agent_item_id
+    llm_call_id
+  }
+
+  Note: 'Append-only audit findings within one agent turn. Tool-related findings reference the affected tool_call or tool_result through agent_item_id. Successful checks are omitted. Runtime context inclusion is controlled by agent_items.context_status. Composite foreign keys require optional item and LLM references to use the same turn. OrcaRouter stage, rule type, and verdict are stored as allow-listed metadata without raw matched content.'
+}
+
+Ref: security_events.agent_turn_id > agent_turns.id [delete: restrict]
+Ref: security_events.(agent_item_id, agent_turn_id) > agent_items.(id, agent_turn_id) [delete: restrict]
+Ref: security_events.(llm_call_id, agent_turn_id) > llm_calls.(id, agent_turn_id) [delete: restrict]
