@@ -754,7 +754,8 @@ flowchart TD
 - 上限の確認は、LLM呼び出し、Tool実行、Context圧縮の前に行う（上記のフローの「上限内か」）
 - LLM呼び出し、Tool実行、外部API呼び出しのタイムアウトは、残り時間を超えない値にする。設定値が残り時間より長い場合は、残り時間に切り詰める
 - サブエージェントの内部ループは、親Turnの経過時間の上限を共有する。子だけが別の時間枠を持たない
-- 経過時間の上限に達した場合は、エラーコード`TURN_TIME_LIMIT_EXCEEDED`を保存してTurnを`failed`で終了する。ステップ・コストの上限到達と同じ経路とする
+- 上限に達した場合は、エラーコードを保存してTurnを`failed`で終了する。経過時間は`TURN_TIME_LIMIT_EXCEEDED`、ステップ数は`TURN_STEP_LIMIT_EXCEEDED`、コストは`TURN_COST_LIMIT_EXCEEDED`とする。3つとも同じ経路で終了する
+- 復旧できないInput Guardrailの検出でTurnを`blocked`で終了する場合は`TURN_BLOCKED`、Context圧縮に失敗して未圧縮でも上限を超える場合は`CONTEXT_COMPACTION_FAILED`、LLM呼び出しの失敗などで継続できない場合は`AGENT_EXECUTION_FAILED`を保存する。エラーコードと、メッセージ送信APIのHTTP Statusの対応は`API_DESIGN.md`の5.3に従う
 - UIは、時間内に完了できなかったことをユーザーへ表示する。Agentは自動で再実行しない
 
 ### 中断されたTurnの復旧
@@ -776,7 +777,7 @@ flowchart TD
 ```
 
 - 対象は、`status`が`pending`または`running`で、`api_idempotency_requests.agent_turn_id`から参照されない（API実行Turnではない）Turnとする。子Sessionのターンも同じ規則で個別に対象とする
-- 判定は、`started_at`（未開始なら`created_at`）から復旧判定時間が経過したかで行う。復旧判定時間は、関数の最大実行時間（300秒）に余裕を加えた値とし、既定は330秒とする【要決定】。Turnの経過時間の上限（200秒）より長くし、実行中のTurnを誤って中断させない
+- 判定は、`started_at`（未開始なら`created_at`）から復旧判定時間が経過したかで行う。復旧判定時間は、関数の最大実行時間（300秒）に余裕を加えた値とし、既定は330秒とする。Turnの経過時間の上限（200秒）より長くし、実行中のTurnを誤って中断させない
 - 更新は、`WHERE id = :id AND status IN ('pending', 'running')`の条件付きUPDATEで行う。更新できなかった場合は、他の処理が更新済みなので何もしない
 - 更新内容は、`status = failed`、`error_code = TURN_INTERRUPTED`、マスク済みの`error_message`、`completed_at`とする。同じTransactionで、`pending`または`running`の`tool_executions`を`cancelled`へ更新する
 - 終端状態になったTurnには、Item、Tool実行、LLM呼び出しを追加しない。中断されたTurnの処理が遅れて書き込もうとしても、書き込みは`status = running`を条件とするため失敗する
@@ -784,8 +785,8 @@ flowchart TD
 - `TURN_INTERRUPTED`は再試行可能（`retryable = true`）とする。ただし、再試行は新しいTurnとして実行する
 - 実行する契機は、次の3つとする。いずれも同じ処理を呼ぶ
   - 同じSessionの新しいTurnを開始するとき（Session行をロックしてTurn番号を採番する前に、同じSessionの中断Turnを復旧する）
-  - Turnの状態を返す処理
-  - Vercel Cronによる定期処理。前の2つで拾えなかったTurnの回収用とする。実行頻度はプランの制限に従う【要決定】
+  - Turnの状態を返す処理（`API_DESIGN.md`のTurn取得API 5.4とSession履歴取得API 5.6）
+  - Vercel Cronによる定期処理（1日1回）。前の2つで拾えなかったTurnの回収用とする。Hobbyプランのcronは1日1回までで実行時刻にも幅があるため、ユーザーが待つ場面の復旧には使わない
 - 復旧処理は冪等とし、同じTurnを何度確認しても結果が変わらない
 - 中断時に完了していなかったLLM呼び出しは、`llm_calls`へ記録されない場合がある。OrcaRouter側の利用量との差になり得る（既知の制約）
 - API実行Turnは対象外である。施策のupsertは同じキーの再送で、X投稿は`external_result`の有無に従って、API設計書の冪等性の仕組みで復旧する

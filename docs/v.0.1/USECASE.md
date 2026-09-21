@@ -27,6 +27,8 @@
 - 施策保存とX投稿は、認証済みUIからSession配下のAPIを呼び出して実行する
 - UIは最終承認操作ごとに`Idempotency-Key`を生成し、二重送信と通信再試行では同じキーを使用する
 - APIは同じキーの同一Requestを一度だけ実行し、完了後の再送には保存済みの確定Responseを返す。`outcome_unknown`は手動照合後の確定結果へ更新できる
+- ユーザーのメッセージは、会話API（`API_DESIGN.md`の5章）で親Agent Turnとして実行する。UIは、Turnが終わるまで待ち、結果を1回のResponseで受け取る
+- 同じ親Sessionで同時に実行できるAgent Turnは1つとする。Turnには経過時間などの上限があり、実行中のまま残ったTurnは復旧される（4.5）
 - 自由文による同意は最終承認として扱わない
 
 ## 4. 提案内容の共通レビュー
@@ -44,6 +46,7 @@
 - 親Agentは対象に応じた新しい使い捨て子Sessionを起動する
 - 親Agentは子Agentの結果をもとに提案Toolを実行する
 - UIは新しいTool Resultでフォームを置き換える
+- 再相談も通常の親Agent Turnであり、同時実行、上限、中断の扱いは4.5に従う
 
 ### 4.3 最終承認
 - UIは承認操作用の`Idempotency-Key`を生成し、承認時点のフォーム値とともにSession配下のAPIへ送信する
@@ -105,6 +108,36 @@ flowchart TD
     NEXT_TURN --> AGENT_WORKFLOW([親Agentワークフローへ接続])
 ```
 
+### 4.5 Agent Turnの実行と中断
+親Agent Turnは、ユーザーのメッセージ送信（`API_DESIGN.md`の5.3）から始まる。次の制約は、UC-01、UC-02、Agentと再相談を含むすべての親Agent Turnに共通する。
+
+- **同期で実行する。** APIは、Turnが終了してから結果を1回のResponseで返す。Vercel Functionsでは、Responseを返した後の処理に頼れないため、Turnは1回のRequestの中で完了させる
+- **同時実行は1つ。** 同じ親Sessionで前の親Agent Turnが実行中（`pending`または`running`）の場合、新しいTurnは開始せず`409 TURN_IN_PROGRESS`を返す。拒否したRequestは履歴へ保存しない。UIは、Turnの実行中は送信ボタンを無効にし、`409`を受けた場合は前のTurnの完了を待って再送を促す。承認APIのAPI実行Turnは、この同時実行の数に含めない
+- **上限がある。** Turnにはステップ数、コスト、経過時間の上限を設ける。経過時間の既定は200秒とし、関数の最大実行時間（300秒）より短くする。上限に達したTurnは`failed`で終了し、UIは「時間内に完了できなかった」などの理由を表示する。Agentは自動で再実行しない
+- **中断されたTurnは復旧する。** 関数が最大実行時間で強制終了されると、Turnは実行中のまま残る。復旧判定時間（既定330秒）を経過したTurnは、次のTurn開始時、Turn・履歴の取得時、または定期処理で、`TURN_INTERRUPTED`の`failed`へ確定する。実行中のTurnは、無期限には残らない
+- **失敗したTurnは再送で再実行する。** `failed`または`blocked`のTurnは、次のContextへ含めない。ユーザーの入力も含まれないため、ユーザーが同じ依頼を再送する。再送は新しいTurnとして実行する
+- **Responseを受け取れなかった場合。** 通信の切断やプラットフォームの`504`でResponseを受け取れなくても、サーバーではTurnが実行または保存されている可能性がある。UIは同じメッセージを再送せず、履歴取得API（`API_DESIGN.md`の5.6）で最新のTurnを確認する。実行中の場合はTurn取得API（5.4）で終了を待つ
+
+```mermaid
+flowchart TD
+    SEND[ユーザーがメッセージを送信] --> API[メッセージ送信API]
+    API --> RUNNING{同じSessionで実行中のTurnがあるか}
+    RUNNING -- はい --> BUSY[409 TURN_IN_PROGRESS]
+    BUSY --> WAIT[UIは前のTurnの完了を待つ]
+    RUNNING -- いいえ --> EXECUTE[Turnを実行]
+    EXECUTE --> RESULT{結果}
+    RESULT -- 完了 --> DONE([回答と提案を表示])
+    RESULT -- 上限超過・Guardrail・実行失敗 --> FAILED([failedで終了しエラーを表示])
+    RESULT -- Responseを受け取れない --> CHECK[履歴取得APIで最新Turnを確認]
+    CHECK --> STATE{最新Turnの状態}
+    STATE -- 完了 --> DONE
+    STATE -- 実行中 --> POLL[Turn取得APIで終了を待つ]
+    POLL --> STATE
+    STATE -- 中断 --> INTERRUPTED([TURN_INTERRUPTED: 依頼を再送])
+    FAILED --> RESEND[ユーザーが同じ依頼を再送]
+    INTERRUPTED --> RESEND
+```
+
 ## 5. UC-01 施策を作成・更新する
 
 ### 5.1 目的
@@ -151,6 +184,9 @@ flowchart TD
 | 子Agent失敗 | 失敗Tool Resultを現在の親Agentが観測し、ユーザーへ原因と次の選択肢を補足する。業務データは保存しない |
 | 提案Schema不正 | `propose_campaign`の失敗Tool Resultを現在の親Agentが観測し、不正なフォームを表示せず再生成または修正方法を補足する |
 | 親Session不正 | `404 AGENT_SESSION_NOT_FOUND`を返す。UIで有効な親Sessionを選択または作成し、マスク済みエラーを新しいTurnへ送信して親Agentワークフローへ接続する |
+| Turn実行中の送信 | 同じ親Sessionで前のAgent Turnが実行中の場合は`409 TURN_IN_PROGRESS`を返し、新しいTurnを開始せず履歴へ保存しない。UIは前のTurnの完了を待って再送を促す（4.5） |
+| Turnの上限超過 | ステップ数・コスト・経過時間（既定200秒）の上限に達したTurnは`failed`で終了し、UIへ表示する。Agentは自動再実行せず、ユーザーが依頼を再送する（4.5） |
+| Turnの中断 | 関数の最大実行時間（300秒）で強制終了されたTurnは、復旧判定時間の経過後に`TURN_INTERRUPTED`の`failed`へ確定する。ユーザーが同じ依頼を再送する（4.5） |
 | 同一Requestの再送 | 保存済みの確定HTTP StatusとResponse Bodyを返し、新しいCampaignとAgent Turnを作成しない |
 | 同一Requestを処理中 | Leaseが有効なら`409 IDEMPOTENCY_REQUEST_IN_PROGRESS`を返し、UIは処理完了後に同じキーで結果を再取得する |
 | Campaign処理のLease切れ | 新しい実行TokenとLeaseをCAS設定し、既存のAPI実行Turnを再利用して安全に再開する |
@@ -262,6 +298,9 @@ flowchart TD
 | 子Agent失敗 | 失敗Tool Resultを現在の親Agentが観測し、ユーザーへ原因と次の選択肢を補足する。X投稿は行わない |
 | 提案Schema不正 | `propose_x_post`の失敗Tool Resultを現在の親Agentが観測し、不正なフォームを表示せず再生成または修正方法を補足する |
 | 親Session不正 | `404 AGENT_SESSION_NOT_FOUND`を返す。UIで有効な親Sessionを選択または作成し、マスク済みエラーを新しいTurnへ送信して親Agentワークフローへ接続する |
+| Turn実行中の送信 | 同じ親Sessionで前のAgent Turnが実行中の場合は`409 TURN_IN_PROGRESS`を返し、新しいTurnを開始せず履歴へ保存しない。UIは前のTurnの完了を待って再送を促す（4.5） |
+| Turnの上限超過 | ステップ数・コスト・経過時間（既定200秒）の上限に達したTurnは`failed`で終了し、UIへ表示する。Agentは自動再実行せず、ユーザーが依頼を再送する（4.5） |
+| Turnの中断 | 関数の最大実行時間（300秒）で強制終了されたTurnは、復旧判定時間の経過後に`TURN_INTERRUPTED`の`failed`へ確定する。ユーザーが同じ依頼を再送する（4.5） |
 | 同一Requestの再送 | 保存済みResponseを返し、X投稿とAgent Turnを重複作成しない。`outcome_unknown`の手動照合後は解決後の確定Responseを返す |
 | 同一Requestを処理中 | Leaseが有効なら`409 IDEMPOTENCY_REQUEST_IN_PROGRESS`を返し、Xへ重複投稿しない |
 | X送信前のLease切れ | 新しい実行TokenとLeaseをCAS設定し、既存のAPI実行Turnを再利用して安全に再開する |

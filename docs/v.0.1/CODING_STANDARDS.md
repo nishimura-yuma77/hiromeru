@@ -17,6 +17,12 @@
 
 本書は「どう書くか」を定める。「何を作るか」は上記の設計書に従う。
 
+### 0.3 対象範囲
+
+- 本書の対象は、**バックエンド（Python / FastAPI）のコードだけ** とする
+- フロントエンド（TypeScript、Next.js、UI）のコーディング規約は、本書の対象外とし、別書で定める
+- フロントエンドとの接点は、`API_DESIGN.md`（Request / Response / エラー）に従う。本書は、API を提供する側の書き方だけを定める
+
 ### 0.2 ルールの強さ
 
 | 表記 | 意味 |
@@ -48,7 +54,7 @@
 | 型チェック | `pyright`（`strict` モードを推奨） |
 | テスト | `pytest` + `pytest-asyncio` + `pytest-cov` |
 | 設定の置き場所 | `pyproject.toml` に集約する |
-| 実行環境 | Vercel Functions（Python）。Next.js と同じ Vercel プロジェクトで公開する（17 章） |
+| 実行環境 | Vercel Functions（Python）（17 章） |
 | DB | Neon（PostgreSQL + pgvector）（17.2） |
 | ベクトル型 | `pgvector-python`（SQLAlchemy の `Vector` 型） |
 | Agent SDK | OpenAI Agents SDK。LLM と Embedding は OrcaRouter 経由で呼ぶ（17.3） |
@@ -164,6 +170,7 @@ migrations/
   - 署名付きのダブルサブミットトークン（Cookie の値と `X-CSRF-Token` ヘッダーを照合）を検証する。
 - 必須: ユーザー登録の API は作らない。ユーザー・会社・マーケターは、初期データ投入のスクリプトで作成する。
 - 推奨: 認証の失敗は、メールアドレスが存在しない場合とパスワードが違う場合を区別せず、同じ応答にする。
+- 必須: ログインの試行回数の制限は、Vercel WAF のレート制限（同一 IP）で行う。アプリケーションでは失敗回数を数えない（`API_DESIGN.md` の 2.9）。
 - 推奨: 例外を HTTP レスポンスへ変換する処理は 1 か所（例外ハンドラ）に集約する。
 
 ---
@@ -405,15 +412,19 @@ class AppError(Exception):
 
 ### 17.1 Vercel Functions
 
-- 必須: `/api/v1/*` は、Next.js と同じ Vercel プロジェクトで、同一オリジンとして公開する（書き換え規則で FastAPI へ振り分ける）。別ドメインに分けない。Cookie（`SameSite=Lax`）と Origin 検証（7 章）が前提とする構成である。
-- 必須: Origin の許可リストは、環境ごとのオリジンを環境変数から設定する。プレビュー環境は URL がデプロイごとに変わるため、許可の方法を決める。【要決定】
+- 必須: `/api/v1/*` は、フロントエンドと同じ Vercel プロジェクトで、同一オリジンとして公開する（書き換え規則で FastAPI へ振り分ける）。別ドメインに分けない。Cookie（`SameSite=Lax`）と Origin 検証（7 章）が前提とする構成である。
+- 必須: Origin の許可リストは、環境ごとに次のとおり組み立てる。ワイルドカード（`*.vercel.app` など）は使わない。
+  - 本番（`VERCEL_ENV=production`）: 環境変数 `ALLOWED_ORIGINS`（カスタムドメイン。カンマ区切り）と、`https://<VERCEL_PROJECT_PRODUCTION_URL>`
+  - プレビュー（`VERCEL_ENV=preview`）: そのデプロイ自身の `https://<VERCEL_URL>` と `https://<VERCEL_BRANCH_URL>` だけ。本番のオリジンは許可しない。フロントエンドと API が同じデプロイから配信されるため、これで足りる
+  - ローカル開発: `ALLOWED_ORIGINS` に開発用のオリジン（例: `http://localhost:3000`）を設定する
 - 必須: 関数の最大実行時間（`maxDuration`）は **300 秒** とし、明示的に設定する。300 秒は Hobby の上限である（2026-09-21 時点。Pro は最大 800 秒）。プランを変更する場合は、この値と Lease を見直す。
 - 必須: `API_DESIGN.md` の Lease（`lease_expires_at`）は、`maxDuration`（300 秒）より長くする（例: 330 秒）。短いと、実行中の Request の実行権が別の Request に渡る。
 - 必須: 1 回の Request の処理（Agent の 1 ターン、外部API呼び出し、DB 保存の合計）が 300 秒に収まるように、ステップ数・コスト・外部呼び出しのタイムアウトの上限を設定する。上限に達する前に処理を終える余裕を持たせる。非同期処理には 5 分（300 秒）のタイムアウトを設ける（11 章）。Agent の Turn には、経過時間の上限（既定 200 秒）を設ける（`AGENT_DESIGN.md` の「Turnの上限」）。
 - 必須: 処理が途中で停止しても整合が取れる作りにする。時間切れになると、Vercel が本文のない 504 を返す。API 設計書の冪等性（Lease、Fencing Token、`outcome_unknown`）と、`AGENT_DESIGN.md` の「中断されたTurnの復旧」で対応する。
 - 必須: Request と Response の本文は、プラットフォームの上限（4.5 MB）以下にする。
 - 必須: モジュールレベルに、Request 固有の状態（ユーザー、Session、トランザクション）を持たない。同じインスタンスが複数の Request を処理する。
-- 必須: 定期処理（投稿から 7 日後の計測など）は、Vercel Cron から API を呼んで実行する。エンドポイントは Cron 専用のシークレットで保護し、認証済みユーザーの API と共用しない。【要決定】プランごとの実行頻度の制限を確認する
+- 必須: 定期処理（投稿から 7 日後の計測など）は、Vercel Cron から API を呼んで実行する。エンドポイントは Cron 専用のシークレットで保護し、認証済みユーザーの API と共用しない。
+- 必須: Cron は **1 日 1 回** とする。Hobby の Cron は 1 日 1 回までで、1 日 1 回より短い間隔の式はデプロイが失敗する。実行時刻も、指定した時刻から最大 59 分の幅でずれる（2026-09-21 時点。Pro は 1 分間隔まで指定できる）。このため、Cron は日次の回収と計測に使い、ユーザーを待たせる処理や、時刻の正確さが必要な処理には使わない。中断された Turn の復旧は、Cron に頼らず、次の Turn の開始時と Turn・履歴の取得時にも行う（`AGENT_DESIGN.md` の「中断されたTurnの復旧」）。プランを変更した場合は、頻度を見直す。
 - 推奨: 同時に開いているファイルと接続の数を抑える。関数全体で 1,024 個の上限を共有する（DB 接続も含む）。
 
 ### 17.2 Neon
@@ -425,13 +436,16 @@ class AppError(Exception):
   - `PRESERVE ROWS` / `DELETE ROWS` の一時テーブル
 - 必須: prepared statement は、ドライバ（psycopg）のプロトコルレベルのものだけを使う。プール経由で問題なく動くことを、結合テストで確認する。
 - 必須: `SET LOCAL`（`hnsw.ef_search` の変更など）を使う場合は、プール経由で動くことを確認してから使う。【要検証】
-- 必須: SQLAlchemy の接続プールは小さくする。Vercel の関数は複数のインスタンスが並行して動くため、Neon 側のプールに任せる。【要決定】`pool_size` または `NullPool`
+- 必須: SQLAlchemy の接続プールは **`NullPool`（プールなし）を既定** とする。Vercel の関数は複数のインスタンスが並行して動き、凍結・再利用されるため、アプリケーション側に古い接続を残さず、接続のプールは Neon 側（PgBouncer）に任せる。トランザクションごとに接続を開くため、待ち時間が数十ミリ秒増える。
+- 推奨: 実測で接続の待ち時間が問題になった場合だけ、小さなプール（例: `pool_size=5`、`max_overflow=0`、`pool_pre_ping=True`、`pool_recycle=300`）へ切り替える。切り替えは、計測結果を添えた PR で行う。
 - 推奨: 結合テストの一部を、PgBouncer（transaction モード）経由で実行する。
 
 ### 17.3 OpenAI Agents SDK と OrcaRouter
 
-- 必須: LLM と Embedding の呼び出しは OrcaRouter 経由とする。SDK には `AsyncOpenAI(base_url=<OrcaRouter>, api_key=...)` を `set_default_openai_client` で登録する。呼び出し API の種別（Responses または Chat Completions）は、OrcaRouter の対応に合わせて設定する。【要確認】
+- 必須: LLM と Embedding の呼び出しは OrcaRouter 経由とする。SDK には `AsyncOpenAI(base_url=<OrcaRouter>, api_key=...)` を `set_default_openai_client` で登録する。呼び出し API の種別は **Chat Completions** とし、`set_default_openai_api("chat_completions")` を設定する。OrcaRouter の Guardrails と Agent Firewall の対象として文書に記載があるのが Chat Completions であるためである（2026-09-21 時点。Responses での適用範囲は文書に記載がない）。Responses 専用の機能（SDK のホスト型の Web 検索・ファイル検索など）は使わず、Web 検索などは自前の Tool で実装する（`AGENT_DESIGN.md`）。
 - 必須: SDK の初期化と設定は `clients/` に集約する。SDK の型（`Agent`、`Runner` など）は `agents/` 層に閉じ込め、`api` と `services` から直接 import しない。
+- 必須: OrcaRouter のブロックは、OpenAI 形式のエラーとして返る。Guardrail のブロックは HTTP 400（コード `guardrail_blocked`）、Agent Firewall のブロックは `firewall_blocked` である。SDK の例外を `clients/` で捕捉して、`AGENT_DESIGN.md` のブロック処理（Item の隔離、Tool 実行の `blocked`、`security_events`）へ変換する。Firewall が保留した Tool Call（HTTP 400、`firewall_approval_pending`）は、MVP では承認を待たず、失敗の Tool Result として扱う。
+- 必須: Tool Call の実行前の評価は、Agent Firewall の評価 API（`POST /api/v1/firewall/evaluate`）を明示的に呼んで行う。リクエストとレスポンスの形式は、実装時に OrcaRouter の API リファレンスで確認する。【要確認】
 - 必須: SDK のトレースは、既定では OpenAI のトレース基盤へ送られる。送信先と内容を明示的に設定し、既定では無効にする（`set_tracing_disabled(True)`）。有効にする場合は `trace_include_sensitive_data=False` にする。
 - 必須: 1 回の LLM 呼び出しごとに、OrcaRouter の request ID、トークン数、確定コスト、応答時間を `llm_calls` へ記録する（`DATABASE.dbml`）。
 - 【要決定】SDK の Runner・履歴の仕組みと、`agent_turns` / `agent_items` / チェックポイントの対応（SDK に任せる範囲と自前の範囲）。`AGENT_DESIGN.md` に対応表を追加する。
@@ -484,7 +498,7 @@ class AppError(Exception):
 | 21 | コミットメッセージの形式 | 種別プレフィックス（英語 6 種）＋日本語の要約 |
 | 22 | PR の承認人数 | 1 人以上 |
 | 23 | テストフレームワーク | pytest + pytest-asyncio（`asyncio_mode = "auto"`） |
-| 24 | 実行環境 | Vercel Functions（Python / FastAPI）。フロントは Next.js（TypeScript）で、同じプロジェクトから同一オリジンで公開 |
+| 24 | 実行環境 | Vercel Functions（Python / FastAPI）。API はフロントエンドと同じプロジェクトから、同一オリジンで公開する |
 | 25 | DB | Neon（PostgreSQL）+ pgvector。ベクトル型は `pgvector-python` |
 | 26 | Agent SDK | OpenAI Agents SDK。LLM と Embedding は引き続き OrcaRouter 経由 |
 | 27 | バックエンドの主なライブラリ | Pydantic、SQLAlchemy + Alembic、pytest |
@@ -494,15 +508,17 @@ class AppError(Exception):
 | 31 | 非同期処理のタイムアウト | 非同期を使う場合は 5 分（300 秒）のタイムアウトを設ける。Vercel Functions Hobby プランの `maxDuration`（300 秒）に合わせた値（11 章） |
 | 32 | テストのメソッド名 | `test_<テスト観点>_<変数とテスト仕様>` に固定する（日本語。14 章）。以前の「対象・条件・期待が分かる形」を具体化 |
 | 33 | PR の大きさ | ファイルサイズ（行数）の制限は設けない。完結した開発単位で PR を作成する（16.2）。以前の「目安: 変更 400 行以内」を廃止 |
+| 34 | Origin の許可リスト | 本番は `ALLOWED_ORIGINS` と本番ドメイン、プレビューはそのデプロイ自身の URL だけ。ワイルドカードは使わない（17.1） |
+| 35 | Vercel Cron の頻度 | 1 日 1 回（Hobby の上限。実行時刻は最大 59 分ずれる）。日次の回収・計測に使い、ユーザーを待たせる処理には使わない（17.1） |
+| 36 | Turn の復旧判定時間 | 330 秒（`maxDuration` 300 秒 + 30 秒）。復旧は、次の Turn 開始時、Turn・履歴の取得時、日次の Cron で行う |
+| 37 | Neon の接続プール | `NullPool` を既定にする。実測で問題があれば小さなプールへ切り替える（17.2） |
+| 38 | OrcaRouter 経由の API 種別 | Chat Completions（`set_default_openai_api("chat_completions")`）。Guardrails と Agent Firewall の対象として文書に記載があるため（17.3） |
+| 39 | ログイン試行回数の制限 | Vercel WAF のレート制限（同一 IP）だけを使う。メールアドレス単位の制限は行わない（`API_DESIGN.md` の 2.9） |
 
 ### 未決・他文書待ち
 
 | 項目 | 備考 |
 | --- | --- |
-| Origin 許可リストとプレビュー環境（17.1） | プレビュー URL の許可方法を決める |
-| Vercel Cron の実行頻度（17.1） | プランごとの制限を確認する |
-| Turn の復旧判定時間と実行契機（17.1） | 既定案は 330 秒（`maxDuration` に余裕を加えた値）。Vercel Cron の頻度はプランの制限に従う |
-| Neon 接続プールの設計（17.2） | `pool_size` または `NullPool`。`SET LOCAL` と prepared statement は結合テストで確認する |
+| Neon のプール経由での動作確認（17.2） | `SET LOCAL` と prepared statement は結合テストで確認する |
+| Agent Firewall の評価 API の形式（17.3） | 実装時に OrcaRouter の API リファレンスで確認する |
 | SDK と自前ループの境界（17.3） | `AGENT_DESIGN.md` に、SDK に任せる範囲と自前の範囲の対応表を追加する |
-| OrcaRouter 経由の API 種別（17.3） | Responses / Chat Completions のどちらを使うか確認する |
-| フロントエンドの規約 | TypeScript、Next.js、Vitest、scss、UI コンポーネント、TanStack Query は本書の対象外。別書で定める（UI コンポーネントのライブラリは未定） |

@@ -12,10 +12,10 @@ Agentは`propose_campaign`と`propose_x_post`で編集可能な内容を提案�
 - RequestとResponseのContent-Typeは`application/json`とする
 - APIは署名付きCookieで認証したマーケターを使用し（2.8）、`company_id`と`marketer_id`をRequest Bodyから受け取らない
 - Agent履歴を更新する状態変更APIは`/agent-sessions/{session_id}`配下とし、履歴の保存先をPathで明示する
-- 施策upsert APIとX投稿APIは`Idempotency-Key` Headerを必須とする
+- 施策upsert APIとX投稿APIは`Idempotency-Key` Headerを必須とする。会話API（5章）は使用しない
 - 状態変更API（POST・PATCH・DELETE）にはCSRF対策を適用する（2.8）
 - API呼び出し自体を、Request Bodyに含まれる内容の最終承認として扱う
-- API処理ではLLM、Agent Tool、OrcaRouter Agent Firewallを使用しない
+- 承認APIの処理（3章・4章）ではLLM、Agent Tool、OrcaRouter Agent Firewallを使用しない。Agent Turnを実行するのは、会話API（5章）のメッセージ送信APIだけである
 - X APIやEmbedding APIの認証情報はサーバー側だけで管理する
 
 ### 2.2 入力検証
@@ -104,6 +104,7 @@ APIはSchema検証、業務条件検証、外部API、DB処理の成功または
 ```
 
 - API Resultは`item_type = assistant_message`、`llm_call_id = NULL`、`content_source = system`、`context_class = conversation`、`context_status = active`で保存する
+- API実行Turnを作成するとき、Sessionの`updated_at`を更新する（Session一覧の並び順に使う。5.5）
 - Responseを返す前にAPI Resultを保存し、API実行Turnを終端状態へ変更する
 - エラーResponseの`agent_turn_id`は、API Resultを保存したTurnを示す
 - API Result保存だけでは親Agentを自動起動しない
@@ -137,21 +138,22 @@ APIはSchema検証、業務条件検証、外部API、DB処理の成功または
 }
 ```
 
-Agent履歴へ保存しない認証・Session・JSON解析・冪等性Headerエラーでは`agent_turn_id = null`とする。
+Agent履歴へ保存しない認証・Session・JSON解析・冪等性Headerエラーと、`TURN_IN_PROGRESS`では`agent_turn_id = null`とする。
 
 ### 2.7 HTTP Status
 | Status | 用途 |
 | --- | --- |
-| `200 OK` | 既存施策の上書き成功 |
-| `201 Created` | 施策の新規作成またはX投稿成功 |
+| `200 OK` | 既存施策の上書き成功、または取得API（GET）の成功 |
+| `201 Created` | 施策の新規作成、X投稿成功、Sessionの作成、またはAgent Turnの完了 |
 | `400 Bad Request` | JSON、型、必須項目、Idempotency-Keyが不正 |
 | `401 Unauthorized` | 未認証、または認証Cookieの期限切れ・署名不正 |
 | `403 Forbidden` | CSRF検証に失敗した。テナント境界違反には使用しない |
 | `404 Not Found` | Session・Campaignなどの対象が存在しない、または別のマーケター・別会社に属する |
 | `409 Conflict` | 同じ冪等性キーの処理中、異なるRequestへのキー再利用、施策上書きの競合、または同じSessionでAgent Turnを実行中 |
-| `422 Unprocessable Entity` | 施策内容やX投稿内容の業務検証に失敗 |
+| `422 Unprocessable Entity` | 施策内容やX投稿内容の業務検証に失敗、またはAgent Turnがステップ・コストの上限に達した、入力がBlockされた |
+| `429 Too Many Requests` | ログインの試行回数がWAFのレート制限を超えた（2.9）。アプリケーションは返さない |
 | `502 Bad Gateway` | X APIが明確な失敗を返した |
-| `504 Gateway Timeout` | X APIの実行結果を確定できない |
+| `504 Gateway Timeout` | X APIの実行結果を確定できない、またはAgent Turnが経過時間の上限に達した |
 | `500 Internal Server Error` | 内部処理またはDB保存に失敗した |
 
 ### 2.8 認証とCSRF
@@ -169,7 +171,7 @@ Agent履歴へ保存しない認証・Session・JSON解析・冪等性Headerエ�
 #### CSRF対策
 状態変更API（POST・PATCH・DELETE）には、次の2つをどちらも適用する。
 
-1. `Origin` Header（なければ`Referer`）が許可リストのオリジンと一致する。許可リストは環境変数で設定する。UIとAPIは同じVercelプロジェクトから同一オリジンで公開し、環境ごとのオリジン（プレビュー環境を含む）を許可リストへ設定する。プレビュー環境の許可方法は【要決定】
+1. `Origin` Header（なければ`Referer`）が許可リストのオリジンと一致する。許可リストは環境ごとに組み立てる。本番は環境変数`ALLOWED_ORIGINS`（カスタムドメイン）と本番ドメイン、プレビューはそのデプロイ自身のURLだけとし、ワイルドカードは使わない（`CODING_STANDARDS.md`の17.1）。UIとAPIは同じVercelプロジェクトから同一オリジンで公開する
 2. 署名付きダブルサブミットトークンを検証する。ログイン成功時に発行する`csrf_token` Cookie（`HttpOnly`なし、`Secure`、`SameSite=Lax`）の値と、`X-CSRF-Token` Headerの値が一致し、かつトークンの署名が有効で`marketer_id`に束縛されている
 
 ログインAPIは`csrf_token` Cookieをまだ持たないため、1だけを適用する。ログアウトAPIは未ログインでも同じ結果を返すため、同様に1だけを適用する（強制ログアウトの影響は小さいと判断）。
@@ -218,7 +220,8 @@ Agent履歴へ保存しない認証・Session・JSON解析・冪等性Headerエ�
 - メールアドレスが存在しない場合、パスワードが一致しない場合、ユーザーにマーケタープロファイルがない場合は、`INVALID_CREDENTIALS`と同じメッセージ・同じ形式で返す。応答から登録の有無を判別できないようにする
 - パスワードはargon2でハッシュ化した値と照合する。メールアドレスが存在しない場合も同等の照合処理を行い、応答時間から登録の有無を判別できないようにする
 - パスワードとCookieの値はログに出さない
-- 【要決定】ログイン試行回数の制限（同一メールアドレス・同一IPでの失敗回数と待機時間）
+- ログイン試行回数の制限は、Vercel WAFのレート制限で行う。`POST /api/v1/auth/login`への同一IPからの回数に上限を設定する（例: 10分あたり10回。値は運用で調整する）。超過したRequestはWAFが`429 Too Many Requests`で拒否するため、アプリケーションのエラーコードは使わず、UIは「しばらくしてから再試行してください」と表示する
+- 上記の制限は、IP単位のカウンターであり（Hobbyではルールが1プロジェクトに1つだけで、カウンターはリージョン単位）、分散したIPからの試行や、特定のメールアドレスを狙った試行は制限できない。アプリケーション側でメールアドレス単位の失敗回数は数えない。MVPの既知の制約とする
 
 #### ログアウト
 `POST /api/v1/auth/logout`
@@ -234,7 +237,7 @@ Agent履歴へ保存しない認証・Session・JSON解析・冪等性Headerエ�
 ```
 
 ### 2.10 Agent Turnの同時実行
-Agent Turnを開始するAPI（会話の送信API。本書では未定義）は、同じ親Sessionで前のAgent Turnが実行中の場合、新しいTurnを開始せず拒否する。二重送信や、前の処理が終わる前の再送で、同じSessionに複数のTurnが並行して走ることを防ぐ。
+Agent Turnを開始するAPI（メッセージ送信API。5.3）は、同じ親Sessionで前のAgent Turnが実行中の場合、新しいTurnを開始せず拒否する。二重送信や、前の処理が終わる前の再送で、同じSessionに複数のTurnが並行して走ることを防ぐ。
 
 | HTTP Status | Code | 条件 | 再試行 |
 | --- | --- | --- | :---: |
@@ -525,7 +528,318 @@ Idempotency-Key: action-uuid
 #### 主なエラー
 `INVALID_ARGUMENT`、`INVALID_IDEMPOTENCY_KEY`、`AGENT_SESSION_NOT_FOUND`、`IDEMPOTENCY_REQUEST_IN_PROGRESS`、`IDEMPOTENCY_KEY_REUSED`、`CAMPAIGN_NOT_FOUND`、`CAMPAIGN_CONFLICT`（409、再試行×）、`INVALID_CAMPAIGN`、`EMBEDDING_FAILED`、`CAMPAIGN_SAVE_FAILED`、`CAMPAIGN_UPDATE_FAILED`。
 
-## 5. 編集・承認フロー
+## 5. Agent会話API
+ユーザーとAgentの対話（Agent Turn）と、会話履歴の取得を扱う。履歴は`agent_sessions`・`agent_turns`・`agent_items`（`DATABASE.dbml`）に保存する。承認ボタンからの施策upsertとX投稿（3章・4章）は別のAPIであり、LLMとAgent Toolを実行するのは、本章のメッセージ送信API（5.3）だけである。
+
+- 本章のすべてのAPIは、署名付きCookieで認証する（2.8）。状態変更API（POST）にはCSRF対策を適用し、取得API（GET）には適用しない
+- 対象は、認証済みマーケターが所有する親Sessionだけとする。存在しない、他のマーケターが所有する、または子Sessionの場合は、すべて`404 AGENT_SESSION_NOT_FOUND`とする（2.2）
+- メッセージ送信APIは、**Agent Turnが終わってから1回のResponseで結果を返す（同期）**。ストリーミング（SSE）は使わない。Vercel Functionsでは、Responseを返した後の処理に頼れないため、Turnは1回のRequestの中で完了させる。Turnの経過時間には上限があり（既定200秒。`AGENT_DESIGN.md`の「Turnの上限」）、関数の最大実行時間は300秒とする（`CODING_STANDARDS.md`の17.1）
+- 本章のAPIは`Idempotency-Key`を使用しない。同じSessionのTurnは直列に実行し、二重送信は`409 TURN_IN_PROGRESS`で防ぐ（2.10）
+
+### 5.1 TurnとItemの表現
+メッセージ送信API（5.3）、Turn取得API（5.4）、履歴取得API（5.6）は、次の同じ形式でTurnを返す。
+
+```json
+{
+  "agent_turn_id": 1902,
+  "turn_number": 3,
+  "kind": "chat",
+  "status": "completed",
+  "error": null,
+  "started_at": "2026-09-21T10:00:00Z",
+  "completed_at": "2026-09-21T10:00:42Z",
+  "items": [
+    {
+      "item_id": 9001,
+      "item_number": 1,
+      "type": "user_message",
+      "content": { "text": "経験者Webエンジニア採用の施策を考えて" },
+      "created_at": "2026-09-21T10:00:00Z"
+    },
+    {
+      "item_id": 9007,
+      "item_number": 7,
+      "type": "campaign_proposal",
+      "content": {
+        "id": null,
+        "expected_updated_at": null,
+        "title": "経験者Webエンジニア採用",
+        "target_profile": "20代後半のWebエンジニア",
+        "background": "経験者採用の応募数が減少している",
+        "objective": "応募数を増やす",
+        "plan": "柔軟な働き方をXで訴求する"
+      },
+      "created_at": "2026-09-21T10:00:40Z"
+    },
+    {
+      "item_id": 9008,
+      "item_number": 8,
+      "type": "assistant_message",
+      "content": { "text": "施策案を作成しました。内容を確認して、必要なら編集してください。" },
+      "created_at": "2026-09-21T10:00:42Z"
+    }
+  ]
+}
+```
+
+| Field | 説明 |
+| --- | --- |
+| `agent_turn_id` | Turn ID |
+| `turn_number` | Session内のTurn番号。1から始まる |
+| `kind` | `chat`はAgent Turn、`approval`は承認API（3章・4章）のAPI実行Turn（`api_idempotency_requests`から参照されるTurn） |
+| `status` | `pending`、`running`、`completed`、`failed`、`cancelled`、`blocked`のいずれか（`agent_turn_status`） |
+| `error` | `failed`または`blocked`のTurnだけ`{ "code", "message", "retryable" }`を返す。それ以外は`null`。`agent_turns.error_code`とマスク済みの`error_message`から作る |
+| `started_at`、`completed_at` | 開始日時と終了日時。未開始または未終了は`null` |
+| `items` | 表示対象のItem。`item_number`の昇順 |
+
+`items`に含めるItemは、次のとおりとする。
+
+| `type` | `content` | 元のItem |
+| --- | --- | --- |
+| `user_message` | `{ "text": "..." }` | `chat`Turnのユーザー入力（`item_type = user_message`） |
+| `assistant_message` | `{ "text": "..." }` | Agentの回答または質問（`item_type = assistant_message`、`llm_call_id`あり） |
+| `campaign_proposal` | `propose_campaign`の`data`（`AGENT_DESIGN.md`の「提案Tool出力」） | `propose_campaign`の成功`tool_result` |
+| `x_post_proposal` | `propose_x_post`の`data` | `propose_x_post`の成功`tool_result` |
+| `approval_action` | `{ "id", "type", "request" }`（2.4の`action`） | `approval`Turnの`user_message` |
+| `api_result` | `{ "operation", "success", "error" }`（2.4の`api_result`） | `approval`Turnの`api_result`（`content_source = system`の`assistant_message`） |
+
+- 上記以外のItemは返さない。`tool_call`、提案以外の`tool_result`、失敗した提案の`tool_result`、Web検索・Web取得・長期記憶などの外部データ、サブエージェントの内部履歴（子Session）は返さない（情報漏えいとResponseサイズの抑制のため）。監査用の完全な履歴は、DBで確認する
+- `context_status = quarantined`のItemは返さない
+- `status`が`completed`ではないTurnは、`user_message`（`approval`Turnでは`approval_action`）だけを返す。完了していないTurnの出力は、次のContextにも含まれないため（`AGENT_DESIGN.md`の「中断されたTurnの復旧」）、表示もしない
+- `approval`Turnは、APIが失敗しても`api_result`を保存して`completed`になる（2.4）。承認APIの成否は、`api_result`の`success`で判別する
+- 提案（`campaign_proposal`、`x_post_proposal`）は、UIがフォームの初期値として使う。承認は3章・4章のAPIで行う
+- `agent_turn_id`、`item_id`は、履歴の表示・取得のための識別子であり、業務データの識別子（`campaign_id`など）とは別である
+
+### 5.2 Sessionを作成する
+`POST /api/v1/agent-sessions`
+
+新しい親Sessionを作成する。Request Bodyは不要とし、送られた場合も使用しない。Turnは作成せず、Agent履歴へ何も保存しない。
+
+Response: `201 Created`
+
+```json
+{
+  "success": true,
+  "data": {
+    "session_id": 21,
+    "title": null,
+    "created_at": "2026-09-21T10:00:00Z",
+    "updated_at": "2026-09-21T10:00:00Z"
+  },
+  "error": null
+}
+```
+
+- Sessionは`agent = parent`、`parent_session_id = null`で作成し、所有者は認証済みマーケターとする。`marketer_id`はRequestから受け取らない
+- `title`は`null`で作成する。最初のメッセージを送信したときに設定する（5.3）
+- `Idempotency-Key`は使用しない。二重クリックなどで複数のSessionが作成されても、履歴は空であり、業務データに影響しない
+
+| HTTP Status | Code | 条件 | 再試行 |
+| --- | --- | --- | :---: |
+| `401` | `UNAUTHENTICATED` | 未認証、または期限切れ | × |
+| `403` | `CSRF_VALIDATION_FAILED` | CSRF検証に失敗した | × |
+| `500` | `AGENT_SESSION_SAVE_FAILED` | Sessionを保存できない | ○ |
+
+### 5.3 メッセージを送信する
+`POST /api/v1/agent-sessions/{session_id}/turns`
+
+ユーザーのメッセージを入力として、親AgentのTurnを実行する。Turnが終了してから、結果を1回のResponseで返す。
+
+Request Body
+
+```json
+{
+  "message": "経験者Webエンジニア採用の施策を考えて"
+}
+```
+
+| Field | Type | 必須 | 説明 |
+| --- | --- | :---: | --- |
+| `message` | string | ○ | ユーザーの入力。前後の空白を除いて1文字以上とし、上限はアプリケーション設定とする（既定4,000文字）。添付ファイルは扱わない |
+
+Response: `201 Created`
+
+`data`は、5.1のTurnとする。`status`は`completed`であり、`items`には、このTurnの`user_message`と、Agentの回答・提案が含まれる。Agentがユーザーへ質問した場合も、`assistant_message`を返してTurnは`completed`になる（`AGENT_DESIGN.md`）。
+
+```json
+{
+  "success": true,
+  "data": {
+    "agent_turn_id": 1902,
+    "turn_number": 3,
+    "kind": "chat",
+    "status": "completed",
+    "error": null,
+    "started_at": "2026-09-21T10:00:00Z",
+    "completed_at": "2026-09-21T10:00:42Z",
+    "items": []
+  },
+  "error": null
+}
+```
+
+（`items`は5.1の例と同じ形式。省略している）
+
+#### 処理フロー
+
+```mermaid
+flowchart TD
+    START([Request]) --> AUTH{認証・CSRF}
+    AUTH -- 失敗 --> E_AUTH([401 / 403: 履歴へ保存しない])
+    AUTH -- 成功 --> SESSION{親Sessionを所有しているか}
+    SESSION -- いいえ --> E_404([404 AGENT_SESSION_NOT_FOUND])
+    SESSION -- はい --> VALIDATE{messageが正しいか}
+    VALIDATE -- いいえ --> E_400([400 INVALID_ARGUMENT])
+    VALIDATE -- はい --> LOCK[Session行をロック]
+    LOCK --> RECOVER[同じSessionの中断されたTurnを復旧]
+    RECOVER --> RUNNING{pendingまたはrunningのchat Turnがあるか}
+    RUNNING -- はい --> E_409([409 TURN_IN_PROGRESS: 履歴へ保存しない])
+    RUNNING -- いいえ --> CREATE[Turnをrunningで作成し、user_messageを保存]
+    CREATE --> COMMIT[Transactionを確定]
+    COMMIT --> LOOP[[Agentのループを実行]]
+    LOOP --> RESULT{Turnの結果}
+    RESULT -- completed --> OK([201 Turnを返す])
+    RESULT -- failed / blocked --> E_TURN([エラーResponse: agent_turn_idを含める])
+```
+
+1. 認証とCSRFを検証する（2.8）。失敗した場合は、履歴へ保存せずResponseだけを返す
+2. `session_id`が正の整数で、認証済みマーケターの親Sessionであることを検証する。アーカイブ済みのSessionには新しいTurnを開始できず、`404 AGENT_SESSION_NOT_FOUND`とする（2.2）
+3. Request Bodyを検証する。不正な場合は、Turnを作成せず`400 INVALID_ARGUMENT`を返す（`agent_turn_id = null`）
+4. 1つの短いTransactionで、次を行う。Session行を`SELECT ... FOR UPDATE`でロックしたうえで行う
+   - 同じSessionの中断されたTurnを復旧する（`AGENT_DESIGN.md`の「中断されたTurnの復旧」）
+   - `pending`または`running`のAgent Turnが残っている場合は、`409 TURN_IN_PROGRESS`を返す（2.10）。Turnは作成せず、履歴へ保存しない（`agent_turn_id = null`）
+   - 新しいTurnを`running`で作成する（`turn_number`はSession内の最大値に1を加える。`started_at`を設定する）
+   - 入力をマスクし、`user_message`として保存する。`content = { "text": "<マスク済みのmessage>" }`、`content_source = user_input`、`context_class = conversation`、`context_status = active`とする
+   - Sessionの`updated_at`を更新する。`title`が`null`の場合は、マスク済みの`message`の先頭50文字（改行は空白へ置き換える）を設定する。タイトルの生成にLLMは使用しない
+5. Transactionを確定してから、Agentのループを実行する（`AGENT_DESIGN.md`の「ループ設計」）。Turnの実行中は、DBのTransactionとロックを保持しない。LLM呼び出しやTool実行などの外部呼び出しを、Transactionの中で行わない
+6. ループの終了時に、Turnを終端状態（`completed`、`failed`、`blocked`）へ更新する。更新は`status = running`を条件とする。更新できなかった場合（中断されたTurnとして復旧済み）は、Turnの現在の状態から`TURN_INTERRUPTED`のエラーResponseを返す
+7. `completed`のTurnを`201 Created`で返す。`failed`または`blocked`のTurnは、下記のエラーResponseを返す。Responseの`agent_turn_id`は、そのTurnのIDとする
+
+#### エラーコード
+| HTTP Status | Code | 条件 | 再試行 |
+| --- | --- | --- | :---: |
+| `400` | `INVALID_ARGUMENT` | JSON、型、`message`が不正（空、または文字数が上限超過）。Turnは作成しない | × |
+| `401` | `UNAUTHENTICATED` | 未認証、または期限切れ | × |
+| `403` | `CSRF_VALIDATION_FAILED` | CSRF検証に失敗した | × |
+| `404` | `AGENT_SESSION_NOT_FOUND` | 親Sessionが存在しない、所有していない、またはアーカイブ済み | × |
+| `409` | `TURN_IN_PROGRESS` | 同じSessionで前のAgent Turnが実行中 | ○（前のTurnの完了後） |
+| `422` | `TURN_BLOCKED` | 入力がGuardrailでBlockされ、Turnを続行できない（`blocked`） | × |
+| `422` | `TURN_STEP_LIMIT_EXCEEDED` | ステップ数の上限に達した（`failed`） | × |
+| `422` | `TURN_COST_LIMIT_EXCEEDED` | コストの上限に達した（`failed`） | × |
+| `504` | `TURN_TIME_LIMIT_EXCEEDED` | 経過時間の上限に達した（`failed`） | ○ |
+| `500` | `CONTEXT_COMPACTION_FAILED` | Contextの圧縮に失敗し、未圧縮でも上限を超える（`failed`） | ○ |
+| `500` | `AGENT_EXECUTION_FAILED` | LLMの呼び出し失敗など、Agentの実行を継続できない（`failed`） | ○ |
+| `500` | `TURN_INTERRUPTED` | 実行中に中断され、他の処理がTurnを終了させた（`failed`） | ○ |
+
+- `TURN_BLOCKED`から`TURN_INTERRUPTED`までのエラーは、Turnを`failed`または`blocked`で保存した後に返すため、`agent_turn_id`を含める。`TURN_IN_PROGRESS`と、認証・Session・Request Bodyのエラーは、履歴へ保存しないため`agent_turn_id = null`とする
+- 「再試行」が○のエラーでも、自動で再実行しない。UIはエラーを表示し、ユーザーが同じ依頼を再送する。再送は、新しいTurnとして実行する。失敗したTurnは、次のContextへ含めない
+- エラーの`message`は、マスク済みの利用者向けの説明とし、内部情報を含めない
+
+#### 通信切断と再送
+- 二重クリックなどの二重送信は、`TURN_IN_PROGRESS`で防ぐ。UIは、Turnの実行中は送信ボタンを無効にする
+- Responseを受け取れなかった場合（通信の切断、またはプラットフォームによる本文のない`504`）でも、サーバーではTurnが実行または保存されている可能性がある。UIは、同じメッセージを再送せず、履歴取得API（5.6）で最新のTurnを確認する。Turnが実行中の場合は、Turn取得API（5.4）でTurnの終了を待つ
+- 確認せずに同じメッセージを再送し、前のTurnがすでに完了していた場合は、同じ内容の2つ目のTurnが作成される。会話の履歴には両方が表示されるため、利用者が確認できる。この重複を防ぐ`Idempotency-Key`は、MVPでは設けない
+
+### 5.4 Turnを取得する
+`GET /api/v1/agent-sessions/{session_id}/turns/{turn_id}`
+
+Turnの状態と表示対象のItemを返す。メッセージ送信APIのResponseを受け取れなかった場合の確認と、実行中のTurnの終了待ちに使う。
+
+Response: `200 OK`
+
+`data`は、5.1のTurnとする。Turnが`failed`や`blocked`でも、取得自体は成功するため`200 OK`とし、`data.status`と`data.error`で結果を示す。
+
+- 対象のTurnが、Sessionの中断されたTurn（`pending`または`running`のまま、復旧判定時間を超えている）の場合は、先に復旧して`failed`（`TURN_INTERRUPTED`）にしたうえで返す（`AGENT_DESIGN.md`の「中断されたTurnの復旧」）。この処理は冪等であり、GETで行うが、Turn以外の業務データを変更しない
+- `status`が`pending`または`running`の間、UIは数秒間隔でこのAPIを呼び出して終了を待つ。実行中のTurnも、復旧判定時間の経過後は`failed`になるため、待ち続ける時間には上限がある
+- `approval`Turn（`kind = approval`）も同じ形式で取得できる。ただし復旧の対象外であり、状態は冪等性のLeaseと復旧に従う（2.3）
+
+| HTTP Status | Code | 条件 | 再試行 |
+| --- | --- | --- | :---: |
+| `400` | `INVALID_ARGUMENT` | `session_id`または`turn_id`が正の整数ではない | × |
+| `401` | `UNAUTHENTICATED` | 未認証、または期限切れ | × |
+| `404` | `AGENT_SESSION_NOT_FOUND` | 親Sessionが存在しない、所有していない | × |
+| `404` | `AGENT_TURN_NOT_FOUND` | Turnが存在しない、または指定したSessionのTurnではない | × |
+
+### 5.5 Sessionを一覧する
+`GET /api/v1/agent-sessions?limit=20&cursor=...`
+
+認証済みマーケターの親Sessionを、最終更新日時の新しい順に返す。子Sessionとアーカイブ済みのSessionは返さない。
+
+| Query | Type | 必須 | 説明 |
+| --- | --- | :---: | --- |
+| `limit` | integer | | 1件から50件。既定は20件 |
+| `cursor` | string | | 前のResponseの`next_cursor`。次のページを取得する |
+
+Response: `200 OK`
+
+```json
+{
+  "success": true,
+  "data": {
+    "sessions": [
+      {
+        "session_id": 21,
+        "title": "経験者Webエンジニア採用の施策を考えて",
+        "created_at": "2026-09-21T10:00:00Z",
+        "updated_at": "2026-09-21T10:00:42Z"
+      }
+    ],
+    "next_cursor": null
+  },
+  "error": null
+}
+```
+
+- 並び順は`updated_at`の降順、同じ場合は`id`の降順とする。`cursor`は、最後の行の`updated_at`と`id`から作る、クライアントが解釈しない文字列とする
+- `next_cursor`は、次のページがある場合だけ値を返し、ない場合は`null`とする
+- Sessionの`updated_at`は、Turn（メッセージ送信と、承認APIのAPI実行Turn）の作成時に更新する（2.4、5.3）
+- 不正な`limit`または`cursor`は`400 INVALID_ARGUMENT`とする。認証エラーは`401 UNAUTHENTICATED`とする
+
+### 5.6 Sessionの履歴を取得する
+`GET /api/v1/agent-sessions/{session_id}?limit=20&before_turn_number=...`
+
+Sessionの情報と、Turnの履歴を返す。会話を開き直すとき、Sessionを切り替えるとき、およびメッセージ送信APIのResponseを受け取れなかったときに使う。
+
+| Query | Type | 必須 | 説明 |
+| --- | --- | :---: | --- |
+| `limit` | integer | | 1件から50件。既定は20件 |
+| `before_turn_number` | integer | | このTurn番号より前のTurnを取得する。古い履歴を取得するときに指定する |
+
+Response: `200 OK`
+
+```json
+{
+  "success": true,
+  "data": {
+    "session": {
+      "session_id": 21,
+      "title": "経験者Webエンジニア採用の施策を考えて",
+      "created_at": "2026-09-21T10:00:00Z",
+      "updated_at": "2026-09-21T10:00:42Z"
+    },
+    "turns": [],
+    "has_more": false
+  },
+  "error": null
+}
+```
+
+（`turns`の各要素は5.1のTurn。省略している）
+
+- `before_turn_number`より前で、`turn_number`が大きい方から`limit`件のTurnを選び、`turn_number`の昇順に並べて返す。`before_turn_number`を省略した場合は、最新のTurnから選ぶ
+- 古いTurnがある場合は`has_more = true`とする。UIは、返されたTurnのうち最小の`turn_number`を`before_turn_number`に指定して、続きを取得する
+- `chat`Turnと`approval`Turnの両方を含める（`kind`で区別する）
+- Turn取得API（5.4）と同じく、先にこのSessionの中断されたTurnを復旧してから返す
+- 履歴は、Sessionを所有するマーケターだけが取得できる。他のマーケターのSessionと子Sessionは、`404 AGENT_SESSION_NOT_FOUND`とする
+- Responseの大きさは、プラットフォームの上限（4.5MB）に収まるように、`limit`の上限（50件）で抑える
+
+| HTTP Status | Code | 条件 | 再試行 |
+| --- | --- | --- | :---: |
+| `400` | `INVALID_ARGUMENT` | `session_id`、`limit`、`before_turn_number`が不正 | × |
+| `401` | `UNAUTHENTICATED` | 未認証、または期限切れ | × |
+| `404` | `AGENT_SESSION_NOT_FOUND` | 親Sessionが存在しない、所有していない | × |
+
+## 6. 編集・承認フロー
 
 ```mermaid
 sequenceDiagram
@@ -585,7 +899,7 @@ sequenceDiagram
     end
 ```
 
-## 6. 非対象
+## 7. 非対象
 - AgentまたはLLMから本APIを呼び出すこと
 - 自由文を最終承認として解釈すること
 - UIフォームの手書き編集を変更ごとにAgent履歴へ保存すること
@@ -595,3 +909,8 @@ sequenceDiagram
 - 施策の削除
 - ユーザー登録API（マーケターは初期データ投入スクリプトで事前登録する）
 - 認証Cookieのサーバー側での個別失効
+- 会話APIのストリーミング応答（SSE）、およびResponse後にTurnを実行し続ける非同期実行とポーリング
+- 会話APIへの添付ファイルの送信
+- 実行中のAgent Turnを中止するAPI
+- Sessionのアーカイブと削除のAPI（`archived_at`を設定する操作は本書で未定義）
+- メッセージ送信APIの`Idempotency-Key`（二重送信は`TURN_IN_PROGRESS`で防ぐ）
