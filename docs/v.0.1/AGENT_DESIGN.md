@@ -595,7 +595,7 @@ flowchart TD
 - Embedding生成に失敗した場合は施策upsert APIを失敗させ、施策だけが検索対象から欠落する状態を作らない
 
 ## アプリケーションAPI結果の観測
-施策upsert APIとX投稿APIは、認証と親Session所有権を検証できた後の成功結果またはエラーを、指定親SessionのAPI実行Turnへ構造化`api_result`として保存する。API ResultはAgent Tool Resultではないため、アプリケーション生成の`assistant_message`を使用する。
+施策upsert API、X投稿API、記憶忘却APIは、認証と親Session所有権を検証できた後の成功結果またはエラーを、指定親SessionのAPI実行Turnへ構造化`api_result`として保存する。API ResultはAgent Tool Resultではないため、アプリケーション生成の`assistant_message`を使用する。
 
 ```json
 {

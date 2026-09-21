@@ -1,9 +1,27 @@
 # API設計書
 
 ## 1. 目的
-本書は、ユーザーがUIで最終確定した施策内容と投稿内容を業務データへ反映するアプリケーションAPIを定義する。
+本書は、UI（`SCREEN_DESIGN.md`）とBackendの間のアプリケーションAPIを定義する。認証、Agentとの会話、ユーザーがUIで最終確定した施策内容と投稿内容の反映、公開済みデータと計測結果の参照、記憶の忘却を扱う。
 
 Agentは`propose_campaign`と`propose_x_post`で編集可能な内容を提案する。UIは提案内容をフォームの初期値として表示し、ユーザーは内容を直接編集できる。施策の登録・更新とXへの投稿は、承認ボタン押下時のフォーム値をRequest Bodyへ設定して本APIから実行する。
+
+### 1.1 章の構成
+| 章 | 内容 | 主な利用画面 |
+| --- | --- | --- |
+| 2 | 共通仕様（入力検証、冪等性、承認監査、Response、認証とCSRF、認証API、Turnの同時実行、運用向けエンドポイント） | 全画面 |
+| 3 | X投稿API | SC-02 |
+| 4 | 施策API | SC-02 |
+| 5 | Agent会話API（Turn、Session、履歴） | SC-02、SC-03 |
+| 6 | 参照API（施策、投稿、計測結果、記憶） | SC-04からSC-09 |
+| 7 | 記憶の忘却API | SC-09 |
+| 8 | 編集・承認フロー | SC-02 |
+| 9 | 非対象 | |
+| 10 | エラーコード一覧 | 全画面 |
+
+### 1.2 関連文書
+- 画面から見たAPIの使い方: `SCREEN_DESIGN.md`、`docs/frontend/CODING_STANDARDS.md`（16章 API通信、17章 フォームと最終承認、18章 Errorと画面状態）
+- 実装の規約: `docs/backend/CODING_STANDARDS.md`（7章 API層、8章 エラー処理）。エラーコードは10章に登録されたものだけを使う
+- Agentの動作とTool: `AGENT_DESIGN.md`。データ構造: `DATABASE.dbml`
 
 ## 2. 共通仕様
 
@@ -12,10 +30,12 @@ Agentは`propose_campaign`と`propose_x_post`で編集可能な内容を提案�
 - RequestとResponseのContent-Typeは`application/json`とする
 - APIは署名付きCookieで認証したマーケターを使用し（2.8）、`company_id`と`marketer_id`をRequest Bodyから受け取らない
 - Agent履歴を更新する状態変更APIは`/agent-sessions/{session_id}`配下とし、履歴の保存先をPathで明示する
-- 施策upsert APIとX投稿APIは`Idempotency-Key` Headerを必須とする。会話API（5章）は使用しない
+- 施策upsert API、X投稿API、記憶の忘却API（7章）は`Idempotency-Key` Headerを必須とする。会話API（5章）と参照API（6章）は使用しない
+- 参照API（6章）は読み取り専用のGETであり、Agent履歴へ保存しない。認証済みマーケターの会社のデータだけを返す
 - 状態変更API（POST・PATCH・DELETE）にはCSRF対策を適用する（2.8）
+- Frontendは、Browserからは同一Originの`/api/*`を呼び出し、Next.jsのServer Componentからは、Browserの認証Cookieを転送して同じAPIを呼び出す（`docs/frontend/CODING_STANDARDS.md`の16章）。Server専用のAPIと、別の権限を持つ経路は設けない
 - API呼び出し自体を、Request Bodyに含まれる内容の最終承認として扱う
-- 承認APIの処理（3章・4章）ではLLM、Agent Tool、OrcaRouter Agent Firewallを使用しない。Agent Turnを実行するのは、会話API（5章）のメッセージ送信APIだけである
+- 承認APIの処理（3章・4章）と記憶の忘却API（7章）ではLLM、Agent Tool、OrcaRouter Agent Firewallを使用しない。Agent Turnを実行するのは、会話API（5章）のメッセージ送信APIだけである
 - X APIやEmbedding APIの認証情報はサーバー側だけで管理する
 
 ### 2.2 入力検証
@@ -143,18 +163,19 @@ Agent履歴へ保存しない認証・Session・JSON解析・冪等性Headerエ�
 ### 2.7 HTTP Status
 | Status | 用途 |
 | --- | --- |
-| `200 OK` | 既存施策の上書き成功、または取得API（GET）の成功 |
+| `200 OK` | 既存施策の上書き成功、記憶の忘却の成功、または取得API（GET）の成功 |
 | `201 Created` | 施策の新規作成、X投稿成功、Sessionの作成、またはAgent Turnの完了 |
 | `400 Bad Request` | JSON、型、必須項目、Idempotency-Keyが不正 |
 | `401 Unauthorized` | 未認証、または認証Cookieの期限切れ・署名不正 |
 | `403 Forbidden` | CSRF検証に失敗した。テナント境界違反には使用しない |
-| `404 Not Found` | Session・Campaignなどの対象が存在しない、または別のマーケター・別会社に属する |
+| `404 Not Found` | Session・Campaign・Post・記憶などの対象が存在しない、または別のマーケター・別会社に属する |
 | `409 Conflict` | 同じ冪等性キーの処理中、異なるRequestへのキー再利用、施策上書きの競合、または同じSessionでAgent Turnを実行中 |
 | `422 Unprocessable Entity` | 施策内容やX投稿内容の業務検証に失敗、またはAgent Turnがステップ・コストの上限に達した、入力がBlockされた |
 | `429 Too Many Requests` | ログインの試行回数がWAFのレート制限を超えた（2.9）。アプリケーションは返さない |
 | `502 Bad Gateway` | X APIが明確な失敗を返した |
 | `504 Gateway Timeout` | X APIの実行結果を確定できない、またはAgent Turnが経過時間の上限に達した |
 | `500 Internal Server Error` | 内部処理またはDB保存に失敗した |
+| `503 Service Unavailable` | 運用向けエンドポイントのDB接続確認に失敗した（2.11） |
 
 ### 2.8 認証とCSRF
 認証はサーバー側に状態を持たない署名付きCookieで行う。
@@ -166,12 +187,13 @@ Agent履歴へ保存しない認証・Session・JSON解析・冪等性Headerエ�
   - 認証済みRequestを処理するたびに、Cookieを発行し直してアイドル期限を8時間先へ延長する
   - 絶対上限はログイン日時から7日とし、延長しない
 - 署名不正、またはいずれかの期限を超過したCookieは`401 UNAUTHENTICATED`とし、Cookieを削除する
+- Next.jsのServer Componentから呼び出したAPIの`Set-Cookie`は、Browserへ返せないため、この経路ではアイドル期限は延長されない。延長されるのは、Browserからの呼び出し（状態変更API、Turnのポーリングなど）だけである。参照だけの操作が8時間続くと`401 UNAUTHENTICATED`となり、UIはログインへ移動する（MVPの既知の制約。Next.jsのMiddlewareで再発行する案は未確定）
 - サーバー側にSession表を持たないため、Cookieを個別に失効させる機能はない。ログアウトはブラウザのCookie削除だけで、盗まれたCookieは期限まで有効である（MVPの既知の制約）
 
 #### CSRF対策
 状態変更API（POST・PATCH・DELETE）には、次の2つをどちらも適用する。
 
-1. `Origin` Header（なければ`Referer`）が許可リストのオリジンと一致する。許可リストは環境ごとに組み立てる。本番は環境変数`ALLOWED_ORIGINS`（カスタムドメイン）と本番ドメイン、プレビューはそのデプロイ自身のURLだけとし、ワイルドカードは使わない（`CODING_STANDARDS.md`の17.1）。UIとAPIは同じVercelプロジェクトから同一オリジンで公開する
+1. `Origin` Header（なければ`Referer`）が許可リストのオリジンと一致する。許可リストは環境ごとに組み立てる。本番は環境変数`ALLOWED_ORIGINS`（カスタムドメイン）と本番ドメイン、プレビューはそのデプロイ自身のURLだけとし、ワイルドカードは使わない（`docs/backend/CODING_STANDARDS.md`の17.1）。UIとAPIは同じVercelプロジェクトから同一オリジンで公開する
 2. 署名付きダブルサブミットトークンを検証する。ログイン成功時に発行する`csrf_token` Cookie（`HttpOnly`なし、`Secure`、`SameSite=Lax`）の値と、`X-CSRF-Token` Headerの値が一致し、かつトークンの署名が有効で`marketer_id`に束縛されている
 
 ログインAPIは`csrf_token` Cookieをまだ持たないため、1だけを適用する。ログアウトAPIは未ログインでも同じ結果を返すため、同様に1だけを適用する（強制ログアウトの影響は小さいと判断）。
@@ -249,6 +271,17 @@ Agent Turnを開始するAPI（メッセージ送信API。5.3）は、同じ親S
 - `TURN_IN_PROGRESS`と`IDEMPOTENCY_REQUEST_IN_PROGRESS`は別のエラーである。前者は同じSessionの別のTurnが実行中であることを、後者は同じ`Idempotency-Key`のRequestを処理中であることを示す
 - UIは、Turnの実行中は送信ボタンを無効にする。`TURN_IN_PROGRESS`を受けた場合は、前のTurnの完了を待ってから再送を促す
 - Turnの実行時間には上限がある（`AGENT_DESIGN.md`の「Turnの上限」）。実行中のまま残ったTurnは、復旧判定時間の経過後に`TURN_INTERRUPTED`で終了するため、`TURN_IN_PROGRESS`は無期限には続かない
+
+### 2.11 運用向けエンドポイント
+死活と接続の確認のためのエンドポイントである。`/api/v1`配下ではなく、認証、CSRF、Agent履歴を使用しない。Responseは、2.5・2.6の共通形式ではない。
+
+| Method / Path | 用途 | 成功 | 失敗 |
+| --- | --- | --- | --- |
+| `GET /api/health` | プロセスの死活確認。DBへ接続しない | `200`、`{"status": "ok"}` | なし |
+| `GET /api/health/db` | DBへの接続確認 | `200`、`{"status": "ok", "database": "ok"}` | `503`、`{"detail": "database unavailable"}` |
+
+- 認証を必要としないため、接続先、例外の内容、バージョンなどの内部情報を返さない
+- OpenAPIのドキュメント（`/api/docs`、`/api/openapi.json`）は開発向けであり、本書のAPI契約に含めない。本番での公開の可否は決めていない
 
 ## 3. X投稿API
 
@@ -525,15 +558,29 @@ Idempotency-Key: action-uuid
 - 確定Responseを冪等性レコードへ保存してから返す
 - 保存したエラーは次回の親Agent TurnでContextへ読み込むが、親Agentを自動起動しない
 
-#### 主なエラー
-`INVALID_ARGUMENT`、`INVALID_IDEMPOTENCY_KEY`、`AGENT_SESSION_NOT_FOUND`、`IDEMPOTENCY_REQUEST_IN_PROGRESS`、`IDEMPOTENCY_KEY_REUSED`、`CAMPAIGN_NOT_FOUND`、`CAMPAIGN_CONFLICT`（409、再試行×）、`INVALID_CAMPAIGN`、`EMBEDDING_FAILED`、`CAMPAIGN_SAVE_FAILED`、`CAMPAIGN_UPDATE_FAILED`。
+#### エラーコード
+| HTTP Status | Code | 条件 | 再試行 |
+| --- | --- | --- | :---: |
+| `400` | `INVALID_ARGUMENT` | JSON、型、必須項目、`expected_updated_at`が不正 | × |
+| `400` | `INVALID_IDEMPOTENCY_KEY` | Idempotency-Keyがない、またはUUID形式ではない | × |
+| `404` | `AGENT_SESSION_NOT_FOUND` | 親Sessionが存在しない、所有していない、または利用できない | × |
+| `404` | `CAMPAIGN_NOT_FOUND` | 上書き対象のCampaignが存在しない、または別会社に属する | × |
+| `409` | `IDEMPOTENCY_REQUEST_IN_PROGRESS` | 同じIdempotency-KeyのRequestを処理中 | ○ |
+| `409` | `IDEMPOTENCY_KEY_REUSED` | 同じIdempotency-Keyが異なるRequestまたはSessionで使用された | × |
+| `409` | `CAMPAIGN_CONFLICT` | 別のSessionまたはマーケターが、提案後に施策を更新した | × |
+| `422` | `INVALID_CAMPAIGN` | 施策の内容が業務条件を満たさない | × |
+| `500` | `EMBEDDING_FAILED` | 検索用Embeddingを生成できない | ○ |
+| `500` | `CAMPAIGN_SAVE_FAILED` | 新規作成のDB保存に失敗した | ○ |
+| `500` | `CAMPAIGN_UPDATE_FAILED` | 上書きのDB保存に失敗した | ○ |
+
+`○`は、新しい承認操作と新しいキーによる再実行が可能であることを示す（2.3）。`IDEMPOTENCY_REQUEST_IN_PROGRESS`だけは、同じキーで再送する。
 
 ## 5. Agent会話API
 ユーザーとAgentの対話（Agent Turn）と、会話履歴の取得を扱う。履歴は`agent_sessions`・`agent_turns`・`agent_items`（`DATABASE.dbml`）に保存する。承認ボタンからの施策upsertとX投稿（3章・4章）は別のAPIであり、LLMとAgent Toolを実行するのは、本章のメッセージ送信API（5.3）だけである。
 
 - 本章のすべてのAPIは、署名付きCookieで認証する（2.8）。状態変更API（POST）にはCSRF対策を適用し、取得API（GET）には適用しない
 - 対象は、認証済みマーケターが所有する親Sessionだけとする。存在しない、他のマーケターが所有する、または子Sessionの場合は、すべて`404 AGENT_SESSION_NOT_FOUND`とする（2.2）
-- メッセージ送信APIは、**Agent Turnが終わってから1回のResponseで結果を返す（同期）**。ストリーミング（SSE）は使わない。Vercel Functionsでは、Responseを返した後の処理に頼れないため、Turnは1回のRequestの中で完了させる。Turnの経過時間には上限があり（既定200秒。`AGENT_DESIGN.md`の「Turnの上限」）、関数の最大実行時間は300秒とする（`CODING_STANDARDS.md`の17.1）
+- メッセージ送信APIは、**Agent Turnが終わってから1回のResponseで結果を返す（同期）**。ストリーミング（SSE）は使わない。Vercel Functionsでは、Responseを返した後の処理に頼れないため、Turnは1回のRequestの中で完了させる。Turnの経過時間には上限があり（既定200秒。`AGENT_DESIGN.md`の「Turnの上限」）、関数の最大実行時間は300秒とする（`docs/backend/CODING_STANDARDS.md`の17.1）
 - 本章のAPIは`Idempotency-Key`を使用しない。同じSessionのTurnは直列に実行し、二重送信は`409 TURN_IN_PROGRESS`で防ぐ（2.10）
 
 ### 5.1 TurnとItemの表現
@@ -586,7 +633,7 @@ Idempotency-Key: action-uuid
 | --- | --- |
 | `agent_turn_id` | Turn ID |
 | `turn_number` | Session内のTurn番号。1から始まる |
-| `kind` | `chat`はAgent Turn、`approval`は承認API（3章・4章）のAPI実行Turn（`api_idempotency_requests`から参照されるTurn） |
+| `kind` | `chat`はAgent Turn、`approval`は承認API（3章・4章）と記憶の忘却API（7章）のAPI実行Turn（`api_idempotency_requests`から参照されるTurn） |
 | `status` | `pending`、`running`、`completed`、`failed`、`cancelled`、`blocked`のいずれか（`agent_turn_status`） |
 | `error` | `failed`または`blocked`のTurnだけ`{ "code", "message", "retryable" }`を返す。それ以外は`null`。`agent_turns.error_code`とマスク済みの`error_message`から作る |
 | `started_at`、`completed_at` | 開始日時と終了日時。未開始または未終了は`null` |
@@ -607,7 +654,7 @@ Idempotency-Key: action-uuid
 - `context_status = quarantined`のItemは返さない
 - `status`が`completed`ではないTurnは、`user_message`（`approval`Turnでは`approval_action`）だけを返す。完了していないTurnの出力は、次のContextにも含まれないため（`AGENT_DESIGN.md`の「中断されたTurnの復旧」）、表示もしない
 - `approval`Turnは、APIが失敗しても`api_result`を保存して`completed`になる（2.4）。承認APIの成否は、`api_result`の`success`で判別する
-- 提案（`campaign_proposal`、`x_post_proposal`）は、UIがフォームの初期値として使う。承認は3章・4章のAPIで行う
+- 提案（`campaign_proposal`、`x_post_proposal`）は、UIがフォームの初期値として使う。承認は3章・4章のAPIで行う。記憶の忘却は、画面の操作から7章のAPIで行う
 - `agent_turn_id`、`item_id`は、履歴の表示・取得のための識別子であり、業務データの識別子（`campaign_id`など）とは別である
 
 ### 5.2 Sessionを作成する
@@ -839,7 +886,445 @@ Response: `200 OK`
 | `401` | `UNAUTHENTICATED` | 未認証、または期限切れ | × |
 | `404` | `AGENT_SESSION_NOT_FOUND` | 親Sessionが存在しない、所有していない | × |
 
-## 6. 編集・承認フロー
+## 6. 参照API
+画面（`SCREEN_DESIGN.md`）が施策・投稿・計測結果・記憶を表示するための、読み取り専用のAPIを定義する。記憶の忘却は状態変更のため、7章で定義する。
+
+### 6.1 共通仕様
+- すべて`GET`とし、署名付きCookieで認証する（2.8）。CSRF対策と`Idempotency-Key`は使用しない
+- 業務データを変更しない。Agent履歴（Session・Turn・Item）へ保存せず、LLM・Agent Tool・OrcaRouter Agent Firewallを使用しない。Responseの`error.agent_turn_id`は`null`とする
+- 対象は、認証済みマーケターが所属する会社のデータだけとする。`company_id`はRequestから受け取らない。存在しないIDと別会社のIDは区別せず、`404`とする（2.2）
+- 投稿は、公開済みのものだけを対象とする。成功した`publish_x_post`のRequestに紐づくPostだけを返し、`failed`・`processing`・`outcome_unknown`のRequestとAgent履歴上の投稿案は返さない（3章の「公開済みPostの取得境界」）。`post_metrics.status = failed`の投稿は、計測失敗の状態として返す
+- 日時は、UTCのISO 8601で返す。Queryで日時を指定する場合は、タイムゾーン（`Z`、`+09:00`など）を必須とし、`*_from`以上、`*_to`未満の範囲として扱う。`*_from`が`*_to`以上の場合は`400 INVALID_ARGUMENT`とする
+- 施策の`updated_at`は、マイクロ秒精度のまま返す。施策upsert APIの`expected_updated_at`へは、加工せずにこの値を使う（4.1）
+- Responseの大きさは、プラットフォームの上限（4.5MB）に収まるように、`limit`と各一覧の件数上限で抑える
+
+#### 一覧の検索とページング
+一覧API（`GET /campaigns`、`GET /posts`、`GET /memories`）は、`query`の有無で動作が変わる。
+
+| Query | Type | 必須 | 説明 |
+| --- | --- | :---: | --- |
+| `query` | string | | 自然言語の検索語。指定すると意味検索、省略すると新しい順の一覧になる。前後の空白を除いて1文字以上とする |
+| `limit` | integer | | 1件から50件。既定は20件 |
+| `cursor` | string | | 一覧（`query`なし）の次のページ。前のResponseの`next_cursor`を指定する。`query`とは同時に指定できない |
+
+| モード | 並び順 | ページング |
+| --- | --- | --- |
+| 一覧（`query`なし） | 各APIで定める新しい順。同じ値の場合はIDの降順 | `cursor`と`next_cursor`（5.5と同じ、クライアントが解釈しない文字列） |
+| 意味検索（`query`あり） | 類似度の高い順 | 上位`limit`件だけを返す。`next_cursor`は常に`null`とする |
+
+- 意味検索は、Queryから検索用Embeddingを生成し、コサイン類似度で同じ会社のデータを検索する。Agent Toolの`search_campaigns`、`search_posts`、`search_long_term_memory`と同じ検索を使用する（`AGENT_DESIGN.md`）
+- 各項目の`similarity`は、意味検索のときだけコサイン類似度（1に近いほど類似）を返し、一覧では`null`とする
+- 期間や`campaign_id`による絞り込みは、一覧と意味検索の両方に適用する
+- Embeddingを生成できない場合は`500 EMBEDDING_FAILED`とする。一覧（`query`なし）はEmbeddingを使用しない
+- `query`は機密情報を含み得るため、アプリケーションのログへ出力しない
+
+#### 計測結果の表現
+投稿ごとの計測（`metrics`）は、`post_metrics`の内容を返す。
+
+```json
+{
+  "status": "completed",
+  "scheduled_at": "2026-09-28T10:00:00Z",
+  "measured_at": "2026-09-28T10:05:12Z",
+  "x_pv_count": 1200,
+  "landing_user_count": 45
+}
+```
+
+- `status`は、`pending`（計測前）、`completed`（計測済み）、`failed`（計測失敗）のいずれかとする
+- `x_pv_count`、`landing_user_count`、`measured_at`は、`completed`のときだけ値を返し、それ以外は`null`とする
+- `failed`の理由と再試行の可否は返さない（失敗履歴のテーブルがないため）
+
+投稿の集まり（施策単位、全体）の集計（`metrics_summary`）は、次の形式とする。
+
+```json
+{
+  "post_count": 3,
+  "completed_count": 1,
+  "pending_count": 2,
+  "failed_count": 0,
+  "x_pv_count": 1200,
+  "landing_user_count": 45
+}
+```
+
+- `post_count`は、公開済みの投稿数とする。`completed_count`、`pending_count`、`failed_count`は、それぞれの計測状態の投稿数とし、合計は`post_count`になる
+- `x_pv_count`と`landing_user_count`は、`completed`の投稿の値の合計とする。`pending`と`failed`の投稿は含めず、`completed`の投稿がない場合は`0`とする。合計が小さい理由を判別できるように、`pending_count`と`failed_count`を併せて返す
+- 遷移率などの比率は返さない（指標は、投稿初週PV数と遷移ユーザー数の2つだけ）
+
+#### 共通のエラー
+| HTTP Status | Code | 条件 | 再試行 |
+| --- | --- | --- | :---: |
+| `400` | `INVALID_ARGUMENT` | Path内のID、`limit`、`cursor`、`query`、日時、`campaign_id`が不正。または`query`と`cursor`を同時に指定した | × |
+| `401` | `UNAUTHENTICATED` | 未認証、または期限切れ | × |
+| `500` | `EMBEDDING_FAILED` | 意味検索のEmbeddingを生成できない | ○ |
+| `500` | `INTERNAL_ERROR` | DBの読み取りなど、内部処理に失敗した | ○ |
+
+対象が存在しない場合の`404`は、各APIで示す。
+
+### 6.2 施策を一覧する
+`GET /api/v1/campaigns?query=...&created_from=...&created_to=...&limit=20&cursor=...`
+
+会社の施策を返す。並び順は`created_at`の降順とする（`cursor`は、最後の行の`created_at`と`id`から作る）。
+
+| Query | Type | 必須 | 説明 |
+| --- | --- | :---: | --- |
+| `query` `limit` `cursor` | | | 6.1の「一覧の検索とページング」 |
+| `created_from` | string（ISO 8601） | | 施策の`created_at`がこの日時以上 |
+| `created_to` | string（ISO 8601） | | 施策の`created_at`がこの日時未満 |
+
+Response: `200 OK`
+
+```json
+{
+  "success": true,
+  "data": {
+    "campaigns": [
+      {
+        "id": 12,
+        "title": "経験者Webエンジニア採用",
+        "objective": "応募数を増やす",
+        "created_at": "2026-09-21T10:00:00Z",
+        "updated_at": "2026-09-21T11:00:00.123456Z",
+        "similarity": null,
+        "metrics_summary": {
+          "post_count": 3,
+          "completed_count": 1,
+          "pending_count": 2,
+          "failed_count": 0,
+          "x_pv_count": 1200,
+          "landing_user_count": 45
+        }
+      }
+    ],
+    "next_cursor": null
+  },
+  "error": null
+}
+```
+
+- 意味検索の対象は`campaign_embeddings`とする。検索用テキストは`target_profile`、`background`、`objective`、`plan`から作り、`title`は含めない（`AGENT_DESIGN.md`）
+- 一覧では、`target_profile`、`background`、`plan`を返さない。全項目は施策の取得（6.3）で返す
+- MVPには施策のアーカイブ操作がないため、`archived_at`では絞り込まない（9章の非対象を参照）
+
+### 6.3 施策を取得する
+`GET /api/v1/campaigns/{campaign_id}`
+
+施策の全項目と、紐づく投稿・記憶、計測の集計を返す。
+
+Response: `200 OK`
+
+```json
+{
+  "success": true,
+  "data": {
+    "campaign": {
+      "id": 12,
+      "title": "経験者Webエンジニア採用",
+      "target_profile": "20代後半のWebエンジニア",
+      "background": "経験者採用の応募数が減少している",
+      "objective": "応募数を増やす",
+      "plan": "柔軟な働き方をXで訴求する",
+      "created_at": "2026-09-21T10:00:00Z",
+      "updated_at": "2026-09-21T11:00:00.123456Z"
+    },
+    "metrics_summary": {
+      "post_count": 3,
+      "completed_count": 1,
+      "pending_count": 2,
+      "failed_count": 0,
+      "x_pv_count": 1200,
+      "landing_user_count": 45
+    },
+    "posts": [
+      {
+        "post_id": 45,
+        "body": "投稿本文",
+        "published_at": "2026-09-21T12:00:00Z",
+        "metrics": {
+          "status": "pending",
+          "scheduled_at": "2026-09-28T12:00:00Z",
+          "measured_at": null,
+          "x_pv_count": null,
+          "landing_user_count": null
+        }
+      }
+    ],
+    "has_more_posts": false,
+    "memories": [
+      { "id": 25, "content": "柔軟な働き方の訴求は、経験者層の反応が良かった。" }
+    ],
+    "has_more_memories": false
+  },
+  "error": null
+}
+```
+
+- `posts`は、この施策の公開済み投稿を`published_at`の降順で最大20件返す。20件を超える場合は`has_more_posts = true`とし、UIは`GET /posts?campaign_id=...`（6.4）へ誘導する
+- `memories`は、この施策に関連付けられた記憶（`memory_campaigns`）を`id`の降順で最大20件返す。20件を超える場合は`has_more_memories = true`とする
+- `metrics_summary`は、件数の上限に関わらず、この施策の公開済み投稿すべてを集計する
+
+| HTTP Status | Code | 条件 | 再試行 |
+| --- | --- | --- | :---: |
+| `404` | `CAMPAIGN_NOT_FOUND` | 施策が存在しない、または別会社に属する | × |
+
+### 6.4 投稿を一覧する
+`GET /api/v1/posts?query=...&campaign_id=12&published_from=...&published_to=...&limit=20&cursor=...`
+
+会社の公開済み投稿を、計測の状態と値を含めて返す。並び順は`published_at`の降順とする（`cursor`は、最後の行の`published_at`と`id`から作る）。
+
+| Query | Type | 必須 | 説明 |
+| --- | --- | :---: | --- |
+| `query` `limit` `cursor` | | | 6.1の「一覧の検索とページング」 |
+| `campaign_id` | integer | | この施策の投稿だけを返す |
+| `published_from` | string（ISO 8601） | | `posts.published_at`がこの日時以上 |
+| `published_to` | string（ISO 8601） | | `posts.published_at`がこの日時未満 |
+
+Response: `200 OK`
+
+```json
+{
+  "success": true,
+  "data": {
+    "posts": [
+      {
+        "post_id": 45,
+        "campaign_id": 12,
+        "campaign_title": "経験者Webエンジニア採用",
+        "body": "ユーザーが最終編集した投稿本文",
+        "x_post_id": "1840000000000000000",
+        "published_at": "2026-09-21T12:00:00Z",
+        "similarity": null,
+        "metrics": {
+          "status": "completed",
+          "scheduled_at": "2026-09-28T12:00:00Z",
+          "measured_at": "2026-09-28T12:05:12Z",
+          "x_pv_count": 1200,
+          "landing_user_count": 45
+        }
+      }
+    ],
+    "next_cursor": null
+  },
+  "error": null
+}
+```
+
+- 意味検索の対象は、`post_embeddings`、`posts`、`api_idempotency_requests`を内部結合した、公開済みの投稿とする。検索用テキストは、投稿本文からURLを除去したものとする（`AGENT_DESIGN.md`）
+- `campaign_id`が存在しない、または別会社に属する場合は、空の一覧ではなく`404 CAMPAIGN_NOT_FOUND`とする
+
+| HTTP Status | Code | 条件 | 再試行 |
+| --- | --- | --- | :---: |
+| `404` | `CAMPAIGN_NOT_FOUND` | `campaign_id`の施策が存在しない、または別会社に属する | × |
+
+### 6.5 投稿を取得する
+`GET /api/v1/posts/{post_id}`
+
+公開済み投稿の本文、紐づく施策、トラッキングURL（UTM）、計測結果を返す。
+
+Response: `200 OK`
+
+```json
+{
+  "success": true,
+  "data": {
+    "post": {
+      "post_id": 45,
+      "body": "ユーザーが最終編集した投稿本文",
+      "x_post_id": "1840000000000000000",
+      "published_at": "2026-09-21T12:00:00Z"
+    },
+    "campaign": {
+      "id": 12,
+      "title": "経験者Webエンジニア採用"
+    },
+    "tracking": {
+      "landing_url": "https://example.com/jobs/engineer",
+      "utm_source": "x",
+      "utm_medium": "social",
+      "utm_campaign": "12",
+      "utm_content": "action-uuid",
+      "tracked_url": "https://example.com/jobs/engineer?utm_source=x&utm_medium=social&utm_campaign=12&utm_content=action-uuid"
+    },
+    "metrics": {
+      "status": "completed",
+      "scheduled_at": "2026-09-28T12:00:00Z",
+      "measured_at": "2026-09-28T12:05:12Z",
+      "x_pv_count": 1200,
+      "landing_user_count": 45
+    }
+  },
+  "error": null
+}
+```
+
+| HTTP Status | Code | 条件 | 再試行 |
+| --- | --- | --- | :---: |
+| `404` | `POST_NOT_FOUND` | 投稿が存在しない、別会社に属する、または公開済みの投稿ではない | × |
+
+- 成功した`publish_x_post`のRequestに紐づかない投稿は、存在しないものとして`404 POST_NOT_FOUND`とする（6.1）
+- `body`はURLを含まない本文とし、`tracking.tracked_url`は投稿時に確定したUTM付きURLとする。UTMの値は、投稿時にアプリケーションが決定した値をそのまま返す（3.1）
+
+### 6.6 計測結果を集計する
+`GET /api/v1/metrics?published_from=...&published_to=...`
+
+全体のサマリーと、施策ごとの集計を返す。投稿ごとの値は、投稿の一覧（6.4）と取得（6.5）で得る。
+
+| Query | Type | 必須 | 説明 |
+| --- | --- | :---: | --- |
+| `published_from` | string（ISO 8601） | | `posts.published_at`がこの日時以上の投稿だけを集計する |
+| `published_to` | string（ISO 8601） | | `posts.published_at`がこの日時未満の投稿だけを集計する |
+
+Response: `200 OK`
+
+```json
+{
+  "success": true,
+  "data": {
+    "published_from": null,
+    "published_to": null,
+    "summary": {
+      "post_count": 5,
+      "completed_count": 3,
+      "pending_count": 1,
+      "failed_count": 1,
+      "x_pv_count": 3400,
+      "landing_user_count": 120
+    },
+    "campaigns": [
+      {
+        "id": 12,
+        "title": "経験者Webエンジニア採用",
+        "post_count": 3,
+        "completed_count": 2,
+        "pending_count": 1,
+        "failed_count": 0,
+        "x_pv_count": 2600,
+        "landing_user_count": 90
+      }
+    ]
+  },
+  "error": null
+}
+```
+
+- `summary`は`metrics_summary`（6.1）と同じ形式で、期間内の公開済み投稿すべてを集計する
+- `campaigns`は、期間内に公開済み投稿がある施策だけを、`x_pv_count`の降順（同じ場合は`id`の降順）で返す。各要素は施策の`id`と`title`に、`metrics_summary`の項目を並べた形式とする
+- 期間を指定しない場合は、すべての公開済み投稿を対象とする。`published_from`と`published_to`は、そのまま`data`に返す
+- ページングは行わない。MVPでは施策数が限られるため、すべての施策を返す
+- 対象に投稿がない場合も`200 OK`とし、件数と合計は`0`、`campaigns`は空とする
+- 期間の指定が不正な場合は、`400 INVALID_ARGUMENT`とする
+
+### 6.7 記憶を一覧する
+`GET /api/v1/memories?query=...&limit=20&cursor=...`
+
+会社の長期記憶を、関連する施策と投稿とあわせて返す。`agent_memories`には作成日時がないため、並び順は`id`の降順（採番の新しい順）とする（`cursor`は、最後の行の`id`から作る）。日付や種別による絞り込みは設けない。
+
+| Query | Type | 必須 | 説明 |
+| --- | --- | :---: | --- |
+| `query` `limit` `cursor` | | | 6.1の「一覧の検索とページング」 |
+
+Response: `200 OK`
+
+```json
+{
+  "success": true,
+  "data": {
+    "memories": [
+      {
+        "id": 25,
+        "content": "柔軟な働き方の訴求は、経験者層の反応が良かった。",
+        "similarity": null,
+        "campaigns": [
+          { "id": 12, "title": "経験者Webエンジニア採用" }
+        ],
+        "posts": [
+          { "post_id": 45, "published_at": "2026-09-21T12:00:00Z" }
+        ]
+      }
+    ],
+    "next_cursor": null
+  },
+  "error": null
+}
+```
+
+- 意味検索の対象は`agent_memories`のEmbeddingとする
+- `campaigns`と`posts`は、`memory_campaigns`と`memory_posts`で関連付けられたものとする。関連がない記憶では空の配列とする
+- 記憶の内容は、Agentが保存した文章であり、UIは命令ではなく表示用の文字列として扱う
+- 記憶の削除は、記憶の忘却API（7.1）で行う
+
+## 7. 記憶の忘却API
+画面（SC-09）から、ユーザーが不要な長期記憶を削除する。Agent Toolの`delete_long_term_memory`（`AGENT_DESIGN.md`）と同じく、記憶の内容とEmbeddingを完全に削除する。API呼び出し自体を、ユーザーの最終承認として扱う（2.1）。3章・4章の承認APIと同じく、親Sessionの配下で実行し、`Idempotency-Key`を必須とする。外部APIとLLMは使用しない。
+
+### 7.1 記憶を忘却する
+`DELETE /api/v1/agent-sessions/{session_id}/memories/{memory_id}`
+
+#### Request Header
+
+```http
+Idempotency-Key: action-uuid
+```
+
+Request Bodyは持たない。UIは、確認ダイアログで削除を確定した操作ごとにUUIDを生成し、再送では同じ値を使用する（2.3）。
+
+#### Response: `200 OK`
+
+```json
+{
+  "success": true,
+  "data": {
+    "memory_id": 25,
+    "agent_turn_id": 1910,
+    "deleted": true
+  },
+  "error": null
+}
+```
+
+#### 処理
+- 認証、CSRF、Pathの`session_id`と`memory_id`が正の整数であること、親Sessionの所有権の順に検証する（2.2、2.8）
+- `request_hash`は、操作種別と`memory_id`から作る正規化したJSON（例: `{"operation":"forget_memory","memory_id":25}`）のSHA-256とする。同じキーで別の`memory_id`を指定した場合は`409 IDEMPOTENCY_KEY_REUSED`となる
+- 冪等性レコード（`operation = forget_memory`）を原子的に作成できた最初のRequestだけが、指定親SessionにAPI実行Turnを作成し、最終Requestを信頼済み`user_message`へ保存する（2.4）
+  - 保存する`action`は、`{ "id": "action-uuid", "type": "forget_memory", "request": { "memory_id": 25 } }`とする
+  - 記憶の内容は、Agent履歴に保存しない。削除したはずの内容を、監査のために別の場所へ残さないためである
+- 会社単位で記憶を取得する。存在しない場合と別会社に属する場合は、区別せず`404 MEMORY_NOT_FOUND`とする。Agent履歴へ保存済みなので、エラーの`api_result`とともに`failed`として保存する
+- `agent_memories`の行（内容とEmbedding）を削除する。`memory_campaigns`と`memory_posts`の関連行は、外部キーの`cascade`で同時に削除する。施策と投稿は削除しない
+- 成功の`api_result`（`operation = forget_memory`、`success = true`）、Turn完了、冪等性レコードの`succeeded`への更新を、記憶の削除と同一のDB Transactionで行う。削除だけが確定して結果が保存されない状態を作らない
+- エラーの`api_result`、Turn完了、冪等性レコードの`failed`への更新を、同一Transactionで保存する。確定Responseを冪等性レコードへ保存してから返す
+- 外部作用がないため、`external_effect_started_at`と`external_result`は使用せず、`outcome_unknown`は発生しない。Leaseが切れた`processing`は、施策upsert APIと同じく、新しい実行TokenとLeaseをCompare-and-setで設定して安全に再実行する（2.3）
+- 同じキー・同じSession・同じRequestの再送は、保存済みのHTTP StatusとResponseを返す。すでに削除した記憶を、新しいキーで再度削除しようとした場合は`404 MEMORY_NOT_FOUND`となる
+- 保存した`api_result`は、次の親Agent Turnで通常のContext構築処理が読み込む。API Result保存だけでは親Agentを自動起動しない（2.4）
+- 保存先の親Sessionは、UIが指定する。記憶一覧（SC-09）には会話がないため、UIは最終更新が最新の親Session（5.5）を指定し、親Sessionがなければ5.2で作成する（`SCREEN_DESIGN.md`のSC-09）
+
+#### `delete_long_term_memory`との関係
+| 経路 | 承認の証跡 | 履歴への保存 |
+| --- | --- | --- |
+| 画面のボタン（本API） | 確認ダイアログでの操作と、`approval_action`（`forget_memory`）。本APIのCallが承認である | `approval`Turnの`user_message`と`api_result` |
+| 会話での依頼（Agent Tool） | ユーザーの明示的な忘却の指示と、対象の確認（信頼済み忘却イベント） | `chat`Turnの`tool_call`と`tool_result` |
+
+- 本APIはAgent Toolを呼び出さない。信頼済み忘却イベントは、Tool経由の削除の条件であり、本APIには適用しない
+- 両方の経路とも、記憶の内容とEmbeddingを完全に削除する
+- 既知の制約: 過去の`chat`Turnに、`search_long_term_memory`の`tool_result`として記憶の内容が残っている場合がある。本APIはAgent履歴を書き換えないため、履歴に残った内容は削除されない。画面には`tool_result`を表示しない（5.1）が、DBには残る。履歴からの除去は、MVPでは扱わない
+
+#### エラーコード
+| HTTP Status | Code | 条件 | 再試行 |
+| --- | --- | --- | :---: |
+| `400` | `INVALID_ARGUMENT` | `session_id`または`memory_id`が正の整数ではない | × |
+| `400` | `INVALID_IDEMPOTENCY_KEY` | Idempotency-Keyがない、またはUUID形式ではない | × |
+| `401` | `UNAUTHENTICATED` | 未認証、または期限切れ | × |
+| `403` | `CSRF_VALIDATION_FAILED` | Origin不一致、または`X-CSRF-Token`が不正 | × |
+| `404` | `AGENT_SESSION_NOT_FOUND` | 親Sessionが存在しない、所有していない、または利用できない | × |
+| `404` | `MEMORY_NOT_FOUND` | 記憶が存在しない、または別会社に属する | × |
+| `409` | `IDEMPOTENCY_REQUEST_IN_PROGRESS` | 同じIdempotency-KeyのRequestを処理中 | ○ |
+| `409` | `IDEMPOTENCY_KEY_REUSED` | 同じIdempotency-Keyが異なるRequestまたはSessionで使用された | × |
+| `500` | `MEMORY_DELETE_FAILED` | 記憶の削除に失敗した | ○（新しい承認操作と新しいキー） |
+
+`INVALID_ARGUMENT`、`INVALID_IDEMPOTENCY_KEY`、`UNAUTHENTICATED`、`CSRF_VALIDATION_FAILED`、`AGENT_SESSION_NOT_FOUND`は、Agent履歴へ保存せずResponseだけを返す（2.4、2.8）。`MEMORY_NOT_FOUND`と`MEMORY_DELETE_FAILED`は、`api_result`として保存し、Responseの`agent_turn_id`にそのTurnを返す。
+
+## 8. 編集・承認フロー
+
+記憶の忘却API（7章）も、外部APIを使用しない点を除いて、認証・冪等性・API実行Turn・API Resultの流れは同じである（下図の施策upsertとX投稿の分岐に相当する処理は、記憶の削除だけである）。
 
 ```mermaid
 sequenceDiagram
@@ -899,7 +1384,7 @@ sequenceDiagram
     end
 ```
 
-## 7. 非対象
+## 9. 非対象
 - AgentまたはLLMから本APIを呼び出すこと
 - 自由文を最終承認として解釈すること
 - UIフォームの手書き編集を変更ごとにAgent履歴へ保存すること
@@ -914,3 +1399,69 @@ sequenceDiagram
 - 実行中のAgent Turnを中止するAPI
 - Sessionのアーカイブと削除のAPI（`archived_at`を設定する操作は本書で未定義）
 - メッセージ送信APIの`Idempotency-Key`（二重送信は`TURN_IN_PROGRESS`で防ぐ）
+- 参照API（6章）からの施策・投稿・記憶の作成、更新、削除
+- 記憶の内容の編集と、UIからの新規作成（記憶の保存は、親Agentの`save_long_term_memory`だけで行う）
+- 記憶の作成日時・種別による並び替えと絞り込み（`agent_memories`に項目がない）
+- 計測結果の比率（遷移率など）の算出と、期間ごとの時系列集計
+- 計測失敗の理由と再試行の可否の取得（失敗履歴のテーブルがない）
+- 施策のアーカイブ操作（`campaigns.archived_at`を設定する操作は本書で未定義。参照APIは`archived_at`で絞り込まない）
+- 記憶の忘却時の、Agent履歴に残った過去の`tool_result`の書き換え
+
+## 10. エラーコード一覧
+APIが返すエラーコードの一覧である。`docs/backend/CODING_STANDARDS.md`の8章に従い、実装は本表に登録されたコードだけを使い、新しいコードは先に本表へ追加する。表示の分岐には、メッセージではなくコードを使う（`docs/frontend/CODING_STANDARDS.md`の16章）。
+
+「再試行」の○は、`retryable = true`を示す。Agent履歴へ保存するエラーでは、Responseの`agent_turn_id`に保存したTurnを返し、保存しないエラーでは`null`とする（2.4、2.6）。
+
+### 共通（認証、入力、冪等性、内部）
+| Code | HTTP Status | 再試行 | 使用する章 |
+| --- | --- | :---: | --- |
+| `INVALID_ARGUMENT` | `400` | × | 2.9、3.1、4.1、5.3、5.4、5.5、5.6、6.1、7.1 |
+| `INVALID_IDEMPOTENCY_KEY` | `400` | × | 3.1、4.1、7.1 |
+| `UNAUTHENTICATED` | `401` | × | 2.8。認証を必要とするすべてのAPI |
+| `INVALID_CREDENTIALS` | `401` | × | 2.9 |
+| `CSRF_VALIDATION_FAILED` | `403` | × | 2.8。状態変更API |
+| `AGENT_SESSION_NOT_FOUND` | `404` | × | 3.1、4.1、5.3、5.4、5.6、7.1 |
+| `IDEMPOTENCY_REQUEST_IN_PROGRESS` | `409` | ○（同じキーで再送） | 3.1、4.1、7.1 |
+| `IDEMPOTENCY_KEY_REUSED` | `409` | × | 3.1、4.1、7.1 |
+| `EMBEDDING_FAILED` | `500` | ○ | 3.1、4.1、6.1 |
+| `INTERNAL_ERROR` | `500` | ○ | 6.1。想定外の内部エラー（コードが定まらない場合） |
+
+### Agent会話（5章）
+| Code | HTTP Status | 再試行 | 使用する章 |
+| --- | --- | :---: | --- |
+| `AGENT_SESSION_SAVE_FAILED` | `500` | ○ | 5.2 |
+| `AGENT_TURN_NOT_FOUND` | `404` | × | 5.4 |
+| `TURN_IN_PROGRESS` | `409` | ○（前のTurnの完了後） | 2.10、5.3 |
+| `TURN_BLOCKED` | `422` | × | 5.3 |
+| `TURN_STEP_LIMIT_EXCEEDED` | `422` | × | 5.3 |
+| `TURN_COST_LIMIT_EXCEEDED` | `422` | × | 5.3 |
+| `TURN_TIME_LIMIT_EXCEEDED` | `504` | ○ | 5.3 |
+| `CONTEXT_COMPACTION_FAILED` | `500` | ○ | 5.3 |
+| `AGENT_EXECUTION_FAILED` | `500` | ○ | 5.3 |
+| `TURN_INTERRUPTED` | `500` | ○ | 5.3 |
+
+### 施策・投稿・記憶
+| Code | HTTP Status | 再試行 | 使用する章 |
+| --- | --- | :---: | --- |
+| `CAMPAIGN_NOT_FOUND` | `404` | × | 3.1、4.1、6.3、6.4 |
+| `CAMPAIGN_CONFLICT` | `409` | × | 4.1 |
+| `INVALID_CAMPAIGN` | `422` | × | 4.1 |
+| `CAMPAIGN_SAVE_FAILED` | `500` | ○ | 4.1 |
+| `CAMPAIGN_UPDATE_FAILED` | `500` | ○ | 4.1 |
+| `POST_NOT_FOUND` | `404` | × | 6.5 |
+| `X_POST_UNRESOLVED` | `409` | × | 3.1 |
+| `INVALID_X_POST` | `422` | × | 3.1 |
+| `X_POST_FAILED` | `502` | 条件付き | 3.1 |
+| `X_POST_OUTCOME_UNKNOWN` | `504` | × | 3.1 |
+| `X_POST_SAVE_FAILED` | `500` | ○（同じキーで再送） | 3.1 |
+| `MEMORY_NOT_FOUND` | `404` | × | 7.1 |
+| `MEMORY_DELETE_FAILED` | `500` | ○（新しい承認操作と新しいキー） | 7.1 |
+
+### アプリケーションのコードを持たない応答
+| 応答 | 発生元 | 扱い |
+| --- | --- | --- |
+| `429 Too Many Requests` | Vercel WAF（ログインの試行回数） | 2.9。アプリケーションは返さない |
+| 本文のない`504` | Vercel（関数の最大実行時間を超過） | 2.3。処理結果の不明として扱う |
+| `503`（`{"detail": ...}`） | `GET /api/health/db` | 2.11。共通のエラー形式ではない |
+
+- Agent Toolのエラーコード（`MEMORY_DELETE_NOT_APPROVED`、`TOOL_CALL_BLOCKED`など）は、HTTPの応答ではなくTool Resultとして扱うため、本表に含めない（`AGENT_DESIGN.md`）
