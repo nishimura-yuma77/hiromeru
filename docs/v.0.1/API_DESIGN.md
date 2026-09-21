@@ -1,19 +1,19 @@
 # API設計書
 
 ## 1. 目的
-本書は、UI（`SCREEN_DESIGN.md`）とBackendの間のアプリケーションAPIを定義する。認証、Agentとの会話、ユーザーがUIで最終確定した施策内容と投稿内容の反映、公開済みデータと計測結果の参照、記憶の忘却を扱う。
+本書は、UI（`SCREEN_DESIGN.md`）とBackendの間のアプリケーションAPIを定義する。認証、Agentとの会話、ユーザーがUIで最終確定した施策内容と投稿内容の反映、公開済みデータと計測結果の参照、施策の直接編集、記憶の忘却を扱う。
 
-Agentは`propose_campaign`と`propose_x_post`で編集可能な内容を提案する。UIは提案内容をフォームの初期値として表示し、ユーザーは内容を直接編集できる。施策の登録・更新とXへの投稿は、承認ボタン押下時のフォーム値をRequest Bodyへ設定して本APIから実行する。施策は、ユーザーが施策詳細画面（SC-05）のフォームで直接編集して、同じAPIで上書きすることもできる（4.1）。
+Agentは`propose_campaign`と`propose_x_post`で編集可能な内容を提案する。UIは提案内容をフォームの初期値として表示し、ユーザーは内容を直接編集できる。施策の登録・更新とXへの投稿は、承認ボタン押下時のフォーム値をRequest Bodyへ設定して本APIから実行する。施策は、ユーザーが施策詳細画面（SC-05）のフォームで直接編集することもできる。この編集と、画面（SC-09）からの記憶の削除は、Agent履歴に関わらないAPI（4.2、7.1）で行う。
 
 ### 1.1 章の構成
 | 章 | 内容 | 主な利用画面 |
 | --- | --- | --- |
 | 2 | 共通仕様（入力検証、冪等性、承認監査、Response、認証とCSRF、認証API、Turnの同時実行、運用向けエンドポイント） | 全画面 |
 | 3 | X投稿API | SC-02 |
-| 4 | 施策API | SC-02、SC-05 |
+| 4 | 施策API（承認による登録・更新、直接編集） | SC-02、SC-05 |
 | 5 | Agent会話API（Turn、Session、履歴） | SC-02 |
 | 6 | 参照API（施策、投稿、計測結果、記憶） | SC-04からSC-09 |
-| 7 | 記憶の忘却API | SC-09 |
+| 7 | 記憶の忘却API（Sessionに関わらない） | SC-09 |
 | 8 | 編集・承認フロー | SC-02 |
 | 9 | 非対象 | |
 | 10 | エラーコード一覧 | 全画面 |
@@ -30,22 +30,24 @@ Agentは`propose_campaign`と`propose_x_post`で編集可能な内容を提案�
 | ---: | --- | --- | --- | --- | --- | --- |
 | 1 | `POST` | `/api/v1/auth/login` | ログイン | メールアドレスとパスワードを検証し、署名付きの認証Cookieと`csrf_token` Cookieを発行する | SC-01 | 2.9 |
 | 2 | `POST` | `/api/v1/auth/logout` | ログアウト | 認証Cookieと`csrf_token` Cookieを削除する | 全画面（グローバルナビ） | 2.9 |
-| 3 | `GET` | `/api/health` | ヘルスチェック | プロセスの死活を確認する（DBへ接続しない） | なし（運用） | 2.11 |
-| 4 | `GET` | `/api/health/db` | DB接続確認 | DBへの接続を確認する | なし（運用） | 2.11 |
-| 5 | `POST` | `/api/v1/agent-sessions/{session_id}/x/posts` | X投稿公開 | 最終承認済みの投稿内容をXへ投稿し、成功後に投稿・UTM・計測予定などを保存する。`Idempotency-Key`必須 | SC-02 | 3.1 |
-| 6 | `POST` | `/api/v1/agent-sessions/{session_id}/campaigns` | 施策登録・更新 | 承認済み（または直接編集）の施策のフォーム値を、新規保存または既存施策の全項目上書きで保存する。競合を検出する。`Idempotency-Key`必須 | SC-02、SC-05 | 4.1 |
-| 7 | `POST` | `/api/v1/agent-sessions` | Session作成 | 新しい親Sessionを作成する（Turnは作らない） | SC-02、SC-05、SC-09 | 5.2 |
-| 8 | `POST` | `/api/v1/agent-sessions/{session_id}/turns` | メッセージ送信 | ユーザーのメッセージで親AgentのTurnを実行する。`Accept`によりJSON、またはSSE（進捗イベント付き）で結果を返す | SC-02 | 5.3 |
-| 9 | `GET` | `/api/v1/agent-sessions/{session_id}/turns/{turn_id}` | Turn取得 | Turnの状態と表示対象のItemを返す（応答を受け取れなかった場合の確認、実行中Turnの終了待ち） | SC-02 | 5.4 |
-| 10 | `GET` | `/api/v1/agent-sessions` | Session一覧取得 | 自分の親Sessionを、最終更新日時の新しい順に返す | SC-02、SC-05、SC-09 | 5.5 |
-| 11 | `GET` | `/api/v1/agent-sessions/{session_id}` | Session履歴取得 | Sessionの情報とTurnの履歴を返す | SC-02 | 5.6 |
-| 12 | `GET` | `/api/v1/campaigns` | 施策一覧取得 | 施策を新しい順、または意味検索で返す（計測の集計、流入率を含む） | SC-04、SC-06、SC-02（投稿フォームの対象施策） | 6.2 |
-| 13 | `GET` | `/api/v1/campaigns/{campaign_id}` | 施策詳細取得 | 施策の全項目と、紐づく投稿・記憶、計測の集計を返す | SC-05、SC-06 | 6.3 |
-| 14 | `GET` | `/api/v1/posts` | 投稿一覧取得 | 公開済み投稿を、絞り込み・意味検索・並び替え付きで返す（計測の状態と値を含む） | SC-06 | 6.4 |
-| 15 | `GET` | `/api/v1/posts/{post_id}` | 投稿詳細取得 | 公開済み投稿の内容、対象施策、UTM、計測結果を返す | SC-07 | 6.5 |
-| 16 | `GET` | `/api/v1/metrics` | 計測結果集計取得 | 全体のサマリーと施策ごとの計測結果を集計して返す（流入率を含む） | SC-08 | 6.6 |
-| 17 | `GET` | `/api/v1/memories` | 記憶一覧取得 | 長期記憶を新しい順、または意味検索で返す（関連する施策・投稿を含む） | SC-09 | 6.7 |
-| 18 | `DELETE` | `/api/v1/agent-sessions/{session_id}/memories/{memory_id}` | 記憶忘却 | 長期記憶の内容とEmbeddingを削除する。`Idempotency-Key`必須 | SC-09 | 7.1 |
+| 3 | `GET` | `/api/v1/auth/me` | ログイン中のマーケター取得 | 認証Cookieから、ログイン中のマーケターの情報（`marketer_id`、`email`）を返す。画面の再読み込み後も、ログイン状態とログイン中のメールアドレスを取得するために使う | 全画面（グローバルナビ）、SC-01（ログイン済みの判定） | 2.9 |
+| 4 | `GET` | `/api/health` | ヘルスチェック | プロセスの死活を確認する（DBへ接続しない） | なし（運用） | 2.11 |
+| 5 | `GET` | `/api/health/db` | DB接続確認 | DBへの接続を確認する | なし（運用） | 2.11 |
+| 6 | `POST` | `/api/v1/agent-sessions/{session_id}/x/posts` | X投稿公開 | 最終承認済みの投稿内容をXへ投稿し、成功後に投稿・UTM・計測予定などを保存する。`Idempotency-Key`必須 | SC-02 | 3.1 |
+| 7 | `POST` | `/api/v1/agent-sessions/{session_id}/campaigns` | 施策登録・更新 | Agentの提案を承認した施策のフォーム値を、新規保存または既存施策の全項目上書きで保存する。競合を検出する。`Idempotency-Key`必須 | SC-02 | 4.1 |
+| 8 | `PUT` | `/api/v1/campaigns/{campaign_id}` | 施策編集 | 保存済みの施策の全項目を、ユーザーがフォームで直接編集した内容で上書きする。競合を検出する。Sessionに関わらず、Agent履歴と`Idempotency-Key`は使用しない | SC-05 | 4.2 |
+| 9 | `POST` | `/api/v1/agent-sessions` | Session作成 | 新しい親Sessionを作成する（Turnは作らない） | SC-02、SC-05、SC-09 | 5.2 |
+| 10 | `POST` | `/api/v1/agent-sessions/{session_id}/turns` | メッセージ送信 | ユーザーのメッセージで親AgentのTurnを実行する。`Accept`によりJSON、またはSSE（進捗イベント付き）で結果を返す | SC-02 | 5.3 |
+| 11 | `GET` | `/api/v1/agent-sessions/{session_id}/turns/{turn_id}` | Turn取得 | Turnの状態と表示対象のItemを返す（応答を受け取れなかった場合の確認、実行中Turnの終了待ち） | SC-02 | 5.4 |
+| 12 | `GET` | `/api/v1/agent-sessions` | Session一覧取得 | 自分の親Sessionを、最終更新日時の新しい順に返す | SC-02、SC-05、SC-09 | 5.5 |
+| 13 | `GET` | `/api/v1/agent-sessions/{session_id}` | Session履歴取得 | Sessionの情報とTurnの履歴を返す | SC-02 | 5.6 |
+| 14 | `GET` | `/api/v1/campaigns` | 施策一覧取得 | 施策を新しい順、または意味検索で返す（計測の集計、流入率を含む） | SC-04、SC-06、SC-02（投稿フォームの対象施策） | 6.2 |
+| 15 | `GET` | `/api/v1/campaigns/{campaign_id}` | 施策詳細取得 | 施策の全項目と、紐づく投稿・記憶、計測の集計を返す | SC-05、SC-06 | 6.3 |
+| 16 | `GET` | `/api/v1/posts` | 投稿一覧取得 | 公開済み投稿を、絞り込み・意味検索・並び替え付きで返す（計測の状態と値を含む） | SC-06 | 6.4 |
+| 17 | `GET` | `/api/v1/posts/{post_id}` | 投稿詳細取得 | 公開済み投稿の内容、対象施策、UTM、計測結果を返す | SC-07 | 6.5 |
+| 18 | `GET` | `/api/v1/metrics` | 計測結果集計取得 | 全体のサマリーと施策ごとの計測結果を集計して返す（流入率を含む） | SC-08 | 6.6 |
+| 19 | `GET` | `/api/v1/memories` | 記憶一覧取得 | 長期記憶を新しい順、または意味検索で返す（関連する施策・投稿を含む） | SC-09 | 6.7 |
+| 20 | `DELETE` | `/api/v1/memories/{memory_id}` | 記憶削除 | 長期記憶の内容とEmbeddingを削除する。Sessionに関わらず、Agent履歴と`Idempotency-Key`は使用しない | SC-09 | 7.1 |
 
 ## 2. 共通仕様
 
@@ -53,13 +55,13 @@ Agentは`propose_campaign`と`propose_x_post`で編集可能な内容を提案�
 - Base pathは`/api/v1`とする
 - RequestとResponseのContent-Typeは`application/json`とする
 - APIは署名付きCookieで認証したマーケターを使用し（2.8）、`company_id`と`marketer_id`をRequest Bodyから受け取らない
-- Agent履歴を更新する状態変更APIは`/agent-sessions/{session_id}`配下とし、履歴の保存先をPathで明示する
-- 施策upsert API、X投稿API、記憶の忘却API（7章）は`Idempotency-Key` Headerを必須とする。会話API（5章）と参照API（6章）は使用しない
+- Agent履歴を更新する状態変更APIは`/agent-sessions/{session_id}`配下とし、履歴の保存先をPathで明示する。ユーザーが画面で直接行う施策の編集（4.2）と記憶の削除（7.1）は、Agentの提案・承認を経ないため、Agent履歴に関わらず、`/agent-sessions`配下に置かない
+- 施策upsert API（4.1）とX投稿API（3章）は`Idempotency-Key` Headerを必須とする。会話API（5章）、参照API（6章）、施策編集API（4.2）、記憶削除API（7.1）は使用しない
 - 参照API（6章）は読み取り専用のGETであり、Agent履歴へ保存しない。認証済みマーケターの会社のデータだけを返す
 - 状態変更API（POST・PATCH・DELETE）にはCSRF対策を適用する（2.8）
 - Frontendは、Browserからは同一Originの`/api/*`を呼び出し、Next.jsのServer Componentからは、Browserの認証Cookieを転送して同じAPIを呼び出す（`docs/frontend/CODING_STANDARDS.md`の16章）。Server専用のAPIと、別の権限を持つ経路は設けない
 - API呼び出し自体を、Request Bodyに含まれる内容の最終承認として扱う
-- 承認APIの処理（3章・4章）と記憶の忘却API（7章）ではLLM、Agent Tool、OrcaRouter Agent Firewallを使用しない。Agent Turnを実行するのは、会話API（5章）のメッセージ送信APIだけである
+- 承認APIの処理（3章・4.1）、施策編集API（4.2）、記憶削除API（7.1）ではLLM、Agent Tool、OrcaRouter Agent Firewallを使用しない。Agent Turnを実行するのは、会話API（5章）のメッセージ送信APIだけである
 - X APIやEmbedding APIの認証情報はサーバー側だけで管理する
 
 ### 2.2 入力検証
@@ -182,7 +184,7 @@ APIはSchema検証、業務条件検証、外部API、DB処理の成功または
 }
 ```
 
-Agent履歴へ保存しない認証・Session・JSON解析・冪等性Headerエラーと、`TURN_IN_PROGRESS`では`agent_turn_id = null`とする。
+Agent履歴へ保存しない認証・Session・JSON解析・冪等性Headerエラーと、`TURN_IN_PROGRESS`では`agent_turn_id = null`とする。Agent履歴に関わらない施策編集API（4.2）と記憶削除API（7.1）は、すべてのエラーで`agent_turn_id = null`とする。
 
 ### 2.7 HTTP Status
 | Status | 用途 |
@@ -232,7 +234,7 @@ Agent履歴へ保存しない認証・Session・JSON解析・冪等性Headerエ�
 - 認証・CSRFに失敗したRequestでは、Session所有権の判定と冪等性の処理を行わない
 
 ### 2.9 認証API
-ユーザー登録APIは設けない。マーケターは初期データ投入スクリプトで事前登録する。認証APIは`/agent-sessions`配下ではなく、Agent履歴へ保存しない。
+ユーザー登録APIは設けない。マーケターは初期データ投入スクリプトで事前登録する。認証API（ログイン、ログアウト、ログイン中のマーケター取得）は`/agent-sessions`配下ではなく、Agent履歴へ保存しない。
 
 #### ログイン
 `POST /api/v1/auth/login`
@@ -268,6 +270,33 @@ Agent履歴へ保存しない認証・Session・JSON解析・冪等性Headerエ�
 - パスワードとCookieの値はログに出さない
 - ログイン試行回数の制限は、Vercel WAFのレート制限で行う。`POST /api/v1/auth/login`への同一IPからの回数に上限を設定する（例: 10分あたり10回。値は運用で調整する）。超過したRequestはWAFが`429 Too Many Requests`で拒否するため、アプリケーションのエラーコードは使わず、UIは「しばらくしてから再試行してください」と表示する
 - 上記の制限は、IP単位のカウンターであり（Hobbyではルールが1プロジェクトに1つだけで、カウンターはリージョン単位）、分散したIPからの試行や、特定のメールアドレスを狙った試行は制限できない。アプリケーション側でメールアドレス単位の失敗回数は数えない。MVPの既知の制約とする
+
+#### ログイン中のマーケター取得
+`GET /api/v1/auth/me`
+
+認証Cookieで認証したマーケターの情報を返す。認証Cookieは`HttpOnly`のため、Frontendは値を読めない。画面の再読み込みや、Server Componentの描画では、ログインAPIのResponseを使えないため、このAPIでログイン状態とログイン中のメールアドレスを取得する（グローバルナビの表示、ログイン画面での判定）。
+
+成功時は`200 OK`を返す。
+
+```json
+{
+  "success": true,
+  "data": {
+    "marketer_id": 3,
+    "email": "marketer@example.com"
+  },
+  "error": null
+}
+```
+
+| HTTP Status | Code | 条件 | 再試行 |
+| --- | --- | --- | :---: |
+| `401` | `UNAUTHENTICATED` | 認証Cookieがない、署名不正、または期限切れ | × |
+
+- 読み取り専用のGETのため、CSRF対策は適用しない（2.8）。認証だけを検証し、Agent履歴へ保存しない
+- `marketer_id`は認証Cookieの値、`email`はDBのユーザー情報から返す。パスワードのハッシュや`company_id`は返さない
+- Browserから呼び出した場合は、他の認証済みRequestと同じく、認証Cookieを発行し直してアイドル期限を延長する（2.8）。`csrf_token`は返さない。ログイン時に発行した`csrf_token` Cookieの値を使う
+- マーケターのDBの行が存在しない場合（削除済み）も、`401 UNAUTHENTICATED`とし、Cookieを削除する
 
 #### ログアウト
 `POST /api/v1/auth/logout`
@@ -497,7 +526,7 @@ UIは`X_POST_SAVE_FAILED`を受けた場合、Xへは投稿済みであること
 
 Request Bodyの`id`が省略または`null`なら新規作成し、値があれば既存施策の編集可能な全フィールドを上書きする。部分更新は行わない。
 
-呼び出し元は、2つある。Agentの提案を受けた最終承認（SC-02）と、ユーザーが施策詳細画面（SC-05）で直接行う編集である。いずれも、LLMを使わずに、フォーム値をそのまま保存する。同じ検証、冪等性、API実行Turn、競合検出を適用する。SC-05から呼び出す場合、保存先の親Sessionは、UIが指定する（最終更新が最新の親Session（5.5）を指定し、なければ5.2で作成する）。
+呼び出し元は、Agentの提案を受けた最終承認（SC-02）である。LLMを使わずに、フォーム値をそのまま保存する。ユーザーが施策詳細画面（SC-05）で直接行う編集は、Agentの提案を経ず、Agent履歴にも関わらないため、施策編集API（4.2）で行う。
 
 #### Request Header
 
@@ -534,7 +563,7 @@ Idempotency-Key: action-uuid
 | Field | Type | 必須 | 説明 |
 | --- | --- | :---: | --- |
 | `id` | integer または null |  | 上書き対象の施策ID。省略または`null`なら新規作成 |
-| `expected_updated_at` | string（ISO 8601、マイクロ秒精度） | 上書き時○ | Agentが施策を提案した時点（SC-05の直接編集では、施策詳細を取得した時点）の施策の`updated_at`。`id`に値がある場合は必須。新規作成では指定しない |
+| `expected_updated_at` | string（ISO 8601、マイクロ秒精度） | 上書き時○ | Agentが施策を提案した時点の施策の`updated_at`。`id`に値がある場合は必須。新規作成では指定しない |
 | `title` | string | ○ | 施策タイトル |
 | `target_profile` | string | ○ | ターゲット像 |
 | `background` | string | ○ | 実施背景 |
@@ -585,7 +614,7 @@ Idempotency-Key: action-uuid
 - 取得したCampaignの`updated_at`が`expected_updated_at`と一致しない場合は、Embedding生成の前に`409 CAMPAIGN_CONFLICT`を返す。別のSessionまたは別のマーケターがAgentの提案後に施策を更新したことを示す
 - 保存時は`WHERE id = :id AND company_id = :company_id AND updated_at = :expected_updated_at`を条件にUPDATEし、更新行数が0なら同様に`409 CAMPAIGN_CONFLICT`とする。事前確認から保存までの間の更新を検出するためで、同一Transaction内で行う
 - `updated_at`の比較は、文字列ではなく`timestamptz`の値として行う。UIは受け取った値を加工せずそのまま送り返す
-- `CAMPAIGN_CONFLICT`は`failed`として保存する。同じキーでは保存済みエラーを返し、利用者は最新の施策を確認したうえで、Agentと再相談するか（SC-05の直接編集では、最新の内容を読み込んで編集し直す）、新しい承認操作と新しいキーで再実行する
+- `CAMPAIGN_CONFLICT`は`failed`として保存する。同じキーでは保存済みエラーを返し、利用者は最新の施策を確認したうえで、Agentと再相談するか、新しい承認操作と新しいキーで再実行する
 - 会社IDと作成者IDは認証済みContextから設定する
 - 新規作成では検索用Embeddingと`content_hash`を生成する
 - 上書きでは検索対象内容の`content_hash`が変わった場合だけEmbeddingを再生成する
@@ -611,6 +640,83 @@ Idempotency-Key: action-uuid
 | `500` | `CAMPAIGN_UPDATE_FAILED` | 上書きのDB保存に失敗した | ○ |
 
 `○`は、新しい承認操作と新しいキーによる再実行が可能であることを示す（2.3）。`IDEMPOTENCY_REQUEST_IN_PROGRESS`だけは、同じキーで再送する。
+
+### 4.2 施策編集
+`PUT /api/v1/campaigns/{campaign_id}`
+
+施策詳細画面（SC-05）で、ユーザーが保存済みの施策を、Agentを経由せずフォームで直接編集して保存する。編集可能な全フィールドを上書きし、部分更新は行わない。LLMを使わずに、フォーム値をそのまま保存する。
+
+Agent履歴に関わらないAPIである。親Session、API実行Turn、`api_result`、冪等性レコードを作らず、`Idempotency-Key`も使用しない。施策の新規作成はできない（新規作成は4.1）。API呼び出し自体を、ユーザーの最終承認として扱う（2.1）。
+
+#### Request Body
+
+```json
+{
+  "expected_updated_at": "2026-09-21T09:30:15.123456Z",
+  "title": "経験者Webエンジニア採用 第2弾",
+  "target_profile": "20代後半のWebエンジニア",
+  "background": "経験者採用の応募数が減少している",
+  "objective": "応募数を増やす",
+  "plan": "訴求内容を更新する"
+}
+```
+
+| Field | Type | 必須 | 説明 |
+| --- | --- | :---: | --- |
+| `expected_updated_at` | string（ISO 8601、マイクロ秒精度） | ○ | 施策詳細（6.3）を取得した時点の施策の`updated_at`。加工せずそのまま送り返す |
+| `title` | string | ○ | 施策タイトル |
+| `target_profile` | string | ○ | ターゲット像 |
+| `background` | string | ○ | 実施背景 |
+| `objective` | string | ○ | 施策目的 |
+| `plan` | string | ○ | 施策内容 |
+
+Pathの`campaign_id`は、上書き対象の施策IDである。Request Bodyに`id`は持たない。
+
+#### Response: `200 OK`
+
+```json
+{
+  "success": true,
+  "data": {
+    "id": 12,
+    "title": "経験者Webエンジニア採用 第2弾",
+    "updated_at": "2026-09-21T11:00:00Z"
+  },
+  "error": null
+}
+```
+
+`agent_turn_id`は返さない。
+
+#### 処理
+- 認証、CSRFの順に検証する（2.8）。Pathの`campaign_id`が正の整数であること、Request Bodyが安全にJSON解析でき、Schemaに適合することを検証する（不正なら`400 INVALID_ARGUMENT`）
+- `expected_updated_at`は必須とする。省略または形式が不正なら`400 INVALID_ARGUMENT`とする
+- 認証済みマーケターの会社単位でCampaignを取得する。存在しない場合と別会社に属する場合は、区別せず`404 CAMPAIGN_NOT_FOUND`を返す
+- 施策の内容が業務条件を満たさない場合は`422 INVALID_CAMPAIGN`を返す（4.1と同じ検証）
+- 取得したCampaignの`updated_at`が`expected_updated_at`と一致しない場合は、Embedding生成の前に`409 CAMPAIGN_CONFLICT`を返す。表示後に、別のSession・別のマーケター・別のタブが施策を更新したことを示す
+- 検索対象内容の`content_hash`が変わった場合だけ、検索用Embeddingを再生成する。Embedding APIはTransactionの外で呼び出す。失敗した場合は`500 EMBEDDING_FAILED`とし、施策は更新しない
+- 保存時は`WHERE id = :id AND company_id = :company_id AND updated_at = :expected_updated_at`を条件にUPDATEし、更新行数が0なら`409 CAMPAIGN_CONFLICT`とする。事前確認から保存までの間の更新を検出するためで、同一Transaction内で行う。二重クリックなどで同じ内容が同時に届いても、成功するのは1つだけである
+- `updated_at`の比較は、文字列ではなく`timestamptz`の値として行う
+- 施策とEmbeddingの更新は同一Transactionで行い、`updated_at`を処理完了時刻へ変更する。DB保存に失敗した場合は`500 CAMPAIGN_UPDATE_FAILED`とする
+- Agent履歴へは保存しない。記録は、構造化ログ（`company_id`、`marketer_id`、`campaign_id`、結果。本文は含めない）にだけ残す。Agentは、次のTurnで施策を読み取るときに、更新後の内容を参照する
+
+#### 再送
+- 冪等性キーを持たないため、成功したRequestの再送は`409 CAMPAIGN_CONFLICT`になる（保存で`updated_at`が変わるため）。Responseを受け取れなかった場合、UIは施策を再取得し、内容が送信した内容と一致していれば、保存済みとして扱う
+- 保存に失敗した（`500`）Requestは、同じ内容と同じ`expected_updated_at`のまま再送できる
+
+#### エラーコード
+| HTTP Status | Code | 条件 | 再試行 |
+| --- | --- | --- | :---: |
+| `400` | `INVALID_ARGUMENT` | `campaign_id`が正の整数ではない、JSON、型、必須項目、`expected_updated_at`が不正 | × |
+| `401` | `UNAUTHENTICATED` | 未認証、または期限切れ | × |
+| `403` | `CSRF_VALIDATION_FAILED` | Origin不一致、または`X-CSRF-Token`が不正 | × |
+| `404` | `CAMPAIGN_NOT_FOUND` | Campaignが存在しない、または別会社に属する | × |
+| `409` | `CAMPAIGN_CONFLICT` | 表示後に、別の操作が施策を更新した | × |
+| `422` | `INVALID_CAMPAIGN` | 施策の内容が業務条件を満たさない | × |
+| `500` | `EMBEDDING_FAILED` | 検索用Embeddingを生成できない | ○ |
+| `500` | `CAMPAIGN_UPDATE_FAILED` | DB保存に失敗した | ○ |
+
+`○`は、同じ内容の再送が可能であることを示す。`CAMPAIGN_CONFLICT`の場合、UIは最新の施策を再取得し、利用者が入力した内容と見比べて、最新の`updated_at`を`expected_updated_at`にして保存し直せるようにする。すべてのエラーで、`agent_turn_id`は`null`とする。
 
 ## 5. Agent会話API
 ユーザーとAgentの対話（Agent Turn）と、会話履歴の取得を扱う。履歴は`agent_sessions`・`agent_turns`・`agent_items`（`DATABASE.dbml`）に保存する。承認ボタンからの施策upsertとX投稿（3章・4章）は別のAPIであり、LLMとAgent Toolを実行するのは、本章のメッセージ送信API（5.3）だけである。
@@ -677,7 +783,7 @@ Idempotency-Key: action-uuid
 | --- | --- |
 | `agent_turn_id` | Turn ID |
 | `turn_number` | Session内のTurn番号。1から始まる |
-| `kind` | `chat`はAgent Turn、`approval`は承認API（3章・4章）と記憶の忘却API（7章）のAPI実行Turn（`api_idempotency_requests`から参照されるTurn） |
+| `kind` | `chat`はAgent Turn、`approval`は承認API（3章・4.1）のAPI実行Turn（`api_idempotency_requests`から参照されるTurn） |
 | `status` | `pending`、`running`、`completed`、`failed`、`cancelled`、`blocked`のいずれか（`agent_turn_status`） |
 | `error` | `failed`または`blocked`のTurnだけ`{ "code", "message", "retryable" }`を返す。それ以外は`null`。`agent_turns.error_code`とマスク済みの`error_message`から作る |
 | `started_at`、`completed_at` | 開始日時と終了日時。未開始または未終了は`null` |
@@ -702,7 +808,7 @@ Idempotency-Key: action-uuid
 - セキュリティイベントの一覧と検索のAPIは設けない（9章）
 - `status`が`completed`ではないTurnは、`items`として`user_message`（`approval`Turnでは`approval_action`）だけを返す（`security_notices`は返す）。完了していないTurnの出力は、次のContextにも含まれないため（`AGENT_DESIGN.md`の「中断されたTurnの復旧」）、表示もしない
 - `approval`Turnは、APIが失敗しても`api_result`を保存して`completed`になる（2.4）。承認APIの成否は、`api_result`の`success`で判別する
-- 提案（`campaign_proposal`、`x_post_proposal`）は、UIがフォームの初期値として使う。承認は3章・4章のAPIで行う。記憶の忘却は、画面の操作から7章のAPIで行う
+- 提案（`campaign_proposal`、`x_post_proposal`）は、UIがフォームの初期値として使う。承認は3章・4.1のAPIで行う。施策の直接編集（4.2）と記憶の忘却（7章）は、画面の操作からAgent履歴に関わらないAPIで行う
 - `agent_turn_id`、`item_id`は、履歴の表示・取得のための識別子であり、業務データの識別子（`campaign_id`など）とは別である
 
 ### 5.2 Session作成
@@ -726,8 +832,8 @@ Response: `201 Created`
 ```
 
 - Sessionは`agent = parent`、`parent_session_id = null`で作成し、所有者は認証済みマーケターとする。`marketer_id`はRequestから受け取らない
-- `title`は`null`で作成する。最初のメッセージを送信したときに設定する（5.3）。SC-05・SC-09の保存先としてUIが作成し、メッセージがまだない会話は、`title`が`null`のまま残る。UIは「無題の会話」と表示する（`SCREEN_DESIGN.md`の6.13）
-- `Idempotency-Key`は使用しない。二重クリックなどで複数のSessionが作成されても、履歴は空であり、業務データに影響しない。UIは、保存先として作成したSessionを再試行で作り直さない（`SCREEN_DESIGN.md`の6.13）
+- `title`は`null`で作成する。最初のメッセージを送信したときに設定する（5.3）。メッセージがまだない会話は、`title`が`null`のまま残る。UIは「無題の会話」と表示する
+- `Idempotency-Key`は使用しない。二重クリックなどで複数のSessionが作成されても、履歴は空であり、業務データに影響しない
 
 | HTTP Status | Code | 条件 | 再試行 |
 | --- | --- | --- | :---: |
@@ -1379,18 +1485,14 @@ Response: `200 OK`
 - 記憶の削除は、記憶の忘却API（7.1）で行う
 
 ## 7. 記憶の忘却API
-画面（SC-09）から、ユーザーが不要な長期記憶を削除する。Agent Toolの`delete_long_term_memory`（`AGENT_DESIGN.md`）と同じく、記憶の内容とEmbeddingを完全に削除する。API呼び出し自体を、ユーザーの最終承認として扱う（2.1）。3章・4章の承認APIと同じく、親Sessionの配下で実行し、`Idempotency-Key`を必須とする。外部APIとLLMは使用しない。
+画面（SC-09）から、ユーザーが不要な長期記憶を削除する。Agent Toolの`delete_long_term_memory`（`AGENT_DESIGN.md`）と同じく、記憶の内容とEmbeddingを完全に削除する。API呼び出し自体を、ユーザーの最終承認として扱う（2.1）。
 
-### 7.1 記憶忘却
-`DELETE /api/v1/agent-sessions/{session_id}/memories/{memory_id}`
+Agent履歴に関わらないAPIである。親Session、API実行Turn、`api_result`、冪等性レコードを作らず、`Idempotency-Key`も使用しない。外部APIとLLMは使用しない。
 
-#### Request Header
+### 7.1 記憶削除
+`DELETE /api/v1/memories/{memory_id}`
 
-```http
-Idempotency-Key: action-uuid
-```
-
-Request Bodyは持たない。UIは、確認ダイアログで削除を確定した操作ごとにUUIDを生成し、再送では同じ値を使用する（2.3）。
+Request Bodyは持たない。
 
 #### Response: `200 OK`
 
@@ -1399,56 +1501,50 @@ Request Bodyは持たない。UIは、確認ダイアログで削除を確定し
   "success": true,
   "data": {
     "memory_id": 25,
-    "agent_turn_id": 1910,
     "deleted": true
   },
   "error": null
 }
 ```
 
+`agent_turn_id`は返さない。
+
 #### 処理
-- 認証、CSRF、Pathの`session_id`と`memory_id`が正の整数であること、親Sessionの所有権の順に検証する（2.2、2.8）
-- `request_hash`は、操作種別と`memory_id`から作る正規化したJSON（例: `{"operation":"forget_memory","memory_id":25}`）のSHA-256とする。同じキーで別の`memory_id`を指定した場合は`409 IDEMPOTENCY_KEY_REUSED`となる
-- 冪等性レコード（`operation = forget_memory`）を原子的に作成できた最初のRequestだけが、指定親SessionにAPI実行Turnを作成し、最終Requestを信頼済み`user_message`へ保存する（2.4）
-  - 保存する`action`は、`{ "id": "action-uuid", "type": "forget_memory", "request": { "memory_id": 25 } }`とする
-  - 記憶の内容は、Agent履歴に保存しない。削除したはずの内容を、監査のために別の場所へ残さないためである
-- 会社単位で記憶を取得する。存在しない場合と別会社に属する場合は、区別せず`404 MEMORY_NOT_FOUND`とする。Agent履歴へ保存済みなので、エラーの`api_result`とともに`failed`として保存する
-- `agent_memories`の行（内容とEmbedding）を削除する。`memory_campaigns`と`memory_posts`の関連行は、外部キーの`cascade`で同時に削除する。施策と投稿は削除しない
-- 成功の`api_result`（`operation = forget_memory`、`success = true`）、Turn完了、冪等性レコードの`succeeded`への更新を、記憶の削除と同一のDB Transactionで行う。削除だけが確定して結果が保存されない状態を作らない
-- エラーの`api_result`、Turn完了、冪等性レコードの`failed`への更新を、同一Transactionで保存する。確定Responseを冪等性レコードへ保存してから返す
-- 外部作用がないため、`external_effect_started_at`と`external_result`は使用せず、`outcome_unknown`は発生しない。Leaseが切れた`processing`は、施策upsert APIと同じく、新しい実行TokenとLeaseをCompare-and-setで設定して安全に再実行する（2.3）
-- 同じキー・同じSession・同じRequestの再送は、保存済みのHTTP StatusとResponseを返す。すでに削除した記憶を、新しいキーで再度削除しようとした場合は`404 MEMORY_NOT_FOUND`となる
-- 保存した`api_result`は、次の親Agent Turnで通常のContext構築処理が読み込む。API Result保存だけでは親Agentを自動起動しない（2.4）
-- 保存先の親Sessionは、UIが指定する。記憶一覧（SC-09）には会話がないため、UIは最終更新が最新の親Session（5.5）を指定し、親Sessionがなければ5.2で作成する（`SCREEN_DESIGN.md`のSC-09）
+- 認証、CSRFの順に検証する（2.8）。Pathの`memory_id`が正の整数であることを検証する（不正なら`400 INVALID_ARGUMENT`）
+- 会社単位で記憶を取得する。存在しない場合と別会社に属する場合は、区別せず`404 MEMORY_NOT_FOUND`とする
+- `agent_memories`の行（内容とEmbedding）を削除する。`memory_campaigns`と`memory_posts`の関連行は、外部キーの`cascade`で同時に削除する。施策と投稿は削除しない。削除は1つのDB Transactionで行い、失敗した場合は`500 MEMORY_DELETE_FAILED`とする
+- Agent履歴へは保存しない。記憶の内容は、構造化ログにも出さない。記録は、構造化ログ（`company_id`、`marketer_id`、`memory_id`、結果）にだけ残す。削除したはずの内容を、監査のために別の場所へ残さないためである
+- 削除は`agent_memories`の行を条件にするため、同時に届いた複数のRequestのうち、削除できるのは1つだけである。他は`404 MEMORY_NOT_FOUND`となる
+
+#### 再送
+- 冪等性キーを持たないため、成功したRequestの再送は`404 MEMORY_NOT_FOUND`になる。Responseを受け取れなかった場合、UIは記憶の一覧を再取得し、対象の記憶がなければ、削除済みとして扱う（`404`を受けた場合も同じ）
+- 削除に失敗した（`500`）Requestは、そのまま再送できる
 
 #### `delete_long_term_memory`との関係
 | 経路 | 承認の証跡 | 履歴への保存 |
 | --- | --- | --- |
-| 画面のボタン（本API） | 確認ダイアログでの操作と、`approval_action`（`forget_memory`）。本APIのCallが承認である | `approval`Turnの`user_message`と`api_result` |
+| 画面のボタン（本API） | 確認ダイアログでの操作。本APIのCallが承認である | なし（構造化ログだけ） |
 | 会話での依頼（Agent Tool） | ユーザーの明示的な忘却の指示と、対象の確認（信頼済み忘却イベント） | `chat`Turnの`tool_call`と`tool_result` |
 
 - 本APIはAgent Toolを呼び出さない。信頼済み忘却イベントは、Tool経由の削除の条件であり、本APIには適用しない
 - 両方の経路とも、記憶の内容とEmbeddingを完全に削除する
 - 既知の制約: 過去の`chat`Turnに、`search_long_term_memory`の`tool_result`として記憶の内容が残っている場合がある。本APIはAgent履歴を書き換えないため、履歴に残った内容は削除されない。画面には`tool_result`を表示しない（5.1）が、DBには残る。履歴からの除去は、MVPでは扱わない（レビューで、この挙動でよいと確認した。忘却した記憶は、新しい会話からは参照されない）
+- 本APIによる削除は、Agent履歴に残らないため、進行中の会話のAgentは、次に記憶を検索するまで削除を把握しない。記憶は検索のたびにDBから取得するため、削除した記憶が新しい検索結果に出ることはない
 
 #### エラーコード
 | HTTP Status | Code | 条件 | 再試行 |
 | --- | --- | --- | :---: |
-| `400` | `INVALID_ARGUMENT` | `session_id`または`memory_id`が正の整数ではない | × |
-| `400` | `INVALID_IDEMPOTENCY_KEY` | Idempotency-Keyがない、またはUUID形式ではない | × |
+| `400` | `INVALID_ARGUMENT` | `memory_id`が正の整数ではない | × |
 | `401` | `UNAUTHENTICATED` | 未認証、または期限切れ | × |
 | `403` | `CSRF_VALIDATION_FAILED` | Origin不一致、または`X-CSRF-Token`が不正 | × |
-| `404` | `AGENT_SESSION_NOT_FOUND` | 親Sessionが存在しない、所有していない、または利用できない | × |
 | `404` | `MEMORY_NOT_FOUND` | 記憶が存在しない、または別会社に属する | × |
-| `409` | `IDEMPOTENCY_REQUEST_IN_PROGRESS` | 同じIdempotency-KeyのRequestを処理中 | ○ |
-| `409` | `IDEMPOTENCY_KEY_REUSED` | 同じIdempotency-Keyが異なるRequestまたはSessionで使用された | × |
-| `500` | `MEMORY_DELETE_FAILED` | 記憶の削除に失敗した | ○（新しい承認操作と新しいキー） |
+| `500` | `MEMORY_DELETE_FAILED` | 記憶の削除に失敗した | ○ |
 
-`INVALID_ARGUMENT`、`INVALID_IDEMPOTENCY_KEY`、`UNAUTHENTICATED`、`CSRF_VALIDATION_FAILED`、`AGENT_SESSION_NOT_FOUND`は、Agent履歴へ保存せずResponseだけを返す（2.4、2.8）。`MEMORY_NOT_FOUND`と`MEMORY_DELETE_FAILED`は、`api_result`として保存し、Responseの`agent_turn_id`にそのTurnを返す。
+すべてのエラーで、`agent_turn_id`は`null`とする。`○`は、同じRequestの再送が可能であることを示す。
 
 ## 8. 編集・承認フロー
 
-施策の直接編集（SC-05）は、Agentの提案とフォームの表示を経ずに、フォームの保存操作から下図の「最終承認」以降の流れへ入る。処理は同じである。記憶の忘却API（7章）も、外部APIを使用しない点を除いて、認証・冪等性・API実行Turn・API Resultの流れは同じである（下図の施策upsertとX投稿の分岐に相当する処理は、記憶の削除だけである）。
+下図は、Agentの提案を承認するAPI（3章・4.1）の流れである。施策の直接編集（SC-05。4.2）と記憶の削除（SC-09。7.1）は、Agent履歴に関わらないため、この流れには入らない。認証・CSRFを検証し、冪等性・API実行Turn・API Resultを使わずに、業務データを直接更新する。
 
 ```mermaid
 sequenceDiagram
@@ -1533,6 +1629,7 @@ sequenceDiagram
 - 計測失敗の理由と再試行の可否の取得（失敗履歴のテーブルがない）
 - 施策のアーカイブ操作（`campaigns.archived_at`を設定する操作は本書で未定義。参照APIは`archived_at`で絞り込まない）
 - 記憶の忘却時の、Agent履歴に残った過去の`tool_result`の書き換え
+- 施策編集API（4.2）と記憶削除API（7.1）の`Idempotency-Key`、Agent履歴への保存（操作の記録は構造化ログだけ）
 
 ## 10. エラーコード一覧
 APIが返すエラーコードの一覧である。`docs/backend/CODING_STANDARDS.md`の8章に従い、実装は本表に登録されたコードだけを使い、新しいコードは先に本表へ追加する。表示の分岐には、メッセージではなくコードを使う（`docs/frontend/CODING_STANDARDS.md`の16章）。
@@ -1542,15 +1639,15 @@ APIが返すエラーコードの一覧である。`docs/backend/CODING_STANDARD
 ### 共通（認証、入力、冪等性、内部）
 | Code | HTTP Status | 再試行 | 使用する章 |
 | --- | --- | :---: | --- |
-| `INVALID_ARGUMENT` | `400` | × | 2.9、3.1、4.1、5.3、5.4、5.5、5.6、6.1、7.1 |
-| `INVALID_IDEMPOTENCY_KEY` | `400` | × | 3.1、4.1、7.1 |
+| `INVALID_ARGUMENT` | `400` | × | 2.9、3.1、4.1、4.2、5.3、5.4、5.5、5.6、6.1、7.1 |
+| `INVALID_IDEMPOTENCY_KEY` | `400` | × | 3.1、4.1 |
 | `UNAUTHENTICATED` | `401` | × | 2.8。認証を必要とするすべてのAPI |
 | `INVALID_CREDENTIALS` | `401` | × | 2.9 |
 | `CSRF_VALIDATION_FAILED` | `403` | × | 2.8。状態変更API |
-| `AGENT_SESSION_NOT_FOUND` | `404` | × | 3.1、4.1、5.3、5.4、5.6、7.1 |
-| `IDEMPOTENCY_REQUEST_IN_PROGRESS` | `409` | ○（同じキーで再送） | 3.1、4.1、7.1 |
-| `IDEMPOTENCY_KEY_REUSED` | `409` | × | 3.1、4.1、7.1 |
-| `EMBEDDING_FAILED` | `500` | ○ | 3.1、4.1、6.1 |
+| `AGENT_SESSION_NOT_FOUND` | `404` | × | 3.1、4.1、5.3、5.4、5.6 |
+| `IDEMPOTENCY_REQUEST_IN_PROGRESS` | `409` | ○（同じキーで再送） | 3.1、4.1 |
+| `IDEMPOTENCY_KEY_REUSED` | `409` | × | 3.1、4.1 |
+| `EMBEDDING_FAILED` | `500` | ○ | 3.1、4.1、4.2、6.1 |
 | `INTERNAL_ERROR` | `500` | ○ | 6.1。想定外の内部エラー（コードが定まらない場合） |
 
 ### Agent会話（5章）
@@ -1570,11 +1667,11 @@ APIが返すエラーコードの一覧である。`docs/backend/CODING_STANDARD
 ### 施策・投稿・記憶
 | Code | HTTP Status | 再試行 | 使用する章 |
 | --- | --- | :---: | --- |
-| `CAMPAIGN_NOT_FOUND` | `404` | × | 3.1、4.1、6.3、6.4 |
-| `CAMPAIGN_CONFLICT` | `409` | × | 4.1 |
-| `INVALID_CAMPAIGN` | `422` | × | 4.1 |
+| `CAMPAIGN_NOT_FOUND` | `404` | × | 3.1、4.1、4.2、6.3、6.4 |
+| `CAMPAIGN_CONFLICT` | `409` | × | 4.1、4.2 |
+| `INVALID_CAMPAIGN` | `422` | × | 4.1、4.2 |
 | `CAMPAIGN_SAVE_FAILED` | `500` | ○ | 4.1 |
-| `CAMPAIGN_UPDATE_FAILED` | `500` | ○ | 4.1 |
+| `CAMPAIGN_UPDATE_FAILED` | `500` | ○ | 4.1、4.2 |
 | `POST_NOT_FOUND` | `404` | × | 6.5 |
 | `X_POST_UNRESOLVED` | `409` | × | 3.1 |
 | `INVALID_X_POST` | `422` | × | 3.1 |
@@ -1582,7 +1679,7 @@ APIが返すエラーコードの一覧である。`docs/backend/CODING_STANDARD
 | `X_POST_OUTCOME_UNKNOWN` | `504` | × | 3.1 |
 | `X_POST_SAVE_FAILED` | `500` | ○（同じキーで再送） | 3.1 |
 | `MEMORY_NOT_FOUND` | `404` | × | 7.1 |
-| `MEMORY_DELETE_FAILED` | `500` | ○（新しい承認操作と新しいキー） | 7.1 |
+| `MEMORY_DELETE_FAILED` | `500` | ○ | 7.1 |
 
 ### アプリケーションのコードを持たない応答
 | 応答 | 発生元 | 扱い |

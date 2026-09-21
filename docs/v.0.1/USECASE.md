@@ -181,7 +181,7 @@ flowchart TD
 | 情報不足 | 親Agentがユーザーへ追加質問し、回答を新しいTurnで受け付ける |
 | 手書き修正 | UIローカル状態を更新し、共通レビューへ戻る |
 | Agentと再相談 | 現在値と修正指示から新しい子Sessionと提案Toolを実行する |
-| 施策詳細（SC-05）からの直接編集 | ユーザーが保存済みの施策を、Agentを経由せずフォームで書き換える。UIは、施策詳細の取得時点の`updated_at`を`expected_updated_at`に設定し、手順10以降と同じ`POST /api/v1/agent-sessions/{session_id}/campaigns`の上書きで保存する。保存先の親Sessionは、最終更新が最新の親Sessionとし、なければ作成する。競合した場合は、入力を残したまま最新の内容を読み込み、再度保存できる |
+| 施策詳細（SC-05）からの直接編集 | ユーザーが保存済みの施策を、Agentを経由せずフォームで書き換える。UIは、施策詳細の取得時点の`updated_at`を`expected_updated_at`に設定し、`PUT /api/v1/campaigns/{campaign_id}`で保存する（Agent履歴・親Session・`Idempotency-Key`に関わらない）。競合した場合は、入力を残したまま最新の内容を読み込み、再度保存できる |
 | 子Agent失敗 | 失敗Tool Resultを現在の親Agentが観測し、ユーザーへ原因と次の選択肢を補足する。業務データは保存しない |
 | 提案Schema不正 | `propose_campaign`の失敗Tool Resultを現在の親Agentが観測し、不正なフォームを表示せず再生成または修正方法を補足する |
 | 親Session不正 | `404 AGENT_SESSION_NOT_FOUND`を返す。UIで有効な親Sessionを選択または作成し、マスク済みエラーを新しいTurnへ送信して親Agentワークフローへ接続する |
