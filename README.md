@@ -56,7 +56,7 @@ docker compose logs -f frontend
 
 ### Backend
 
-`backend/`配下の各レイヤーを編集します。Uvicornのreloadが有効なため、変更は自動で反映されます。
+`backend/`直下の各レイヤーを編集します。Uvicornのreloadが有効なため、変更は自動で反映されます。
 
 ```bash
 docker compose logs -f backend
@@ -82,11 +82,13 @@ docker compose run --rm migrate
 | `backend/models/` | DBテーブル定義 |
 | `backend/domain/` | 外部ライブラリに依存しない業務ルール |
 | `backend/clients/` | 外部APIアダプター |
-| `backend/agents/` | Agent、Tool、Context構築 |
+| `backend/agent_runtime/` | Agent、Tool、Context構築 |
 | `backend/core/` | 設定、ログ、エラー基底などの共通部品 |
 | `backend/tests/unit/` | 単体テスト |
 | `backend/tests/integration/` | 結合テスト |
 | `backend/migrations/` | DB migration |
+| `backend/main.py` | Vercel Functions用のエントリポイント（`backend/`をimportパスへ追加して`api.main`の`app`を公開する） |
+| `backend/pyproject.toml` | pytestの設定 |
 | `docker/frontend/Dockerfile` | Frontend開発イメージ |
 | `docker/backend/Dockerfile` | Backendとmigrationの共通イメージ |
 | `compose.yaml` | ローカル開発環境 |
@@ -97,7 +99,11 @@ docker compose run --rm migrate
 ```bash
 docker compose run --rm --no-deps frontend npm run lint
 docker compose run --rm --no-deps frontend npm run build
-docker compose run --rm --no-deps backend pytest
+docker compose run --rm backend pytest
 ```
+
+backendのテストは、compose の PostgreSQL（pgvector入り）へ接続して実行します。`docker compose run --rm backend pytest`は、DBとmigrationを先に起動します。
+
+以前の`postgres:17-alpine`のボリュームが残っている場合は、`docker compose down --volumes`で削除してから起動し直してください（DBイメージを`pgvector/pgvector:pg17`へ変更したため）。
 
 本番環境の準備は[DEPLOY.md](./docs/DEPLOY.md)を参照してください。

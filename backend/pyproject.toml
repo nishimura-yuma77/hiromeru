@@ -1,0 +1,13 @@
+# Vercelが依存関係を requirements.txt から読み込めるように、[project] テーブルは置かない。
+# uv への移行時（規約2章）に、[project] と依存関係をここへ集約する。
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+
+# backend/ をワークスペースのルートとして開いた場合に、Pylance・pyright が api/ などのパッケージを解決するための設定。
+# リポジトリのルートを開いた場合は、ルートの pyrightconfig.json が使われる。
+[tool.pyright]
+pythonVersion = "3.12"
+extraPaths = ["."]
+include = ["agent_runtime", "api", "clients", "core", "domain", "models", "repositories", "services", "tests", "migrations", "main.py"]

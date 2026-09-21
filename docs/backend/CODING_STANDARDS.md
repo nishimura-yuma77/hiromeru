@@ -129,14 +129,14 @@ def build_tracked_url(landing_url: str, campaign_id: int, action_id: str) -> str
 ### 6.1 構成
 
 ```text
-src/hiromeru/
+backend/
   api/            # HTTP境界。ルーター、Request/Response のスキーマ、認証依存
   services/       # 業務処理（ユースケース）。トランザクション境界を持つ
   repositories/   # DBアクセス。SQLはここにだけ書く
   models/         # DBのテーブル定義（DATABASE.dbml と1対1）
   domain/         # 外部に依存しない業務ルール、値オブジェクト、Enum
   clients/        # 外部APIのアダプタ（X、GA4、OrcaRouter、Embedding）
-  agents/         # Agent、Tool、Context構築
+  agent_runtime/  # Agent、Tool、Context構築（SDKの import 名 `agents` と衝突させないための名前）
   core/           # 設定、ログ、エラー基底、時刻・ID生成などの共通部品
 tests/
   unit/
@@ -443,7 +443,7 @@ class AppError(Exception):
 ### 17.3 OpenAI Agents SDK と OrcaRouter
 
 - 必須: LLM と Embedding の呼び出しは OrcaRouter 経由とする。SDK には `AsyncOpenAI(base_url=<OrcaRouter>, api_key=...)` を `set_default_openai_client` で登録する。呼び出し API の種別は **Chat Completions** とし、`set_default_openai_api("chat_completions")` を設定する。OrcaRouter の Guardrails と Agent Firewall の対象として文書に記載があるのが Chat Completions であるためである（2026-09-21 時点。Responses での適用範囲は文書に記載がない）。Responses 専用の機能（SDK のホスト型の Web 検索・ファイル検索など）は使わず、Web 検索などは自前の Tool で実装する（`AGENT_DESIGN.md`）。
-- 必須: SDK の初期化と設定は `clients/` に集約する。SDK の型（`Agent`、`Runner` など）は `agents/` 層に閉じ込め、`api` と `services` から直接 import しない。
+- 必須: SDK の初期化と設定は `clients/` に集約する。SDK の型（`Agent`、`Runner` など）は `agent_runtime/` 層に閉じ込め、`api` と `services` から直接 import しない。
 - 必須: OrcaRouter のブロックは、OpenAI 形式のエラーとして返る。Guardrail のブロックは HTTP 400（コード `guardrail_blocked`）、Agent Firewall のブロックは `firewall_blocked` である。SDK の例外を `clients/` で捕捉して、`AGENT_DESIGN.md` のブロック処理（Item の隔離、Tool 実行の `blocked`、`security_events`）へ変換する。Firewall が保留した Tool Call（HTTP 400、`firewall_approval_pending`）は、MVP では承認を待たず、失敗の Tool Result として扱う。
 - 必須: Tool Call の実行前の評価は、Agent Firewall の評価 API（`POST /api/v1/firewall/evaluate`）を明示的に呼んで行う。リクエストとレスポンスの形式は、実装時に OrcaRouter の API リファレンスで確認する。【要確認】
 - 必須: SDK のトレースは、既定では OpenAI のトレース基盤へ送られる。送信先と内容を明示的に設定し、既定では無効にする（`set_tracing_disabled(True)`）。有効にする場合は `trace_include_sensitive_data=False` にする。

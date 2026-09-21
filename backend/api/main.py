@@ -1,7 +1,7 @@
 from fastapi import Depends, FastAPI, HTTPException, status
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from repositories.database import get_db
 
@@ -20,9 +20,9 @@ def health() -> dict[str, str]:
 
 
 @app.get("/api/health/db")
-def database_health(db: Session = Depends(get_db)) -> dict[str, str]:
+async def database_health(db: AsyncSession = Depends(get_db)) -> dict[str, str]:
     try:
-        db.execute(text("SELECT 1"))
+        await db.execute(text("SELECT 1"))
     except SQLAlchemyError as error:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,

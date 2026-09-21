@@ -1,19 +1,21 @@
-from collections.abc import Generator
+from collections.abc import AsyncGenerator
 
-from sqlalchemy import create_engine
-from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.pool import NullPool
 
 from core.config import get_settings
 
-
 settings = get_settings()
-engine = create_engine(
+
+# Neon のプール接続（PgBouncer の transaction モード）を前提に、アプリケーション側では
+# 接続をプールしない（規約17.2）。接続のプールは Neon 側に任せる。
+engine = create_async_engine(
     settings.sqlalchemy_url(settings.database_url),
-    pool_pre_ping=True,
+    poolclass=NullPool,
 )
-SessionLocal = sessionmaker(bind=engine, expire_on_commit=False)
+SessionLocal = async_sessionmaker(bind=engine, expire_on_commit=False)
 
 
-def get_db() -> Generator[Session, None, None]:
-    with SessionLocal() as session:
+async def get_db() -> AsyncGenerator[AsyncSession, None]:
+    async with SessionLocal() as session:
         yield session
