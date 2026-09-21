@@ -1,162 +1,110 @@
 {
  "v": 3,
- "attachments": {},
+ "createdOnFiles": {
+  "v": 1,
+  "at": "2026-09-21T05:19:58Z"
+ },
+ "title": "hiromeru 画面デザイン",
+ "launch": {
+  "view": "canvas"
+ },
+ "pages": [],
  "boards": {
-  "CampaignDetail.dc.html": {
-   "h": 1420,
-   "is_interactive": true,
-   "title": "SC-03 施策詳細・編集",
-   "w": 1440,
-   "x": 1520,
-   "y": 1960
-  },
-  "Campaigns.dc.html": {
-   "h": 900,
-   "is_interactive": true,
-   "title": "SC-02 施策一覧",
-   "w": 1440,
-   "x": 0,
-   "y": 1960
-  },
-  "Chat.dc.html": {
-   "h": 1280,
-   "is_interactive": true,
-   "title": "SC-01 ホーム（親エージェントチャット）",
-   "w": 1440,
-   "x": 1520,
-   "y": 300
-  },
-  "Cost.dc.html": {
-   "h": 1160,
-   "is_interactive": true,
-   "title": "SC-08 コスト",
-   "w": 1440,
-   "x": 0,
-   "y": 5380
-  },
   "Login.dc.html": {
-   "h": 900,
-   "is_interactive": true,
-   "title": "SC-00 ログイン",
-   "w": 1440,
    "x": 0,
-   "y": 300
-  },
-  "Memories.dc.html": {
-   "h": 1000,
-   "is_interactive": true,
-   "title": "SC-07 記憶一覧",
-   "w": 1440,
-   "x": 3040,
-   "y": 300
-  },
-  "Metrics.dc.html": {
-   "h": 1000,
-   "is_interactive": true,
-   "title": "SC-06 計測結果",
-   "w": 1440,
-   "x": 3040,
-   "y": 1960
-  },
-  "PostConfirm.dc.html": {
-   "h": 1240,
-   "is_interactive": true,
-   "title": "SC-05 Xに投稿の確認ダイアログ",
-   "w": 1440,
-   "x": 3040,
-   "y": 3760
-  },
-  "PostDetail.dc.html": {
-   "h": 1240,
-   "is_interactive": true,
-   "title": "SC-05 投稿詳細・承認・投稿",
-   "w": 1440,
-   "x": 1520,
-   "y": 3760
-  },
-  "Posts.dc.html": {
-   "h": 960,
-   "is_interactive": true,
-   "title": "SC-04 投稿一覧",
-   "w": 1440,
-   "x": 0,
-   "y": 3760
-  },
-  "Security.dc.html": {
-   "h": 900,
-   "is_interactive": true,
-   "title": "SC-10 セキュリティイベント",
-   "w": 1440,
-   "x": 3040,
-   "y": 5380
-  },
-  "Sessions.dc.html": {
-   "h": 1000,
-   "is_interactive": true,
-   "title": "SC-09 実行履歴",
-   "w": 1440,
-   "x": 1520,
-   "y": 5380
-  },
-  "Overview.dc.html": {
-   "x": 4560,
    "y": 300,
    "w": 1440,
-   "h": 6000,
-   "title": "00 概要（ランディング）",
-   "is_interactive": true,
-   "expand": "fill"
-  }
- },
- "createdOnFiles": {
-  "at": "2026-09-21T05:19:58Z",
-  "v": 1
- },
- "designSystems": [],
- "launch": {
-  "view": "focused",
-  "file": "Overview.dc.html"
- },
- "notes": {
-  "row1": {
-   "kind": "title1",
-   "maxW": 4480,
-   "text": "01　入口・チャット・記憶",
-   "w": 240,
-   "x": 0,
-   "y": 40
+   "h": 900,
+   "title": "SC-00 ログイン",
+   "is_interactive": true
   },
-  "row2": {
-   "kind": "title1",
-   "maxW": 4480,
-   "text": "02　施策・計測結果",
-   "w": 240,
-   "x": 0,
-   "y": 1700
+  "Chat.dc.html": {
+   "x": 1520,
+   "y": 300,
+   "w": 1440,
+   "h": 1280,
+   "title": "SC-01 ホーム（親エージェントチャット）",
+   "is_interactive": true
   },
-  "row3": {
-   "kind": "title1",
-   "maxW": 4480,
-   "text": "03　投稿の承認とX投稿",
-   "w": 240,
-   "x": 0,
-   "y": 3500
+  "Memories.dc.html": {
+   "x": 3040,
+   "y": 300,
+   "w": 1440,
+   "h": 1000,
+   "title": "SC-07 記憶一覧",
+   "is_interactive": true
   },
-  "row4": {
-   "kind": "title1",
-   "maxW": 4480,
-   "text": "04　運用（コスト・実行履歴・セキュリティ）",
-   "w": 240,
+  "Campaigns.dc.html": {
    "x": 0,
-   "y": 5120
+   "y": 1960,
+   "w": 1440,
+   "h": 900,
+   "title": "SC-02 施策一覧",
+   "is_interactive": true
   },
-  "row0": {
-   "x": 4560,
-   "y": 40,
-   "text": "00　概要",
-   "kind": "title1",
-   "maxW": 1440,
-   "w": 240
+  "CampaignDetail.dc.html": {
+   "x": 1520,
+   "y": 1960,
+   "w": 1440,
+   "h": 1420,
+   "title": "SC-03 施策詳細・編集",
+   "is_interactive": true
+  },
+  "Metrics.dc.html": {
+   "x": 3040,
+   "y": 1960,
+   "w": 1440,
+   "h": 1000,
+   "title": "SC-06 計測結果",
+   "is_interactive": true
+  },
+  "Posts.dc.html": {
+   "x": 0,
+   "y": 3760,
+   "w": 1440,
+   "h": 960,
+   "title": "SC-04 投稿一覧",
+   "is_interactive": true
+  },
+  "PostDetail.dc.html": {
+   "x": 1520,
+   "y": 3760,
+   "w": 1440,
+   "h": 1240,
+   "title": "SC-05 投稿詳細・承認・投稿",
+   "is_interactive": true
+  },
+  "PostConfirm.dc.html": {
+   "x": 3040,
+   "y": 3760,
+   "w": 1440,
+   "h": 1240,
+   "title": "SC-05 Xに投稿の確認ダイアログ",
+   "is_interactive": true
+  },
+  "Cost.dc.html": {
+   "x": 0,
+   "y": 5380,
+   "w": 1440,
+   "h": 1160,
+   "title": "SC-08 コスト",
+   "is_interactive": true
+  },
+  "Sessions.dc.html": {
+   "x": 1520,
+   "y": 5380,
+   "w": 1440,
+   "h": 1000,
+   "title": "SC-09 実行履歴",
+   "is_interactive": true
+  },
+  "Security.dc.html": {
+   "x": 3040,
+   "y": 5380,
+   "w": 1440,
+   "h": 900,
+   "title": "SC-10 セキュリティイベント",
+   "is_interactive": true
   }
  },
  "order": [
@@ -171,9 +119,37 @@
   "PostConfirm.dc.html",
   "Cost.dc.html",
   "Sessions.dc.html",
-  "Security.dc.html",
-  "Overview.dc.html"
+  "Security.dc.html"
  ],
- "pages": [],
- "title": "hiromeru 画面デザイン"
+ "notes": {
+  "row1": {
+   "x": 0,
+   "y": 40,
+   "text": "01　入口・チャット・記憶",
+   "kind": "title1",
+   "maxW": 4480
+  },
+  "row2": {
+   "x": 0,
+   "y": 1700,
+   "text": "02　施策・計測結果",
+   "kind": "title1",
+   "maxW": 4480
+  },
+  "row3": {
+   "x": 0,
+   "y": 3500,
+   "text": "03　投稿の承認とX投稿",
+   "kind": "title1",
+   "maxW": 4480
+  },
+  "row4": {
+   "x": 0,
+   "y": 5120,
+   "text": "04　運用（コスト・実行履歴・セキュリティ）",
+   "kind": "title1",
+   "maxW": 4480
+  }
+ },
+ "designSystems": []
 }
