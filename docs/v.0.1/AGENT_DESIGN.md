@@ -368,7 +368,7 @@ flowchart TD
 ### `get_post`
 **利用Agent:** 親エージェント、施策立案エージェント、コンテンツ制作エージェント
 
-Post IDによる完全一致取得を行う。Embedding APIは呼び出さない。対象はXへの公開に成功して`posts`へ保存された投稿だけとする。
+Post IDによる完全一致取得を行う。Embedding APIは呼び出さない。`posts.api_idempotency_request_id`から`api_idempotency_requests`を内部結合し、`operation = publish_x_post`かつ`status = succeeded`のX公開成功済み投稿だけを対象とする。
 
 ```json
 { "post_id": 45 }
@@ -378,27 +378,29 @@ Post IDによる完全一致取得を行う。Embedding APIは呼び出さない
 flowchart TD
     START([get_post開始]) --> VALIDATE{Post IDは正常か}
     VALIDATE -- いいえ --> END_INVALID([INVALID_ARGUMENT])
-    VALIDATE -- はい --> LOAD[主キーで公開済みPostを取得]
-    LOAD --> AUTHORIZE{現在の会社に属するか}
+    VALIDATE -- はい --> LOAD[PostとAPI冪等性Requestを内部結合]
+    LOAD --> PUBLISHED{publish_x_postかつsucceededか}
+    PUBLISHED -- いいえ --> END_NOT_FOUND([POST_NOT_FOUND])
+    PUBLISHED -- はい --> AUTHORIZE{現在の会社に属するか}
     AUTHORIZE -- いいえ --> END_NOT_FOUND([POST_NOT_FOUND])
     AUTHORIZE -- はい --> LINKS[CampaignとUTM情報を取得]
     LINKS --> METRICS[計測済みなら評価指標を取得]
     METRICS --> END_OK([Postを返す])
 ```
 
-別会社のPostも情報漏えいを防ぐため`POST_NOT_FOUND`として扱う。主な失敗は`INVALID_ARGUMENT`、`POST_NOT_FOUND`、`POST_GET_FAILED`。
+`failed`、`processing`、`outcome_unknown`のAPI Request、Agent履歴上の未公開案、別会社のPostは返さず、すべて`POST_NOT_FOUND`として扱う。`post_metrics.status = failed`はX公開失敗ではなく計測失敗を示すため、Post自体は返し、計測状態を結果へ含める。主な失敗は`INVALID_ARGUMENT`、`POST_NOT_FOUND`、`POST_GET_FAILED`。
 
 ### `search_posts`
 **利用Agent:** 親エージェント、施策立案エージェント、コンテンツ制作エージェント
 
-自然言語QueryからEmbeddingを生成し、`post_embeddings`を使って類似する公開済み投稿を検索する。Campaignと期間は意味検索結果への絞り込みとして使用する。
+自然言語QueryからEmbeddingを生成し、`post_embeddings`、`posts`、`api_idempotency_requests`を内部結合して類似する公開済み投稿を検索する。`operation = publish_x_post`かつ`status = succeeded`を必須条件とし、Campaignと期間は意味検索結果への追加絞り込みとして使用する。
 
 ```json
 {
   "query": "リモートワークを訴求したエンジニア採用投稿",
   "campaign_id": 12,
-  "created_from": null,
-  "created_to": null,
+  "published_from": null,
+  "published_to": null,
   "limit": 10
 }
 ```
@@ -410,14 +412,15 @@ flowchart TD
     VALIDATE -- はい --> EMBED[Query Embeddingを生成]
     EMBED --> GENERATED{生成成功か}
     GENERATED -- いいえ --> END_EMBED([EMBEDDING_FAILED])
-    GENERATED -- はい --> SEARCH[会社単位でPostを類似検索]
-    SEARCH --> FILTER[Campaign・期間条件を適用]
+    GENERATED -- はい --> SEARCH[Embedding・Post・API冪等性Requestを内部結合]
+    SEARCH --> PUBLISHED[publish_x_postかつsucceededへ限定]
+    PUBLISHED --> FILTER[会社・Campaign・期間条件を適用]
     FILTER --> LINKS[CampaignとUTM情報を取得]
     LINKS --> METRICS[計測済みなら評価指標を取得]
     METRICS --> END_OK([投稿・類似度・計測概要を返す])
 ```
 
-投稿本文からURLを除去した正規化テキストを検索対象とし、未公開案は含めない。主な失敗は`INVALID_ARGUMENT`、`EMBEDDING_FAILED`、`POST_SEARCH_FAILED`。
+投稿本文からURLを除去した正規化テキストを検索対象とし、期間条件は`posts.published_at`へ適用する。`failed`、`processing`、`outcome_unknown`のAPI RequestとAgent履歴上の未公開案は検索Projectionとして使用しない。`post_metrics.status = failed`の公開済みPostは検索対象に含め、計測失敗状態を結果へ含める。主な失敗は`INVALID_ARGUMENT`、`EMBEDDING_FAILED`、`POST_SEARCH_FAILED`。
 
 ### `get_marketing_metrics`
 **利用Agent:** 親エージェント、施策立案エージェント、コンテンツ制作エージェント
@@ -611,7 +614,10 @@ flowchart TD
 - 次のユーザー入力で開始する親TurnのContext構築時に、他の完了Turnと同じ経路でAPI Resultを読み込む
 - 親Agentは`operation`、`success`、エラーコード、マスク済み説明、再試行可否を観測して回答や修正提案へ利用する
 - 親Agentがエラーを観測しても、施策保存やX投稿を自動再実行しない
+- 施策upsert APIとX投稿APIは永続的な冪等性レコードで保護し、同じ`Idempotency-Key`の完了済みRequestには保存済みResponseを返す。`outcome_unknown`の手動照合後は解決後の確定Responseを返す
+- 冪等Responseの再返却では新しいAPI実行Turn、`user_message`、API Resultを作成せず、Responseには最初の`agent_turn_id`を含める
 - `X_POST_OUTCOME_UNKNOWN`と`X_POST_SAVE_FAILED`は、外部投稿の状態確認なしに再投稿しない
+- `outcome_unknown`の間は対応する内容を`get_post`と`search_posts`へ公開せず、手動照合後は元Itemを変更せず新しい監査Turnの確定結果をContextへ含める
 - 認証または親Session所有権を検証できない場合は安全な保存先がないため、そのRequestのAPI ResultをAgent履歴へ保存しない
 - `AGENT_SESSION_NOT_FOUND`では、UIが利用可能な親Sessionを選択または作成し、マスク済みエラーを新しい`user_message`として送信した後に親Agentワークフローを開始する
 

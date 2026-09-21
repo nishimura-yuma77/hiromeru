@@ -25,6 +25,8 @@
 - 子Sessionはユーザーから直接操作しない
 - 提案Toolは業務テーブルへの保存と外部公開を行わない
 - 施策保存とX投稿は、認証済みUIからSession配下のAPIを呼び出して実行する
+- UIは最終承認操作ごとに`Idempotency-Key`を生成し、二重送信と通信再試行では同じキーを使用する
+- APIは同じキーの同一Requestを一度だけ実行し、完了後の再送には保存済みの確定Responseを返す。`outcome_unknown`は手動照合後の確定結果へ更新できる
 - 自由文による同意は最終承認として扱わない
 
 ## 4. 提案内容の共通レビュー
@@ -44,11 +46,12 @@
 - UIは新しいTool Resultでフォームを置き換える
 
 ### 4.3 最終承認
-- UIは承認時点のフォーム値をSession配下のAPIへ送信する
+- UIは承認操作用の`Idempotency-Key`を生成し、承認時点のフォーム値とともにSession配下のAPIへ送信する
 - API呼び出し自体を、送信内容に対する最終承認として扱う
 - APIは認証、親Session所有権、会社所有権、入力Schemaを検証する
 - 検証済みRequestを指定親Sessionの新しいTurnへ保存する
 - API処理後、成功結果またはマスク済みエラーを同じTurnへ保存する
+- 同じキーの再送では新しいTurnや業務データを作成せず、保存済みResponseを返す
 - 最終承認後の処理にLLMを使用しない
 
 ### 4.4 APIエラー後のAgent接続
@@ -123,10 +126,10 @@ flowchart TD
 7. 親Agentは実際の施策内容を引数に`propose_campaign`を実行する
 8. UIは`propose_campaign`のTool Resultを編集可能なフォームとして表示する
 9. ユーザーは共通レビューを行う
-10. 最終承認時、UIは`POST /api/v1/agent-sessions/{session_id}/campaigns`を呼び出す
+10. 最終承認時、UIは承認操作用の`Idempotency-Key`とフォーム値を指定して`POST /api/v1/agent-sessions/{session_id}/campaigns`を呼び出す
 11. Request Bodyの`id`が省略または`null`なら新規作成として処理する
 12. `id`に値があれば、同じ会社の既存Campaignを全項目上書きする
-13. APIはCampaignと検索用Embeddingを同一Transactionで保存する
+13. APIはCampaign、検索用Embedding、成功API Result、Turn完了、冪等性の成功状態を同一Transactionで保存する
 14. APIは結果を指定親Sessionの同じTurnへ保存する
 15. UIは保存結果をユーザーへ表示する
 
@@ -134,6 +137,7 @@ flowchart TD
 - 新規作成ではCampaignとCampaign Embeddingが作成されている
 - 上書きではCampaignと必要なCampaign Embeddingが同期されている
 - 最終RequestとAPI結果が指定親Sessionに保存されている
+- 同じ承認操作が再送されてもCampaignとAgent履歴が重複作成されない
 
 ### 5.6 代替・エラーフロー
 | 条件 | 処理 |
@@ -144,6 +148,10 @@ flowchart TD
 | 子Agent失敗 | 失敗Tool Resultを現在の親Agentが観測し、ユーザーへ原因と次の選択肢を補足する。業務データは保存しない |
 | 提案Schema不正 | `propose_campaign`の失敗Tool Resultを現在の親Agentが観測し、不正なフォームを表示せず再生成または修正方法を補足する |
 | 親Session不正 | `404 AGENT_SESSION_NOT_FOUND`を返す。UIで有効な親Sessionを選択または作成し、マスク済みエラーを新しいTurnへ送信して親Agentワークフローへ接続する |
+| 同一Requestの再送 | 保存済みの確定HTTP StatusとResponse Bodyを返し、新しいCampaignとAgent Turnを作成しない |
+| 同一Requestを処理中 | Leaseが有効なら`409 IDEMPOTENCY_REQUEST_IN_PROGRESS`を返し、UIは処理完了後に同じキーで結果を再取得する |
+| Campaign処理のLease切れ | 新しい実行TokenとLeaseをCAS設定し、既存のAPI実行Turnを再利用して安全に再開する |
+| キーの不正再利用 | 異なるRequestまたはSessionでは`409 IDEMPOTENCY_KEY_REUSED`を返し、施策を保存しない |
 | 上書き対象なし | `404 CAMPAIGN_NOT_FOUND`を親Turnへ保存し、指定IDで新規作成せず次回Agentワークフローへ接続する |
 | Embedding生成失敗 | Campaignを保存せず、構造化エラーを親Turnへ保存して次回Agentワークフローへ接続する |
 | DB保存失敗 | TransactionをRollbackし、構造化エラーを親Turnへ保存して次回Agentワークフローへ接続する |
@@ -174,7 +182,12 @@ flowchart TD
     END_SESSION_ERROR --> RECOVER_SESSION[有効な親Sessionを選択または作成]
     RECOVER_SESSION --> FORWARD_ERROR[マスク済みエラーを新しいTurnへ送信]
     FORWARD_ERROR --> AGENT_WORKFLOW
-    SESSION -- はい --> VALIDATE{Schema・業務条件は正常か}
+    SESSION -- はい --> IDEMPOTENCY{Idempotency-Keyの状態}
+    IDEMPOTENCY -- 完了済みの同一Request --> REPLAY([元Responseを表示])
+    IDEMPOTENCY -- Lease有効で処理中または不正再利用 --> IDEMPOTENCY_ERROR([409を表示して重複実行しない])
+    IDEMPOTENCY -- Lease切れ --> REACQUIRE[新しい実行TokenとLeaseをCAS設定]
+    REACQUIRE --> VALIDATE
+    IDEMPOTENCY -- 新規 --> VALIDATE{Schema・業務条件は正常か}
     VALIDATE -- いいえ --> SAVE_ERROR[構造化エラーを親Turnへ保存]
     VALIDATE -- はい --> MODE{idがあるか}
     MODE -- いいえ --> CREATE[CampaignとEmbeddingを新規作成]
@@ -213,13 +226,13 @@ flowchart TD
 7. 親Agentは実際の投稿内容を引数に`propose_x_post`を実行する
 8. UIは`propose_x_post`のTool Resultを編集可能なフォームとして表示する
 9. ユーザーは共通レビューを行う
-10. 最終承認時、UIは`POST /api/v1/agent-sessions/{session_id}/x/posts`を呼び出す
+10. 最終承認時、UIは承認操作用の`Idempotency-Key`とフォーム値を指定して`POST /api/v1/agent-sessions/{session_id}/x/posts`を呼び出す
 11. APIは親Session、Campaign所有権、本文、遷移先URLを検証する
 12. APIは投稿検索用EmbeddingとUTM付きURLを生成する
 13. APIはURL結合後の本文がX文字数規則を満たすことを検証する
 14. APIは最終Requestを指定親Sessionの新しいTurnへ保存する
 15. APIはX APIへ投稿する
-16. X投稿成功後、Post、Post Embedding、UTM情報、計測予定を同一Transactionで保存する
+16. X投稿成功後、Post、Post Embedding、UTM情報、計測予定、成功API Result、Turn完了、冪等性の成功状態を同一Transactionで保存し、Postから成功Requestを参照する
 17. APIは結果を指定親Sessionの同じTurnへ保存する
 18. UIは公開結果をユーザーへ表示する
 
@@ -228,6 +241,8 @@ flowchart TD
 - Postと関連データが保存されている
 - 最終RequestとAPI結果が指定親Sessionに保存されている
 - 投稿から1週間後の評価処理が予定されている
+- 同じ承認操作が再送されてもX投稿、Post、Agent履歴が重複作成されない
+- `get_post`と`search_posts`の対象になるのは、成功状態の`publish_x_post` Requestを参照するPostだけである
 
 ### 6.6 代替・エラーフロー
 | 条件 | 処理 |
@@ -239,12 +254,18 @@ flowchart TD
 | 子Agent失敗 | 失敗Tool Resultを現在の親Agentが観測し、ユーザーへ原因と次の選択肢を補足する。X投稿は行わない |
 | 提案Schema不正 | `propose_x_post`の失敗Tool Resultを現在の親Agentが観測し、不正なフォームを表示せず再生成または修正方法を補足する |
 | 親Session不正 | `404 AGENT_SESSION_NOT_FOUND`を返す。UIで有効な親Sessionを選択または作成し、マスク済みエラーを新しいTurnへ送信して親Agentワークフローへ接続する |
+| 同一Requestの再送 | 保存済みResponseを返し、X投稿とAgent Turnを重複作成しない。`outcome_unknown`の手動照合後は解決後の確定Responseを返す |
+| 同一Requestを処理中 | Leaseが有効なら`409 IDEMPOTENCY_REQUEST_IN_PROGRESS`を返し、Xへ重複投稿しない |
+| X送信前のLease切れ | 新しい実行TokenとLeaseをCAS設定し、既存のAPI実行Turnを再利用して安全に再開する |
+| X送信後のLease切れ | 専用の復旧CASで`outcome_unknown`へ変更し、Postを作成せず手動照合へ送る |
+| キーの不正再利用 | 異なるRequestまたはSessionでは`409 IDEMPOTENCY_KEY_REUSED`を返し、Xへ投稿しない |
+| 別キーの同一投稿が未解決 | `409 X_POST_UNRESOLVED`を返し、処理中または結果不明の投稿が解決するまでXへ投稿しない |
 | APIによるCampaign取得失敗 | `404 CAMPAIGN_NOT_FOUND`を親Turnへ保存し、X投稿を行わず次回Agentワークフローへ接続する |
 | 投稿内容不正 | `422 INVALID_X_POST`を親Turnへ保存し、X投稿を行わず次回Agentワークフローへ接続する |
 | Embedding生成失敗 | 構造化エラーを親Turnへ保存し、X投稿を行わず次回Agentワークフローへ接続する |
-| X API明確失敗 | `502 X_POST_FAILED`を親Turnへ保存し、業務データを保存せず次回Agentワークフローへ接続する |
-| X投稿結果不明 | `504 X_POST_OUTCOME_UNKNOWN`を親Turnへ保存し、自動再投稿せず次回Agentワークフローへ接続する |
-| X成功後のDB保存失敗 | `500 X_POST_SAVE_FAILED`を親Turnへ保存し、自動再投稿せず次回Agentワークフローへ接続する |
+| X API明確失敗 | `502 X_POST_FAILED`を親Turnへ保存し、Postを保存せず次回Agentワークフローへ接続する |
+| X投稿結果不明 | `504 X_POST_OUTCOME_UNKNOWN`を親Turnへ保存し、Postを保存せず、自動再投稿せずに手動照合へ送る。成功確認後だけ復旧TransactionでPostを作成する |
+| X成功後のDB保存失敗 | `500 X_POST_SAVE_FAILED`を親Turnへ保存し、未完了のPostを残さず、自動再投稿せずに手動照合へ送る |
 
 ```mermaid
 flowchart TD
@@ -273,16 +294,26 @@ flowchart TD
     END_SESSION_ERROR --> RECOVER_SESSION[有効な親Sessionを選択または作成]
     RECOVER_SESSION --> FORWARD_ERROR[マスク済みエラーを新しいTurnへ送信]
     FORWARD_ERROR --> AGENT_WORKFLOW
-    SESSION -- はい --> VALIDATE{Schema・業務条件は正常か}
+    SESSION -- はい --> IDEMPOTENCY{Idempotency-Keyの状態}
+    IDEMPOTENCY -- 完了済みの同一Request --> REPLAY([元Responseを表示])
+    IDEMPOTENCY -- Lease有効で処理中または不正再利用 --> IDEMPOTENCY_ERROR([409を表示して重複実行しない])
+    IDEMPOTENCY -- Lease切れ --> EXTERNAL{X API送信を開始済みか}
+    EXTERNAL -- いいえ --> REACQUIRE[新しい実行TokenとLeaseをCAS設定]
+    REACQUIRE --> VALIDATE
+    EXTERNAL -- はい --> SAVE_ERROR
+    IDEMPOTENCY -- 新規 --> UNRESOLVED{別キーの同じ内容が未解決か}
+    UNRESOLVED -- はい --> SAVE_ERROR
+    UNRESOLVED -- いいえ --> VALIDATE{Schema・業務条件は正常か}
     VALIDATE -- いいえ --> SAVE_ERROR[構造化エラーを親Turnへ保存]
     VALIDATE -- はい --> PREPARE[Embedding・UTM・投稿本文を生成]
     PREPARE --> PREPARED{生成成功か}
     PREPARED -- いいえ --> SAVE_ERROR
-    PREPARED -- はい --> XPOST[X APIへ投稿]
+    PREPARED -- はい --> MARK_EXTERNAL[外部作用開始日時を保存]
+    MARK_EXTERNAL --> XPOST[X APIへ投稿]
     XPOST --> RESULT{X投稿結果}
     RESULT -- 明確な失敗 --> SAVE_ERROR
     RESULT -- 結果不明 --> SAVE_ERROR
-    RESULT -- 成功 --> SAVE[Post関連データを保存]
+    RESULT -- 成功 --> SAVE[Post関連データと成功Request参照を保存]
     SAVE --> SAVED{DB保存成功か}
     SAVED -- いいえ --> SAVE_ERROR
     SAVED -- はい --> AUDIT[成功結果を親Turnへ保存]

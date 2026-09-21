@@ -115,8 +115,10 @@
 - 表示中のフォームに紐づく承認ボタンだけを最終承認として扱う
 - UIは承認時点のフォーム値そのものをAPI Request Bodyへ設定する
 - UIは現在の親Session IDをAPI Pathへ設定する
+- UIは承認操作ごとに`Idempotency-Key`を生成し、二重送信と通信再試行では同じキーを使用する
 - バックエンドはSessionが認証済みマーケターに属する有効な親Sessionであることを検証する
-- バックエンドはSchema検証済みの最終Requestを信頼済み承認イベントとして保存する
+- アーカイブ済み親Sessionでは新しい処理を開始しないが、アーカイブ前に完了した同一Requestの冪等Responseは認証と所有権を確認して再返却できる
+- バックエンドは安全に解析・マスクした最終Requestを信頼済み承認イベントとして保存し、その後のSchema検証結果も同じTurnへ保存する
 - 最終RequestとAPI結果はPathで指定された親Sessionの新しいTurnへ保存する
 - 承認後はLLMを呼ばず、UIからアプリケーションAPIを呼び出す
 - 施策案では施策upsert APIを実行する
@@ -128,6 +130,9 @@
 - APIエラーを観測したAgentは、ユーザーの新しい承認なしに施策保存やX投稿を再実行しない
 - 認証または親Session所有権を検証できないエラーは、安全な保存先を確定できないためそのRequestのAgent履歴へ保存しない
 - `AGENT_SESSION_NOT_FOUND`では、UIが利用可能な親Sessionを選択または作成し、マスク済みエラーを新しいTurnへ送信して親Agentワークフローへ接続する
+- バックエンドは施策upsertとX投稿を永続的な冪等性レコードで保護し、同じ承認操作による業務データとAgent履歴の重複作成を防止する
+- 完了済みの同一Requestが再送された場合は、冪等性レコードに保存した確定HTTP StatusとResponse Bodyを返す。`outcome_unknown`は手動照合まで暫定Responseを返し、解決後は確定Responseを返す
+- 同じキーを異なるRequestまたはSessionへ再利用した場合は、処理を拒否する
 
 ---
 
@@ -142,6 +147,8 @@
 Agentは`propose_campaign`で実際の施策内容を返し、UIは編集可能なフォームとして提示する。承認時のフォーム値の登録・更新はアプリケーションAPIで行う。
 
 施策upsert APIは`POST /api/v1/agent-sessions/{session_id}/campaigns`とし、Request Bodyの`id`が省略または`null`なら新規作成、値があれば同じ会社の既存施策を上書きする。
+
+施策と検索用Embeddingの保存、成功API Result、Turn完了、およびAPI冪等性レコードの成功確定は同一Transactionで行う。同じ`Idempotency-Key`の同一Requestを再送しても、新しい施策またはAgent Turnを作成しない。
 
 ### 管理対象例
 
@@ -159,6 +166,13 @@ Agentは`propose_campaign`で実際の施策内容を返し、UIは編集可能�
 Xへの投稿に成功した投稿コンテンツを保存・取得する。未公開案はエージェント履歴に保持し、公開済み投稿の本文更新と削除はMVP対象外とする。
 
 公開済み投稿はIDによる完全一致取得と、自然言語による意味検索に対応する。
+
+- 各Postは、同じTransactionで`succeeded`へ確定した`publish_x_post`のAPI冪等性Requestを一意に参照する
+- PostはX公開日時を`published_at`へ保持し、期間検索と計測予定日時はこの日時を基準にする
+- `get_post`はPostとAPI冪等性Requestを内部結合し、成功済み公開投稿だけを返す
+- `search_posts`はPost、Post Embedding、API冪等性Requestを内部結合し、成功済み公開投稿だけを検索する
+- `failed`、`processing`、`outcome_unknown`の投稿RequestとAgent履歴上の未公開案を取得・検索対象に含めない
+- `post_metrics.status = failed`は公開後の計測失敗として返し、公開済みPostを取得・検索対象から除外しない
 
 Agentは`propose_x_post`で実際の投稿内容を返し、UIは編集可能なフォームとして提示する。承認時のフォーム値によるX投稿と保存はアプリケーションAPIで行う。
 
@@ -190,6 +204,10 @@ MVPでは以下を対象とする。
 X APIと連携して投稿および投稿結果の取得を行う。
 
 Xへの投稿はAgent Toolではなく、認証済みUIから`POST /api/v1/agent-sessions/{session_id}/x/posts`を呼び出して実行する。X投稿に成功した場合だけ、投稿コンテンツと関連データを業務テーブルへ保存する。
+
+X投稿APIはX API呼び出し前に永続的な冪等性レコードで実行権を確定する。同じ`Idempotency-Key`の同一Requestを再送してもXへ再投稿せず、X投稿結果が不明な場合も自動再投稿しない。
+
+X APIへの送信開始を永続化してから投稿し、送信開始後に結果不明となったRequestは手動照合まで`outcome_unknown`として保持する。X公開成功を確認した場合だけ、管理された復旧TransactionでPost関連データを作成して成功状態へ変更する。
 
 ## 機能
 
@@ -669,6 +687,8 @@ LLMを使用しない。
 
 永久的なエラーについては無限リトライしない。
 
+X投稿は非冪等な外部作用として扱い、X APIへRequestを送信した後のタイムアウト、通信切断、結果不明エラーでは自動再試行しない。自動再試行できるのはX APIへの送信前、またはXが投稿未作成を明確に返した場合に限る。
+
 ---
 
 ## NFR-REL-004 想定外のLLM出力を処理する
@@ -722,6 +742,23 @@ LLMの出力が期待する形式と異なる場合、
 
 ---
 
+## NFR-REL-008 承認APIを冪等にする
+
+施策upsert APIとX投稿APIは、UIの二重送信、通信再試行、並列Requestによって同じ業務操作を複数回実行してはならない。
+
+- `marketer_id`、操作種別、`Idempotency-Key`の組み合わせをDB一意制約で保護する
+- 最初のRequestだけに実行権を付与する
+- 実行TokenとLeaseによるFencingを行い、期限切れ後の古い処理によるDB書き込みを拒否する
+- 同じキー、Session、Requestの完了済み処理には保存済みResponseを返す
+- 同じキーを異なるSessionまたはRequest Bodyへ再利用した場合は`409`を返す
+- Responseの再返却では業務データとAgent履歴を追加しない
+- 施策または投稿の保存、成功API Result、Turn完了、冪等性の成功確定を同一Transactionで行う
+- X投稿の結果を確定できない場合は`outcome_unknown`として保存し、自動再投稿しない
+- X投稿では外部作用開始前後を永続的に区別し、開始前の期限切れ処理だけを安全に再開する
+- 同じ投稿内容の未解決Requestが別キーに存在する場合も、新しいX投稿を拒否する
+
+---
+
 # 5. 自律性
 
 ## NFR-AUTO-001 親エージェントが実行手段を判断する
@@ -736,9 +773,9 @@ LLMの出力が期待する形式と異なる場合、
 - コンテンツ制作エージェント
 - Web検索
 - 記憶検索
-- 施策の作成・取得・更新
+- 施策の取得と施策案の作成
 - 公開済み投稿の取得
-- X投稿
+- X投稿案の作成
 - 評価指標取得
 
 ---
