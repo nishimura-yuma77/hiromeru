@@ -1,0 +1,3457 @@
+openapi: 3.1.0
+info:
+  title: hiromeru API
+  version: 0.1.0-draft
+  summary: AI支援型Xマーケティングシステム（MVP）のバックエンドAPI
+  description: |
+    画面設計（`SCREEN_DESIGN.md` の SC-00〜SC-10）が呼び出すバックエンドAPIの定義。
+    根拠資料は `REQUIREMENTS.md`、`DATABASE.dbml`、`SCREEN_DESIGN.md`。
+    読み物としての解説・状態遷移・エージェントツール定義・外部連携は `API_DESIGN.md` にまとめている。
+
+    ## 共通規約
+
+    - ベースパスは `/api/v1`。リクエスト・レスポンスはUTF-8のJSON（チャットのストリームのみ `text/event-stream`）。
+    - 日時はRFC 3339（UTC、例: `2026-09-21T10:02:11Z`）。表示時のタイムゾーン変換はクライアントが行う。
+    - IDは `int64` の整数。
+    - **認証**: 外部IdP（OIDC）でログインし、サーバーが発行するセッションCookie（`hiromeru_session`、HttpOnly / Secure / SameSite=Lax）で識別する。
+      `POST` / `PATCH` / `DELETE` はCSRF対策として `X-CSRF-Token` ヘッダー（`GET /me` で取得）を必須とする。
+    - **テナント分離**: すべての業務データはセッションのマーケターが所属する会社に限定される。他社のリソースは存在しないものとして `404` を返す。
+    - **エラー**: RFC 9457（`application/problem+json`）。`code` に機械可読なエラーコードを入れる。
+    - **ページング**: カーソル方式。`limit`（既定20、最大100）と `cursor` を受け取り、`next_cursor` を返す（末尾は `null`）。
+    - **楽観的排他**: 承認対象（施策・投稿）の更新・承認・投稿には、画面が表示していた `revision` を渡す。サーバー側の改訂と異なる場合は `409 REVISION_MISMATCH`。
+    - **冪等性**: 外部への副作用があるエンドポイント（Xへの投稿）は `Idempotency-Key` を必須とする。
+    - **サンプル値**はすべて架空のものである。
+
+    ## 承認ゲート（NFR-SEC-003 / 004）
+
+    施策の確定、投稿内容の確定、Xへの投稿、データ削除の承認は、**ログイン中のユーザーがこのAPIを直接呼ぶ**ことでのみ成立する。
+    エージェントが呼べるツール（`API_DESIGN.md` §6）には承認・投稿実行の操作は含まれず、承認待ちの状態を作ることしかできない。
+  license:
+    name: Proprietary
+    identifier: LicenseRef-Proprietary
+servers:
+  - url: http://localhost:8080/api/v1
+    description: ローカル開発
+  - url: https://{host}/api/v1
+    description: 本番（ホストは実装時に決定）
+    variables:
+      host:
+        default: hiromeru.example.com
+tags:
+  - name: auth
+    description: SC-00 ログイン / セッション
+  - name: me
+    description: ログインユーザー・ナビゲーションバッジ・クライアント設定
+  - name: campaigns
+    description: SC-02 施策一覧 / SC-03 施策詳細
+  - name: posts
+    description: SC-04 投稿一覧 / SC-05 投稿詳細・承認・投稿
+  - name: metrics
+    description: SC-06 計測結果
+  - name: memories
+    description: SC-07 記憶
+  - name: chat
+    description: SC-01 ホーム（親エージェントチャット）と承認カード
+  - name: ops-cost
+    description: SC-08 コスト
+  - name: ops-sessions
+    description: SC-09 実行履歴
+  - name: ops-security
+    description: SC-10 セキュリティイベント
+  - name: internal
+    description: 内部ジョブ（cron等から呼ぶ。画面からは使わない）
+  - name: system
+    description: ヘルスチェック
+security:
+  - cookieAuth: []
+paths:
+  /healthz:
+    get:
+      tags: [system]
+      operationId: getHealth
+      summary: ヘルスチェック
+      description: 認証不要。プロセスの生存確認のみ行い、外部サービス（X / GA4 / OrcaRouter）の状態は見ない。
+      security: []
+      responses:
+        '200':
+          description: 稼働中
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status]
+                properties:
+                  status:
+                    type: string
+                    const: ok
+
+  # ------------------------------------------------------------------ auth
+  /auth/login:
+    get:
+      tags: [auth]
+      operationId: startLogin
+      summary: 外部IdPログインを開始する
+      description: |
+        SC-00「Googleでログイン」（IdPは実装時に決定）。OIDC Authorization Code + PKCE のリダイレクト先へ `302` で遷移させる。
+        `state` / `nonce` / PKCE verifier はサーバーが短命Cookieで保持する。
+      security: []
+      parameters:
+        - name: return_to
+          in: query
+          description: ログイン後に戻るアプリ内パス。`/` で始まる相対パスのみ許可（オープンリダイレクト防止）。
+          schema:
+            type: string
+            pattern: '^/[^/\\].*$|^/$'
+            default: /
+      responses:
+        '302':
+          description: IdPの認可エンドポイントへリダイレクト
+          headers:
+            Location:
+              schema:
+                type: string
+                format: uri
+
+  /auth/callback:
+    get:
+      tags: [auth]
+      operationId: finishLogin
+      summary: IdPからのコールバック（セッション発行）
+      description: |
+        認可コードをトークンに交換し、`users` を `(auth_provider, auth_subject)` で照合して `last_signed_in_at` を更新、セッションCookieを発行して `return_to` へ `302` する。
+        初回ログイン時にユーザー・会社・マーケターを自動作成するかは未確定（`API_DESIGN.md` U-1。現状は自動作成と仮置き）。
+        `users.status = disabled` の場合は `/login?error=account_disabled` へ、その他の失敗は `/login?error=login_failed` へリダイレクトする。
+      security: []
+      parameters:
+        - name: code
+          in: query
+          schema:
+            type: string
+        - name: state
+          in: query
+          schema:
+            type: string
+        - name: error
+          in: query
+          description: IdPが返したエラー。
+          schema:
+            type: string
+      responses:
+        '302':
+          description: 'アプリへリダイレクト（成功時は `Set-Cookie: hiromeru_session`）'
+          headers:
+            Set-Cookie:
+              schema:
+                type: string
+            Location:
+              schema:
+                type: string
+
+  /auth/logout:
+    post:
+      tags: [auth]
+      operationId: logout
+      summary: ログアウト（セッション破棄）
+      security:
+        - cookieAuth: []
+          csrfToken: []
+      responses:
+        '204':
+          description: 破棄した（既に無効なセッションでも `204`）
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  # ------------------------------------------------------------------ me
+  /me:
+    get:
+      tags: [me]
+      operationId: getMe
+      summary: ログインユーザーと所属会社
+      description: 画面表示時に最初に呼ぶ。`csrf_token` は以後の更新系リクエストの `X-CSRF-Token` に使う。
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Me'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /me/badges:
+    get:
+      tags: [me]
+      operationId: getNavBadges
+      summary: グローバルナビの「対応が必要な件数」バッジ
+      description: |
+        共通レイアウト（画面設計 §4）のバッジ。ナビ表示のたびに（例: 60秒ごとのポーリングで）取得する。
+        - 施策 = 承認待ち件数
+        - 投稿 = 承認待ち＋投稿失敗件数
+        - 計測結果 = 計測失敗件数
+        - セキュリティ = 直近24時間の検出件数
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NavBadges'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /config:
+    get:
+      tags: [me]
+      operationId: getClientConfig
+      summary: クライアントが使う設定値
+      description: 文字数上限、円換算レートなど、サーバー設定のうち画面表示に必要なものを返す（機密値は含めない）。
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClientConfig'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  # ------------------------------------------------------------------ campaigns
+  /campaigns:
+    get:
+      tags: [campaigns]
+      operationId: listCampaigns
+      summary: 施策一覧（SC-02）
+      description: 既定では `archived` を除外する。`sort=attention` は承認待ちを先頭にする。
+      parameters:
+        - name: status
+          in: query
+          description: ステータスで絞り込む（複数指定可）。
+          schema:
+            type: array
+            items:
+              $ref: '#/components/schemas/CampaignStatus'
+          style: form
+          explode: false
+        - name: include_archived
+          in: query
+          schema:
+            type: boolean
+            default: false
+        - name: q
+          in: query
+          description: タイトルの部分一致検索。
+          schema:
+            type: string
+            maxLength: 255
+        - name: sort
+          in: query
+          schema:
+            type: string
+            enum: [updated_at_desc, created_at_desc, attention]
+            default: updated_at_desc
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, next_cursor]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/CampaignSummary'
+                  next_cursor:
+                    type: [string, 'null']
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    post:
+      tags: [campaigns]
+      operationId: createCampaign
+      summary: 施策を手動で作成する（SC-02「新規作成」）
+      description: 作成直後のステータスは `draft`、`revision = 1`。エージェント経由の作成は承認カード（`approveToolExecution`）で行う。
+      security:
+        - cookieAuth: []
+          csrfToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CampaignCreate'
+      responses:
+        '201':
+          description: 作成した施策
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CampaignDetail'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /campaigns/{campaignId}:
+    parameters:
+      - $ref: '#/components/parameters/CampaignId'
+    get:
+      tags: [campaigns]
+      operationId: getCampaign
+      summary: 施策詳細（SC-03）
+      description: 承認情報、集計（投稿数・PV合計・流入ユーザー数合計）、画面で有効にできる操作（`allowed_actions`）を含む。関連投稿は `listPosts?campaign_id=`、関連記憶は `listMemories?campaign_id=` で取得する。
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CampaignDetail'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    patch:
+      tags: [campaigns]
+      operationId: updateCampaign
+      summary: 施策を編集する（SC-03）
+      description: |
+        指定した項目だけを更新する。内容が実際に変わった場合のみ `revision` が +1 される（変更なしなら `200` でそのまま返す）。
+
+        **承認済み（`approved`）の施策の編集は承認を取り消す**（`status` → `pending_approval`、`approved_revision` / `approved_at` → `null`。戻り先は仮置き、`API_DESIGN.md` U-10）。
+        画面の確認ダイアログを経たことを示すため、この場合は `acknowledge_approval_reset: true` が必須（なければ `409 APPROVAL_RESET_NOT_ACKNOWLEDGED`）。
+        `archived` の施策は編集できない（`409 INVALID_STATE`）。
+      security:
+        - cookieAuth: []
+          csrfToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CampaignUpdate'
+      responses:
+        '200':
+          description: 更新後の施策
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CampaignDetail'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+    delete:
+      tags: [campaigns]
+      operationId: deleteCampaign
+      summary: 施策を削除する
+      description: |
+        `draft` かつ紐づく投稿が0件の場合のみ削除できる。投稿が1件でもある場合は `409 CAMPAIGN_HAS_POSTS`（アーカイブへ誘導）。
+        外部キーは `restrict` のため、投稿・記憶の紐づけ以外を持つ施策は物理削除しない。
+        紐づく記憶との中間行（`memory_campaigns`）は連鎖削除されるが、記憶本体は残る。
+      security:
+        - cookieAuth: []
+          csrfToken: []
+      responses:
+        '204':
+          description: 削除した
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+  /campaigns/{campaignId}/submit:
+    parameters:
+      - $ref: '#/components/parameters/CampaignId'
+    post:
+      tags: [campaigns]
+      operationId: submitCampaign
+      summary: 承認を申請する
+      description: '`draft` または `rejected` → `pending_approval`。`submitted_at` を記録する。'
+      security:
+        - cookieAuth: []
+          csrfToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RevisionRequest'
+      responses:
+        '200':
+          description: 更新後の施策
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CampaignDetail'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+  /campaigns/{campaignId}/approve:
+    parameters:
+      - $ref: '#/components/parameters/CampaignId'
+    post:
+      tags: [campaigns]
+      operationId: approveCampaign
+      summary: 施策を承認する（施策の確定）
+      description: |
+        `pending_approval` → `approved`。`approved_revision = revision`、`approved_at` を記録する。
+        リクエストの `revision` がサーバーの改訂と一致しない場合（承認画面を開いたあとに編集された場合）は `409 REVISION_MISMATCH`。
+      security:
+        - cookieAuth: []
+          csrfToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RevisionRequest'
+      responses:
+        '200':
+          description: 承認後の施策
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CampaignDetail'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+  /campaigns/{campaignId}/reject:
+    parameters:
+      - $ref: '#/components/parameters/CampaignId'
+    post:
+      tags: [campaigns]
+      operationId: rejectCampaign
+      summary: 施策を却下する
+      description: '`pending_approval` → `rejected`。編集して再申請できる。却下理由を保存するカラムは現行DBにない。'
+      security:
+        - cookieAuth: []
+          csrfToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RevisionRequest'
+      responses:
+        '200':
+          description: 却下後の施策
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CampaignDetail'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+  /campaigns/{campaignId}/archive:
+    parameters:
+      - $ref: '#/components/parameters/CampaignId'
+    post:
+      tags: [campaigns]
+      operationId: archiveCampaign
+      summary: 施策をアーカイブする
+      description: '`archived` にして `archived_at` を記録する。紐づく投稿は変更しない。'
+      security:
+        - cookieAuth: []
+          csrfToken: []
+      responses:
+        '200':
+          description: アーカイブ後の施策
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CampaignDetail'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+  /campaigns/{campaignId}/restore:
+    parameters:
+      - $ref: '#/components/parameters/CampaignId'
+    post:
+      tags: [campaigns]
+      operationId: restoreCampaign
+      summary: アーカイブした施策を復元する
+      description: '`archived` → `draft`（仮置き。承認は復元時に失われる。`API_DESIGN.md` U-12）。`archived_at` を `null` に戻す。'
+      security:
+        - cookieAuth: []
+          csrfToken: []
+      responses:
+        '200':
+          description: 復元後の施策
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CampaignDetail'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+  # ------------------------------------------------------------------ posts
+  /posts:
+    get:
+      tags: [posts]
+      operationId: listPosts
+      summary: 投稿一覧（SC-04）／施策に紐づく投稿（SC-03）
+      description: |
+        既定では `archived` を除外する。`needs_action=true` は「対応が必要」（`pending_approval` と `publish_failed`）だけを返す。
+        `sort=attention` は対応が必要な投稿を先頭にピン留めする。
+      parameters:
+        - name: status
+          in: query
+          schema:
+            type: array
+            items:
+              $ref: '#/components/schemas/PostStatus'
+          style: form
+          explode: false
+        - name: campaign_id
+          in: query
+          schema:
+            type: integer
+            format: int64
+        - name: needs_action
+          in: query
+          schema:
+            type: boolean
+        - name: include_archived
+          in: query
+          schema:
+            type: boolean
+            default: false
+        - name: q
+          in: query
+          description: 本文の部分一致検索。
+          schema:
+            type: string
+            maxLength: 255
+        - name: sort
+          in: query
+          schema:
+            type: string
+            enum: [updated_at_desc, created_at_desc, published_at_desc, attention]
+            default: updated_at_desc
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, next_cursor]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/PostSummary'
+                  next_cursor:
+                    type: [string, 'null']
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    post:
+      tags: [posts]
+      operationId: createPost
+      summary: 投稿を手動で作成する（SC-04「新規作成」）
+      description: |
+        `draft`、`revision = 1` で作成する。対象施策は `approved` のものだけ選べる（仮置き、`API_DESIGN.md` U-4）。満たさない場合は `422 CAMPAIGN_NOT_APPROVED`。
+        `landing_url` を渡した場合は、UTM付きのトラッキングリンク（`post_tracking_links`）も同時に生成する。UTMは決定論的なアプリケーションロジックで生成し、LLMは呼ばない（NFR-COST-005）。
+      security:
+        - cookieAuth: []
+          csrfToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PostCreate'
+      responses:
+        '201':
+          description: 作成した投稿
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PostDetail'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+
+  /posts/{postId}:
+    parameters:
+      - $ref: '#/components/parameters/PostId'
+    get:
+      tags: [posts]
+      operationId: getPost
+      summary: 投稿詳細（SC-05）
+      description: |
+        本文、トラッキングリンク、承認情報、投稿結果、計測（`metric` と失敗履歴）、残り文字数、画面で有効にできる操作を返す。
+        `publishing` 中の画面は、このエンドポイントを数秒ごとにポーリングして結果を反映する。
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PostDetail'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    patch:
+      tags: [posts]
+      operationId: updatePost
+      summary: 投稿を編集する（SC-05）
+      description: |
+        本文・投稿予定日（メモ）・遷移先URLを更新する。実際に内容が変わった場合のみ `revision` が +1 される。
+        Xテキストの文字数規則を超える本文は `422 POST_BODY_TOO_LONG`。
+
+        **承認済み（`approved`）の投稿の編集は承認を取り消す**（`status` → `pending_approval`。戻り先は仮置き、`API_DESIGN.md` U-10）。
+        この場合は `acknowledge_approval_reset: true` が必須（なければ `409 APPROVAL_RESET_NOT_ACKNOWLEDGED`）。
+        `publishing` / `published` / `archived` の投稿は編集できない（`409 INVALID_STATE`）。`publish_failed` は編集でき、編集すると再承認待ちに戻る。
+        `landing_url` を変更するとUTM付きURL（`tracked_url`）を再生成する。
+      security:
+        - cookieAuth: []
+          csrfToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PostUpdate'
+      responses:
+        '200':
+          description: 更新後の投稿
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PostDetail'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+    delete:
+      tags: [posts]
+      operationId: deletePost
+      summary: 投稿を削除する
+      description: |
+        `draft` の投稿だけ削除できる。公開済み（`published`）の投稿は削除できない（`409 POST_PUBLISHED_UNDELETABLE`）。
+        それ以外の状態はアーカイブへ誘導する（`409 INVALID_STATE`）。トラッキングリンクは連鎖削除される。
+      security:
+        - cookieAuth: []
+          csrfToken: []
+      responses:
+        '204':
+          description: 削除した
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+  /posts/{postId}/submit:
+    parameters:
+      - $ref: '#/components/parameters/PostId'
+    post:
+      tags: [posts]
+      operationId: submitPost
+      summary: 承認を申請する
+      description: '`draft` → `pending_approval`。遷移先URLが未設定なら `422 LANDING_URL_REQUIRED`。'
+      security:
+        - cookieAuth: []
+          csrfToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RevisionRequest'
+      responses:
+        '200':
+          description: 更新後の投稿
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PostDetail'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+
+  /posts/{postId}/approve:
+    parameters:
+      - $ref: '#/components/parameters/PostId'
+    post:
+      tags: [posts]
+      operationId: approvePost
+      summary: 投稿内容を承認する（投稿コンテンツの確定）
+      description: |
+        `pending_approval` → `approved`。`approved_revision = revision`、`approved_at` を記録する。
+        `revision` が一致しなければ `409 REVISION_MISMATCH`。遷移先URLが未設定なら `422 LANDING_URL_REQUIRED`。
+      security:
+        - cookieAuth: []
+          csrfToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RevisionRequest'
+      responses:
+        '200':
+          description: 承認後の投稿
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PostDetail'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+
+  /posts/{postId}/publish:
+    parameters:
+      - $ref: '#/components/parameters/PostId'
+    post:
+      tags: [posts]
+      operationId: publishPost
+      summary: Xに投稿する
+      description: |
+        SC-05「今すぐ投稿」（確認ダイアログの後）。**即時投稿のみ**で、`scheduled_at` による自動投稿はしない。
+
+        事前条件（すべて満たさない場合は `409 NOT_APPROVED_REVISION`）:
+        - `status` が `approved`（または `publish_failed` の再投稿で、承認済み改訂のまま）
+        - `approved_revision = revision`、かつリクエストの `revision` と一致する
+
+        処理:
+        1. 状態を `publishing` に**原子的に**遷移させる（二重押し・二重リクエスト対策。同時に1つだけが成功する）
+        2. `202 Accepted` を返す
+        3. バックグラウンドでX APIへ投稿する。成功すると `published`、`published_at`、`x_post_id` を記録し、計測予定日時（`published_at` の7日後）で `post_metrics` を `pending` として作成する。失敗すると `publish_failed` とマスク済みの `last_publish_error` を記録する
+        4. クライアントは `getPost` をポーリングして結果を反映する
+
+        同じ `Idempotency-Key` での再送は、現在の投稿を同じ `202` で返す（再投稿しない）。同じキーで別の投稿・別の `revision` を指定した場合は `409 IDEMPOTENCY_KEY_REUSED`。
+        X APIの応答が得られずに投稿結果が不明な場合は、自動で再送せず `publish_failed`（エラー概要に「結果不明」）とし、ユーザーの確認を経て再投稿する（`API_DESIGN.md` §4.2）。
+      security:
+        - cookieAuth: []
+          csrfToken: []
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RevisionRequest'
+      responses:
+        '202':
+          description: 受け付けた（`status = publishing`）
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PostDetail'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+  /posts/{postId}/archive:
+    parameters:
+      - $ref: '#/components/parameters/PostId'
+    post:
+      tags: [posts]
+      operationId: archivePost
+      summary: 投稿をアーカイブする
+      description: '`draft` / `pending_approval` / `approved` / `publish_failed` → `archived`。`publishing` と `published` はアーカイブできない。'
+      security:
+        - cookieAuth: []
+          csrfToken: []
+      responses:
+        '200':
+          description: アーカイブ後の投稿
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PostDetail'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+  /posts/{postId}/restore:
+    parameters:
+      - $ref: '#/components/parameters/PostId'
+    post:
+      tags: [posts]
+      operationId: restorePost
+      summary: アーカイブした投稿を復元する
+      description: '`archived` → `draft`（仮置き。承認は復元時に失われる）。'
+      security:
+        - cookieAuth: []
+          csrfToken: []
+      responses:
+        '200':
+          description: 復元後の投稿
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PostDetail'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+  /posts/{postId}/tracking-link/preview:
+    parameters:
+      - $ref: '#/components/parameters/PostId'
+    post:
+      tags: [posts]
+      operationId: previewTrackingLink
+      summary: 「投稿されるURL」のプレビュー
+      description: |
+        遷移先URLを入力中に、UTM付きURLとXへ送る最終テキストを確認する（SC-05）。保存はしない。
+        UTMの生成規則は `API_DESIGN.md` §4.3。
+      security:
+        - cookieAuth: []
+          csrfToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [landing_url]
+              properties:
+                landing_url:
+                  $ref: '#/components/schemas/LandingUrl'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TrackingLink'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+
+  # ------------------------------------------------------------------ metrics
+  /metrics:
+    get:
+      tags: [metrics]
+      operationId: getMetricsReport
+      summary: 計測結果（SC-06）
+      description: |
+        施策ごとにグループ化した計測結果。指標はX投稿の初週PV数（`x_pv_count`）と、投稿経由の応募ページ流入ユーザー数（`landing_user_count`）の2つだけ。
+        平均・比率などの派生値は返さず、必要ならクライアントが算出する（`API_DESIGN.md` U-14）。
+        未完了（`pending` / `processing` / `failed`）の投稿は値が `null`。公開前の投稿（`post_metrics` が未作成）は `metric = null` で返す。
+      parameters:
+        - name: from
+          in: query
+          description: 投稿日時（`published_at`）の下限。
+          schema:
+            type: string
+            format: date-time
+        - name: to
+          in: query
+          description: 投稿日時（`published_at`）の上限。
+          schema:
+            type: string
+            format: date-time
+        - name: campaign_id
+          in: query
+          schema:
+            type: integer
+            format: int64
+        - name: metric_status
+          in: query
+          schema:
+            type: array
+            items:
+              $ref: '#/components/schemas/PostMetricStatus'
+          style: form
+          explode: false
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MetricsReport'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /posts/{postId}/metric:
+    parameters:
+      - $ref: '#/components/parameters/PostId'
+    get:
+      tags: [metrics]
+      operationId: getPostMetric
+      summary: 投稿の計測状況と失敗履歴
+      description: 未公開の投稿は `404 NOT_FOUND`（`post_metrics` は公開時に作成される）。
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [metric, failures]
+                properties:
+                  metric:
+                    $ref: '#/components/schemas/PostMetric'
+                  failures:
+                    type: array
+                    description: 失敗した計測試行の履歴（新しい順）。
+                    items:
+                      $ref: '#/components/schemas/MetricFailure'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  # ------------------------------------------------------------------ memories
+  /memories:
+    get:
+      tags: [memories]
+      operationId: listMemories
+      summary: 記憶一覧・意味検索（SC-07）
+      description: |
+        `q` なしは一覧（並びは `id` の降順。作成日時カラムがないため日付順は出せない。U-7）。
+        `q` ありは、入力文の埋め込みを生成してベクトル検索し、類似度の降順で返す（エージェントの記憶想起と同じ検索）。
+        検索時は埋め込み生成のため外部（埋め込みモデル）へ通信する。障害時は `502 UPSTREAM_ERROR`。
+        `campaign_id` / `post_id` で、その施策・投稿に紐づく記憶だけに絞る。
+      parameters:
+        - name: q
+          in: query
+          description: 意味検索の入力文。
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 500
+        - name: campaign_id
+          in: query
+          schema:
+            type: integer
+            format: int64
+        - name: post_id
+          in: query
+          schema:
+            type: integer
+            format: int64
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
+      responses:
+        '200':
+          description: OK。`q` ありの場合は `similarity` を含み、`next_cursor` は常に `null`（上位 `limit` 件のみ）。
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, next_cursor]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Memory'
+                  next_cursor:
+                    type: [string, 'null']
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '502':
+          $ref: '#/components/responses/UpstreamError'
+    post:
+      tags: [memories]
+      operationId: createMemory
+      summary: 覚えさせる（SC-07「覚えさせる」）
+      description: |
+        自然言語の記憶を保存する。埋め込みは、単一設定されたモデル・次元数で内容から生成する。
+        埋め込みの生成に失敗した場合は何も保存せず `502 UPSTREAM_ERROR`。
+        `campaign_ids` / `post_ids` は同じ会社の施策・投稿でなければならない（違反は `404`）。関連なしの記憶も保存できる。
+      security:
+        - cookieAuth: []
+          csrfToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MemoryCreate'
+      responses:
+        '201':
+          description: 保存した記憶
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Memory'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '502':
+          $ref: '#/components/responses/UpstreamError'
+
+  /memories/{memoryId}:
+    parameters:
+      - $ref: '#/components/parameters/MemoryId'
+    get:
+      tags: [memories]
+      operationId: getMemory
+      summary: 記憶の詳細
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Memory'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    delete:
+      tags: [memories]
+      operationId: deleteMemory
+      summary: 忘却する（記憶の物理削除）
+      description: |
+        SC-07「忘却」（確認ダイアログの後）。**内容と埋め込みベクトルを完全に削除**する。元に戻せない。紐づけ（`memory_campaigns` / `memory_posts`）は連鎖削除される。
+        記憶の**編集APIは設けない**（内容を変えると埋め込みの再生成が必要で、記憶の再構成はスコープ外のため。修正は「忘却して覚えさせ直す」）。
+      security:
+        - cookieAuth: []
+          csrfToken: []
+      responses:
+        '204':
+          description: 削除した
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  # ------------------------------------------------------------------ chat
+  /chat/sessions:
+    get:
+      tags: [chat]
+      operationId: listChatSessions
+      summary: 会話（親エージェントのセッション）一覧（SC-01 左ペイン）
+      description: '`agent = parent` のセッションだけを、更新日時の降順で返す。既定ではアーカイブ済みを除く。'
+      parameters:
+        - name: include_archived
+          in: query
+          schema:
+            type: boolean
+            default: false
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, next_cursor]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ChatSession'
+                  next_cursor:
+                    type: [string, 'null']
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    post:
+      tags: [chat]
+      operationId: createChatSession
+      summary: 新しい会話を作る
+      description: '空のセッションを作る（`agent = parent`）。最初のメッセージは `createChatTurn` で送る。タイトルは省略時、最初のメッセージから自動設定する。'
+      security:
+        - cookieAuth: []
+          csrfToken: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                title:
+                  type: [string, 'null']
+                  maxLength: 255
+      responses:
+        '201':
+          description: 作成したセッション
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChatSession'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /chat/sessions/{sessionId}:
+    parameters:
+      - $ref: '#/components/parameters/SessionId'
+    get:
+      tags: [chat]
+      operationId: getChatSession
+      summary: 会話のヘッダー情報
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChatSession'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    patch:
+      tags: [chat]
+      operationId: updateChatSession
+      summary: タイトル変更・アーカイブ／復元
+      description: '`status: archived` でアーカイブ（`archived_at` を記録）、`active` で復元。実行中のターンがある会話はアーカイブできない（`409 TURN_IN_PROGRESS`）。'
+      security:
+        - cookieAuth: []
+          csrfToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              minProperties: 1
+              properties:
+                title:
+                  type: [string, 'null']
+                  maxLength: 255
+                status:
+                  $ref: '#/components/schemas/AgentSessionStatus'
+      responses:
+        '200':
+          description: 更新後のセッション
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChatSession'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+  /chat/sessions/{sessionId}/turns:
+    parameters:
+      - $ref: '#/components/parameters/SessionId'
+    get:
+      tags: [chat]
+      operationId: listChatTurns
+      summary: 会話のターンとアイテムを取得する（SC-01 メッセージ表示）
+      description: |
+        ターン番号の昇順で、各ターンのアイテム（発話・ツール実行）と承認カードを返す。会話を開き直したときの復元にも使う。
+        `before_turn_number` を指定すると、それより前のターンを新しい順に `limit` 件（過去へのスクロール用）。
+        サブエージェントの作業は `expand_children=true` でインライン展開用に含める。
+        **隔離済み（`quarantined`）のアイテムは、内容を返さず `display = omitted` とする**（「安全のため表示を省略しました」）。
+      parameters:
+        - name: before_turn_number
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+        - name: expand_children
+          in: query
+          schema:
+            type: boolean
+            default: true
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 50
+            default: 20
+      responses:
+        '200':
+          description: OK（`turns` は `turn_number` の昇順）
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [turns, has_more]
+                properties:
+                  turns:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ChatTurn'
+                  has_more:
+                    type: boolean
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    post:
+      tags: [chat]
+      operationId: createChatTurn
+      summary: メッセージを送る（ターンを開始する）
+      description: |
+        ユーザーメッセージを追加して、エージェントループ（ターン）を開始する。**応答を待たず `202` を返し**、進捗は `streamChatTurn`（SSE）で受け取る（NFR-PERF-001）。
+        `context` は「この施策で投稿案を作る」など、画面から渡す文脈（`user_message` の内容に保存される）。対象は同じ会社の施策・投稿のみ。
+
+        同じ会話に実行中のターンがある場合は `409 TURN_IN_PROGRESS`。
+        ただし、直前のターンが**承認カードの承認待ち**で止まっている場合は、送信したメッセージを「修正を依頼」とみなし、待機中の承認をすべて却下（`cancelled`）してそのターンを `cancelled` で閉じ、新しいターンを開始する。
+        ターンにはステップ数とコストの上限（アプリケーション設定）があり、到達するとターンは `failed`（`error_code = STEP_LIMIT` / `COST_LIMIT`）で終了する。
+      security:
+        - cookieAuth: []
+          csrfToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ChatTurnCreate'
+      responses:
+        '202':
+          description: 受け付けた（ターンは `pending` または `running`）
+          headers:
+            Location:
+              description: ターンのストリーム（`streamChatTurn`）
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChatTurn'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+
+  /chat/turns/{turnId}:
+    parameters:
+      - $ref: '#/components/parameters/TurnId'
+    get:
+      tags: [chat]
+      operationId: getChatTurn
+      summary: ターンの状態とアイテム
+      description: ストリームが切れたときの再同期や、ポーリングに使う。返す内容は `listChatTurns` の1要素と同じ。
+      parameters:
+        - name: expand_children
+          in: query
+          schema:
+            type: boolean
+            default: true
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChatTurn'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /chat/turns/{turnId}/events:
+    parameters:
+      - $ref: '#/components/parameters/TurnId'
+    get:
+      tags: [chat]
+      operationId: streamChatTurn
+      summary: ターンの進捗を受け取る（Server-Sent Events）
+      description: |
+        `Content-Type: text/event-stream`。ターンが終端状態（`completed` / `failed` / `cancelled` / `blocked`）になるとサーバーが接続を閉じる。
+        終端後に接続した場合は、終端イベントを1件返して閉じる。
+
+        各イベントは `id`（ターン内で単調増加）・`event`・`data`（JSON）を持つ。切断時は `Last-Event-ID` ヘッダーで途中から再開できる（保持期間を過ぎた場合は `getChatTurn` で再同期）。
+        30秒ごとにコメント行（`: ping`）を送る。
+
+        | event | data | 用途 |
+        |-------|------|------|
+        | `turn.started` | `ChatTurn` | 「考え中…」表示の開始 |
+        | `message.delta` | `{item_key, agent, text}` | アシスタント発話のストリーミング（確定前の差分。`item.created` で確定） |
+        | `item.created` | `ChatItem` | 発話・ツール呼び出し・ツール結果の確定 |
+        | `tool_execution.updated` | `ToolExecution` | ツール実行の状態変化（実行中／完了／失敗／ブロック） |
+        | `approval.requested` | `ToolExecution`（`approval` を含む） | 承認カードの表示 |
+        | `item.context_status_changed` | `{item_id, display}` | 検出により隔離された（内容を「省略」表示へ切替） |
+        | `usage.updated` | `{cost_usd, response_time_ms, llm_call_count}` | ターンフッターのコスト・所要時間 |
+        | `turn.completed` / `turn.failed` / `turn.cancelled` / `turn.blocked` | `ChatTurn` | 終端 |
+      parameters:
+        - name: Last-Event-ID
+          in: header
+          required: false
+          schema:
+            type: string
+      responses:
+        '200':
+          description: イベントストリーム
+          content:
+            text/event-stream:
+              schema:
+                type: string
+                description: 上表のイベントをSSE形式で連続して送る。
+                examples:
+                  - |
+                    id: 3
+                    event: item.created
+                    data: {"id":9101,"item_number":3,"item_type":"tool_call","agent":"parent","display":"normal","content":{"call_id":"call_1","tool_name":"search_memories","arguments":{"query":"エンジニア採用 反応が良かった投稿"}}}
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /chat/turns/{turnId}/cancel:
+    parameters:
+      - $ref: '#/components/parameters/TurnId'
+    post:
+      tags: [chat]
+      operationId: cancelChatTurn
+      summary: 実行中のターンを停止する（SC-01 [停止]）
+      description: |
+        `pending` / `running` のターンを停止要求する。進行中のLLM呼び出し・ツール実行は中断し、ターンは `cancelled` で閉じる。
+        停止要求は冪等（既に終端状態なら現在のターンをそのまま返す）。外部へ送信済みの副作用（Xへの投稿など）は取り消せない。
+      security:
+        - cookieAuth: []
+          csrfToken: []
+      responses:
+        '202':
+          description: 停止を受け付けた
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChatTurn'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /chat/turns/{turnId}/retry:
+    parameters:
+      - $ref: '#/components/parameters/TurnId'
+    post:
+      tags: [chat]
+      operationId: retryChatTurn
+      summary: 失敗したターンを再試行する（SC-01 [再試行]）
+      description: |
+        `failed` のターンの入力（ユーザーメッセージ）を、**新しいターンとして**再実行する（元のターンは追記のみのため書き換えない）。
+        `STEP_LIMIT` / `COST_LIMIT` で終了したターンを再試行しても、同じ上限が適用される。
+        `blocked` のターンは再試行できない（`409 INVALID_STATE`）。
+      security:
+        - cookieAuth: []
+          csrfToken: []
+      responses:
+        '202':
+          description: 新しいターンを開始した
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChatTurn'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+  /chat/approvals:
+    get:
+      tags: [chat]
+      operationId: listPendingApprovals
+      summary: 承認待ちの承認カード一覧
+      description: '`waiting_for_approval` のツール実行を新しい順に返す。会話をまたいだ「承認待ち」の確認に使う（会話を開き直すと `listChatTurns` でも復元される）。'
+      parameters:
+        - name: session_id
+          in: query
+          schema:
+            type: integer
+            format: int64
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, next_cursor]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ToolExecution'
+                  next_cursor:
+                    type: [string, 'null']
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /chat/tool-executions/{toolExecutionId}/approve:
+    parameters:
+      - $ref: '#/components/parameters/ToolExecutionId'
+    post:
+      tags: [chat]
+      operationId: approveToolExecution
+      summary: 承認カードを承認する
+      description: |
+        承認カード（施策の確定／投稿内容の確定／Xへの投稿／データ削除）を承認する。**人間の承認境界であり、エージェントのツールからは呼べない**。
+        画面が表示していた内容と実行内容が一致することを保証するため、カードの `approval.payload_hash` を必ず返す。
+        承認後にサーバー側で内容が変わっていた場合は `409 APPROVAL_PAYLOAD_CHANGED`（カードを再取得して再確認する）。
+
+        種別ごとの結果（`effect`）:
+        - `campaign_commit`: 施策を `approved`（新規は `revision = approved_revision = 1`）で保存する
+        - `post_content_commit`: 投稿を `approved` で保存し、`post_tracking_links` を生成する
+        - `x_publish`: 投稿を `publishing` に遷移させ、非同期でXへ投稿する（`publishPost` と同じ処理・同じ事前条件。`Idempotency-Key` が必要）
+        - `data_delete`: 対象を削除する（記憶は内容と埋め込みベクトルを完全に削除）
+
+        承認後、ターンは続行してアシスタントが結果を報告する（ストリームで受け取る）。
+      security:
+        - cookieAuth: []
+          csrfToken: []
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [payload_hash]
+              properties:
+                payload_hash:
+                  type: string
+                  description: 承認カード（`ToolExecution.approval.payload_hash`）の値。
+      responses:
+        '200':
+          description: 承認した
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApprovalResult'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+
+  /chat/tool-executions/{toolExecutionId}/reject:
+    parameters:
+      - $ref: '#/components/parameters/ToolExecutionId'
+    post:
+      tags: [chat]
+      operationId: rejectToolExecution
+      summary: 承認カードを却下する／修正を依頼する
+      description: |
+        ツール実行を `cancelled` にし、エージェントには「ユーザーが却下した」というツール結果を返して、ターンを `cancelled` で閉じる。何も保存・実行されない。
+        `instruction` を渡すと「修正を依頼」になり、その指示を入力とする**新しいターンをすぐに開始**する（`next_turn` に返る）。
+      security:
+        - cookieAuth: []
+          csrfToken: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                instruction:
+                  type: string
+                  minLength: 1
+                  maxLength: 4000
+                  description: 修正指示。空でなければ新しいターンを開始する。
+      responses:
+        '200':
+          description: 却下した
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApprovalResult'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+  # ------------------------------------------------------------------ ops: cost
+  /ops/cost/summary:
+    get:
+      tags: [ops-cost]
+      operationId: getCostSummary
+      summary: コストの集計（SC-08）
+      description: |
+        期間内のLLM呼び出しを集計する。合計コストは `llm_calls.cost_usd` の合計（`NULL` は除外し、`calls_without_cost_count` として件数を返す）。
+        日別集計は `tz`（既定 `Asia/Tokyo`）の暦日で区切る。円換算は表示時のみ（`GET /config` の `jpy_per_usd`）。
+        エージェント別は `llm_calls → agent_turns → agent_sessions.agent` で集計する。
+        **モデル別の集計は返さない**（`llm_calls` にモデル名がない。U-5）。
+      parameters:
+        - $ref: '#/components/parameters/From'
+        - $ref: '#/components/parameters/To'
+        - name: tz
+          in: query
+          description: 日別集計のタイムゾーン（IANA名）。
+          schema:
+            type: string
+            default: Asia/Tokyo
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CostSummary'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /ops/cost/llm-calls:
+    get:
+      tags: [ops-cost]
+      operationId: listLlmCalls
+      summary: LLM呼び出しの一覧（SC-08「直近の呼び出し」）
+      description: '呼び出し日時の降順。行をクリックすると `turn_id` の実行履歴（`getOpsTurn`）へ遷移する。'
+      parameters:
+        - $ref: '#/components/parameters/From'
+        - $ref: '#/components/parameters/To'
+        - name: agent
+          in: query
+          schema:
+            $ref: '#/components/schemas/AgentType'
+        - name: succeeded
+          in: query
+          schema:
+            type: boolean
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, next_cursor]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/LlmCall'
+                  next_cursor:
+                    type: [string, 'null']
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  # ------------------------------------------------------------------ ops: sessions
+  /ops/sessions:
+    get:
+      tags: [ops-sessions]
+      operationId: listOpsSessions
+      summary: 実行履歴のセッション一覧（SC-09 一覧）
+      description: |
+        すべてのエージェント種別のセッションを返す。サブエージェントのセッションは `parent_session_id` で親と結び付いており、画面は親の下にインデント表示する。
+        読み取り専用（アイテムは追記のみで、編集・削除のAPIは存在しない）。
+      parameters:
+        - name: agent
+          in: query
+          schema:
+            $ref: '#/components/schemas/AgentType'
+        - $ref: '#/components/parameters/From'
+        - $ref: '#/components/parameters/To'
+        - name: failed_only
+          in: query
+          description: '`failed` のターンを持つセッションのみ。'
+          schema:
+            type: boolean
+        - name: blocked_only
+          in: query
+          description: '`blocked` のターン、またはセキュリティイベントを持つセッションのみ。'
+          schema:
+            type: boolean
+        - name: parent_session_id
+          in: query
+          description: 指定したセッションの子（サブエージェント）だけを返す。
+          schema:
+            type: integer
+            format: int64
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
+      responses:
+        '200':
+          description: OK（更新日時の降順）
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, next_cursor]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/OpsSession'
+                  next_cursor:
+                    type: [string, 'null']
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /ops/sessions/{sessionId}:
+    parameters:
+      - $ref: '#/components/parameters/SessionId'
+    get:
+      tags: [ops-sessions]
+      operationId: getOpsSession
+      summary: セッションのヘッダー情報（SC-09 詳細）
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OpsSession'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /ops/sessions/{sessionId}/turns:
+    parameters:
+      - $ref: '#/components/parameters/SessionId'
+    get:
+      tags: [ops-sessions]
+      operationId: listOpsTurns
+      summary: セッションのターン一覧（SC-09 詳細）
+      description: ターン番号の昇順。アイテムは含めず、必要なターンを `getOpsTurn` で展開する。
+      parameters:
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, next_cursor]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/OpsTurnSummary'
+                  next_cursor:
+                    type: [string, 'null']
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /ops/turns/{turnId}:
+    parameters:
+      - $ref: '#/components/parameters/TurnId'
+    get:
+      tags: [ops-sessions]
+      operationId: getOpsTurn
+      summary: ターンの詳細（アイテム・ツール実行・LLM呼び出し・検出イベント）
+      description: |
+        「どのエージェントの、どの処理で、何が失敗したか」を辿るための詳細（NFR-OBS-001 / 003）。
+        - アイテムは `item_number` の昇順。内容は保存時にマスク済み。
+        - 隔離済みのアイテムは、**元の内容を返さず**、LLMに渡された代替内容（`context_override`）と隔離理由だけを返す。
+        - 生の推論内容・非公開のChain of Thoughtは、保存しないため返せない。
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OpsTurn'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  # ------------------------------------------------------------------ ops: security
+  /ops/security/events:
+    get:
+      tags: [ops-security]
+      operationId: listSecurityEvents
+      summary: セキュリティイベント一覧（SC-10）
+      description: |
+        追記専用の監査記録（削除・編集のAPIは存在しない）。検出結果だけが記録され、成功した検査は記録されない。
+        よって0件は「問題が検出されていない」を意味する。
+      parameters:
+        - name: event_type
+          in: query
+          schema:
+            $ref: '#/components/schemas/SecurityEventType'
+        - name: detector
+          in: query
+          schema:
+            $ref: '#/components/schemas/SecurityDetector'
+        - name: enforcement
+          in: query
+          schema:
+            $ref: '#/components/schemas/SecurityEnforcement'
+        - $ref: '#/components/parameters/From'
+        - $ref: '#/components/parameters/To'
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
+      responses:
+        '200':
+          description: OK（検出日時の降順）
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, next_cursor]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/SecurityEvent'
+                  next_cursor:
+                    type: [string, 'null']
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /ops/security/events/{securityEventId}:
+    parameters:
+      - name: securityEventId
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+    get:
+      tags: [ops-security]
+      operationId: getSecurityEvent
+      summary: セキュリティイベントの詳細（SC-10 詳細パネル）
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SecurityEvent'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  # ------------------------------------------------------------------ internal
+  /internal/jobs/metrics-collection:
+    post:
+      tags: [internal]
+      operationId: runMetricsCollection
+      summary: 施策評価ジョブ（投稿から7日後の計測）を実行する
+      description: |
+        cron等のスケジューラーが定期的に呼ぶ（要件7）。ユーザーセッションではなく `internalToken`（共有シークレット、またはプラットフォームのサービス認証）で認証する。
+
+        対象: `post_metrics.status` が `pending`、または `failed` かつ再試行可能で上限未満、かつ `scheduled_at <= as_of` の投稿。
+        各投稿について:
+        1. `pending`/`failed` → `processing` へ**条件付きで原子的に**遷移させる（同時実行・重複起動でも1つのワーカーだけが処理する。NFR-REL-007）
+        2. X APIから初週PV数、GA4から投稿経由の応募ページ流入ユーザー数を取得する
+        3. 両方成功したら `completed`（両方の値と `measured_at` を保存）。失敗したら `post_metric_failures` に発生元・再試行可否・マスク済みエラーを追記し、`failed` にする
+        4. 完了時に、評価結果を要約した記憶を保存し、施策・投稿に紐づける（決定論的なテンプレートで生成し、LLMは呼ばない。NFR-COST-005）
+
+        一時的なエラー（HTTP 429 / 5xx / タイムアウト）は再試行可能とし、`post_metric_failures` の件数が上限（アプリケーション設定）に達したら再試行しない。恒久的なエラーは再試行しない。
+        `post_metrics` は投稿IDが主キーのため、複数回実行しても同じ投稿の評価データは重複しない。
+        一部の投稿の失敗はジョブ全体を失敗させない（`200` で件数を返す）。
+      security:
+        - internalToken: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                as_of:
+                  type: string
+                  format: date-time
+                  description: 判定時刻。省略時は現在時刻。
+                post_ids:
+                  type: array
+                  description: 対象を限定する（運用・検証用）。
+                  items:
+                    type: integer
+                    format: int64
+                dry_run:
+                  type: boolean
+                  default: false
+                  description: 対象の抽出だけを行い、外部API呼び出しや保存はしない。
+      responses:
+        '200':
+          description: 実行結果
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [as_of, targeted, completed, failed, skipped]
+                properties:
+                  as_of:
+                    type: string
+                    format: date-time
+                  targeted:
+                    type: integer
+                    minimum: 0
+                    description: 対象として抽出した投稿数。
+                  completed:
+                    type: integer
+                    minimum: 0
+                  failed:
+                    type: integer
+                    minimum: 0
+                    description: 今回の実行で失敗（`failed` に遷移）した投稿数。
+                  skipped:
+                    type: integer
+                    minimum: 0
+                    description: 他のワーカーが処理中、または再試行上限に到達していたため処理しなかった投稿数。
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+components:
+  securitySchemes:
+    cookieAuth:
+      type: apiKey
+      in: cookie
+      name: hiromeru_session
+      description: OIDCログイン後にサーバーが発行するセッションCookie（HttpOnly / Secure / SameSite=Lax）。
+    csrfToken:
+      type: apiKey
+      in: header
+      name: X-CSRF-Token
+      description: '`GET /me` の `csrf_token`。更新系（POST / PATCH / DELETE）で必須。'
+    internalToken:
+      type: http
+      scheme: bearer
+      description: 内部ジョブ用の共有シークレット。ユーザーセッションでは呼べない。
+
+  parameters:
+    Limit:
+      name: limit
+      in: query
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 20
+    Cursor:
+      name: cursor
+      in: query
+      description: 前回の `next_cursor`。不透明な文字列として扱う。
+      schema:
+        type: string
+    From:
+      name: from
+      in: query
+      description: 期間の開始（含む）。
+      schema:
+        type: string
+        format: date-time
+    To:
+      name: to
+      in: query
+      description: 期間の終了（含まない）。
+      schema:
+        type: string
+        format: date-time
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      description: クライアントが生成する一意なキー（UUID推奨）。24時間保持し、同じキーの再送は同じ結果を返す。
+      schema:
+        type: string
+        minLength: 8
+        maxLength: 255
+    CampaignId:
+      name: campaignId
+      in: path
+      required: true
+      schema:
+        type: integer
+        format: int64
+    PostId:
+      name: postId
+      in: path
+      required: true
+      schema:
+        type: integer
+        format: int64
+    MemoryId:
+      name: memoryId
+      in: path
+      required: true
+      schema:
+        type: integer
+        format: int64
+    SessionId:
+      name: sessionId
+      in: path
+      required: true
+      schema:
+        type: integer
+        format: int64
+    TurnId:
+      name: turnId
+      in: path
+      required: true
+      schema:
+        type: integer
+        format: int64
+    ToolExecutionId:
+      name: toolExecutionId
+      in: path
+      required: true
+      schema:
+        type: integer
+        format: int64
+
+  responses:
+    BadRequest:
+      description: リクエストの形式・値が不正（`VALIDATION_ERROR`）
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    Unauthorized:
+      description: 未ログイン、またはセッションの期限切れ（`UNAUTHENTICATED`）
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    Forbidden:
+      description: CSRFトークン不正、無効化されたアカウントなど（`FORBIDDEN`, `CSRF_TOKEN_INVALID`, `ACCOUNT_DISABLED`）
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    NotFound:
+      description: 存在しない、または他社のリソース（`NOT_FOUND`）
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    Conflict:
+      description: 状態・改訂・冪等性の競合。`code` に理由を入れる（`REVISION_MISMATCH`, `INVALID_STATE`, `APPROVAL_RESET_NOT_ACKNOWLEDGED`, `NOT_APPROVED_REVISION`, `CAMPAIGN_HAS_POSTS`, `POST_PUBLISHED_UNDELETABLE`, `TURN_IN_PROGRESS`, `APPROVAL_PAYLOAD_CHANGED`, `IDEMPOTENCY_KEY_REUSED`）
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    Unprocessable:
+      description: 形式は正しいが業務ルールに反する（`POST_BODY_TOO_LONG`, `CAMPAIGN_NOT_APPROVED`, `LANDING_URL_REQUIRED`, `INVALID_LANDING_URL`）
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    TooManyRequests:
+      description: レート制限（`RATE_LIMITED`）。`Retry-After` 秒後に再試行する。
+      headers:
+        Retry-After:
+          schema:
+            type: integer
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    UpstreamError:
+      description: 外部サービス（埋め込みモデル・X・LLM）の障害（`UPSTREAM_ERROR`）。認証情報などの機密はメッセージに含めない。
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+
+  schemas:
+    # ------------------------------------------------------------ common
+    Problem:
+      type: object
+      description: RFC 9457 Problem Details。
+      required: [type, title, status, code]
+      properties:
+        type:
+          type: string
+          format: uri-reference
+          description: エラー種別のURI（`about:blank` 可）。
+          default: about:blank
+        title:
+          type: string
+          description: 人が読める短い要約。
+        status:
+          type: integer
+          description: HTTPステータスコード。
+        code:
+          $ref: '#/components/schemas/ErrorCode'
+        detail:
+          type: string
+          description: 人が読める詳細（マスク済み）。
+        instance:
+          type: string
+          description: 問題が発生したリクエストのパス。
+        request_id:
+          type: string
+          description: ログとの突き合わせ用のリクエストID。
+        errors:
+          type: array
+          description: フィールド単位のエラー（`VALIDATION_ERROR` など）。
+          items:
+            type: object
+            required: [field, message]
+            properties:
+              field:
+                type: string
+                description: 'JSON Pointer 形式（例: `/body`）。'
+              message:
+                type: string
+              code:
+                type: string
+        retryable:
+          type: boolean
+          description: 同じリクエストの再試行で成功する可能性があるか。
+      examples:
+        - type: about:blank
+          title: 改訂が一致しません
+          status: 409
+          code: REVISION_MISMATCH
+          detail: 表示中の改訂 r2 は最新ではありません（最新は r3）。画面を再読み込みしてください。
+          request_id: req_01J8ZQ3
+    ErrorCode:
+      type: string
+      enum:
+        - VALIDATION_ERROR
+        - UNAUTHENTICATED
+        - FORBIDDEN
+        - CSRF_TOKEN_INVALID
+        - ACCOUNT_DISABLED
+        - NOT_FOUND
+        - REVISION_MISMATCH
+        - INVALID_STATE
+        - APPROVAL_RESET_NOT_ACKNOWLEDGED
+        - NOT_APPROVED_REVISION
+        - CAMPAIGN_HAS_POSTS
+        - POST_PUBLISHED_UNDELETABLE
+        - TURN_IN_PROGRESS
+        - APPROVAL_PAYLOAD_CHANGED
+        - IDEMPOTENCY_KEY_REUSED
+        - POST_BODY_TOO_LONG
+        - CAMPAIGN_NOT_APPROVED
+        - LANDING_URL_REQUIRED
+        - INVALID_LANDING_URL
+        - RATE_LIMITED
+        - UPSTREAM_ERROR
+        - INTERNAL_ERROR
+    Timestamp:
+      type: string
+      format: date-time
+    LandingUrl:
+      type: string
+      format: uri
+      maxLength: 2048
+      description: 遷移先（応募ページ）のURL。`https://` のみ許可し、UTMなどのクエリは含めても含めなくてもよい（UTMは生成時に付与・上書きする）。
+      pattern: '^https://'
+      examples:
+        - https://example.com/apply
+    RevisionRequest:
+      type: object
+      required: [revision]
+      properties:
+        revision:
+          type: integer
+          minimum: 1
+          description: 画面が表示していた改訂番号。サーバーの現在値と一致しなければ `409 REVISION_MISMATCH`。
+
+    # ------------------------------------------------------------ me
+    Me:
+      type: object
+      required: [user, company, marketer, csrf_token]
+      properties:
+        user:
+          type: object
+          required: [id, email, status]
+          properties:
+            id:
+              type: integer
+              format: int64
+            email:
+              type: string
+              format: email
+            status:
+              type: string
+              enum: [active, disabled]
+        company:
+          type: object
+          required: [id, name]
+          properties:
+            id:
+              type: integer
+              format: int64
+            name:
+              type: string
+        marketer:
+          type: object
+          required: [id]
+          properties:
+            id:
+              type: integer
+              format: int64
+        csrf_token:
+          type: string
+    NavBadges:
+      type: object
+      required: [campaigns_pending_approval, posts_needs_action, metrics_failed, security_events_24h]
+      properties:
+        campaigns_pending_approval:
+          type: integer
+          minimum: 0
+        posts_needs_action:
+          type: integer
+          minimum: 0
+          description: '`pending_approval` と `publish_failed` の合計。'
+        metrics_failed:
+          type: integer
+          minimum: 0
+        security_events_24h:
+          type: integer
+          minimum: 0
+    ClientConfig:
+      type: object
+      required: [post_text_weighted_limit, jpy_per_usd]
+      properties:
+        post_text_weighted_limit:
+          type: integer
+          description: 'Xテキスト投稿の文字数上限（重み付き）。文字数の数え方はXの規則に従う（URLは固定長で数える等）。現行値は実装時に確認する。'
+          examples:
+            - 280
+        jpy_per_usd:
+          type: number
+          description: 円換算に使う固定レート（U-8。出所は未確定）。
+          examples:
+            - 150
+        memory_max_length:
+          type: integer
+          description: 記憶1件の最大文字数（仮置き）。
+          examples:
+            - 2000
+
+    # ------------------------------------------------------------ campaigns
+    CampaignStatus:
+      type: string
+      enum: [draft, pending_approval, approved, rejected, archived]
+    CampaignAction:
+      type: string
+      description: 画面で有効にできる操作（サーバーが状態から算出する）。
+      enum: [edit, submit, approve, reject, archive, restore, delete, create_post]
+    CampaignFields:
+      type: object
+      properties:
+        title:
+          type: string
+          minLength: 1
+          maxLength: 255
+        target_profile:
+          type: string
+          minLength: 1
+          description: ターゲット像。施策でリーチする対象者の属性、状況、課題、動機。
+        background:
+          type: string
+          minLength: 1
+          description: 実施背景。
+        objective:
+          type: string
+          minLength: 1
+          description: 施策目的。
+        plan:
+          type: string
+          minLength: 1
+          description: 施策内容。
+    CampaignSummary:
+      type: object
+      required: [id, title, status, revision, post_count, created_at, updated_at]
+      properties:
+        id:
+          type: integer
+          format: int64
+        title:
+          type: string
+        status:
+          $ref: '#/components/schemas/CampaignStatus'
+        revision:
+          type: integer
+          minimum: 1
+        approved_revision:
+          type: [integer, 'null']
+        post_count:
+          type: integer
+          minimum: 0
+          description: 紐づく投稿数（`archived` を除く）。
+        created_at:
+          $ref: '#/components/schemas/Timestamp'
+        updated_at:
+          $ref: '#/components/schemas/Timestamp'
+        archived_at:
+          oneOf:
+            - $ref: '#/components/schemas/Timestamp'
+            - type: 'null'
+    CampaignCreate:
+      allOf:
+        - $ref: '#/components/schemas/CampaignFields'
+        - type: object
+          required: [title, target_profile, background, objective, plan]
+    CampaignUpdate:
+      allOf:
+        - $ref: '#/components/schemas/CampaignFields'
+        - type: object
+          required: [expected_revision]
+          properties:
+            expected_revision:
+              type: integer
+              minimum: 1
+              description: 編集開始時に表示していた改訂番号。
+            acknowledge_approval_reset:
+              type: boolean
+              default: false
+              description: 承認済みの施策を編集して承認が取り消されることをユーザーが確認済みか。
+    CampaignDetail:
+      type: object
+      required: [id, title, target_profile, background, objective, plan, status, revision, allowed_actions, stats, created_by_marketer_id, created_at, updated_at]
+      properties:
+        id:
+          type: integer
+          format: int64
+        title:
+          type: string
+        target_profile:
+          type: string
+        background:
+          type: string
+        objective:
+          type: string
+        plan:
+          type: string
+        status:
+          $ref: '#/components/schemas/CampaignStatus'
+        revision:
+          type: integer
+          minimum: 1
+        approved_revision:
+          type: [integer, 'null']
+          description: 承認済みでは `revision` と一致する。
+        submitted_at:
+          oneOf:
+            - $ref: '#/components/schemas/Timestamp'
+            - type: 'null'
+        approved_at:
+          oneOf:
+            - $ref: '#/components/schemas/Timestamp'
+            - type: 'null'
+        archived_at:
+          oneOf:
+            - $ref: '#/components/schemas/Timestamp'
+            - type: 'null'
+        created_by_marketer_id:
+          type: integer
+          format: int64
+        created_at:
+          $ref: '#/components/schemas/Timestamp'
+        updated_at:
+          $ref: '#/components/schemas/Timestamp'
+        allowed_actions:
+          type: array
+          items:
+            $ref: '#/components/schemas/CampaignAction'
+        stats:
+          type: object
+          description: 集計（SC-03 の「集計」）。
+          required: [post_count, published_post_count, x_pv_total, landing_user_total]
+          properties:
+            post_count:
+              type: integer
+              minimum: 0
+            published_post_count:
+              type: integer
+              minimum: 0
+            x_pv_total:
+              type: integer
+              minimum: 0
+              description: 計測完了の投稿の初週PV数の合計。
+            landing_user_total:
+              type: integer
+              minimum: 0
+              description: 計測完了の投稿の流入ユーザー数の合計。
+            measured_post_count:
+              type: integer
+              minimum: 0
+              description: 計測完了の投稿数。
+
+    # ------------------------------------------------------------ posts
+    PostStatus:
+      type: string
+      enum: [draft, pending_approval, approved, publishing, published, publish_failed, archived]
+    PostAction:
+      type: string
+      enum: [edit, submit, approve, publish, republish, archive, restore, delete, open_on_x, view_metrics]
+    PostFields:
+      type: object
+      properties:
+        body:
+          type: string
+          minLength: 1
+          description: 投稿本文（Xのテキスト文字数規則をサーバーで検証する）。
+        scheduled_at:
+          oneOf:
+            - $ref: '#/components/schemas/Timestamp'
+            - type: 'null'
+          description: 投稿予定日時（**メモ**。自動投稿はしない）。
+        landing_url:
+          $ref: '#/components/schemas/LandingUrl'
+    TrackingLink:
+      type: object
+      required: [landing_url, utm_source, utm_medium, utm_campaign, utm_content, tracked_url, publish_text]
+      properties:
+        landing_url:
+          $ref: '#/components/schemas/LandingUrl'
+        utm_source:
+          type: string
+          examples:
+            - x
+        utm_medium:
+          type: string
+          examples:
+            - social
+        utm_campaign:
+          type: string
+          examples:
+            - c8
+        utm_content:
+          type: string
+          examples:
+            - p12
+        utm_term:
+          type: [string, 'null']
+        tracked_url:
+          type: string
+          format: uri
+          description: UTMを付与した遷移先URL。
+          examples:
+            - https://example.com/apply?utm_source=x&utm_medium=social&utm_campaign=c8&utm_content=p12
+        publish_text:
+          type: string
+          description: Xへ送る最終テキスト（本文にUTM付きURLを結合したもの。結合規則は仮置き、U-13）。
+    TextLength:
+      type: object
+      required: [weighted_length, limit, remaining]
+      properties:
+        weighted_length:
+          type: integer
+          minimum: 0
+        limit:
+          type: integer
+        remaining:
+          type: integer
+          description: 上限までの残り。超過時は負数。
+    PostSummary:
+      type: object
+      required: [id, campaign_id, campaign_title, body_excerpt, status, revision, created_at, updated_at]
+      properties:
+        id:
+          type: integer
+          format: int64
+        campaign_id:
+          type: integer
+          format: int64
+        campaign_title:
+          type: string
+        body_excerpt:
+          type: string
+          description: 本文の冒頭（1行、最大80文字程度）。
+        status:
+          $ref: '#/components/schemas/PostStatus'
+        revision:
+          type: integer
+          minimum: 1
+        approved_revision:
+          type: [integer, 'null']
+        scheduled_at:
+          oneOf:
+            - $ref: '#/components/schemas/Timestamp'
+            - type: 'null'
+        published_at:
+          oneOf:
+            - $ref: '#/components/schemas/Timestamp'
+            - type: 'null'
+        x_pv_count:
+          type: [integer, 'null']
+          description: 初週PV数（計測完了のもののみ。それ以外は `null`）。
+        metric_status:
+          oneOf:
+            - $ref: '#/components/schemas/PostMetricStatus'
+            - type: 'null'
+        created_at:
+          $ref: '#/components/schemas/Timestamp'
+        updated_at:
+          $ref: '#/components/schemas/Timestamp'
+    PostCreate:
+      allOf:
+        - $ref: '#/components/schemas/PostFields'
+        - type: object
+          required: [campaign_id, body]
+          properties:
+            campaign_id:
+              type: integer
+              format: int64
+    PostUpdate:
+      allOf:
+        - $ref: '#/components/schemas/PostFields'
+        - type: object
+          required: [expected_revision]
+          properties:
+            expected_revision:
+              type: integer
+              minimum: 1
+            acknowledge_approval_reset:
+              type: boolean
+              default: false
+              description: 承認済みの投稿を編集して承認が取り消されることをユーザーが確認済みか。
+    PostDetail:
+      type: object
+      required: [id, campaign_id, campaign_title, body, status, revision, text_length, allowed_actions, created_by_marketer_id, created_at, updated_at]
+      properties:
+        id:
+          type: integer
+          format: int64
+        campaign_id:
+          type: integer
+          format: int64
+        campaign_title:
+          type: string
+        body:
+          type: string
+        status:
+          $ref: '#/components/schemas/PostStatus'
+        revision:
+          type: integer
+          minimum: 1
+        approved_revision:
+          type: [integer, 'null']
+          description: Xへ投稿できるのは `approved_revision = revision` のときだけ。
+        scheduled_at:
+          oneOf:
+            - $ref: '#/components/schemas/Timestamp'
+            - type: 'null'
+        approved_at:
+          oneOf:
+            - $ref: '#/components/schemas/Timestamp'
+            - type: 'null'
+        published_at:
+          oneOf:
+            - $ref: '#/components/schemas/Timestamp'
+            - type: 'null'
+        x_post_id:
+          type: [string, 'null']
+        x_post_url:
+          type: [string, 'null']
+          format: uri
+          description: 「Xで開く」リンク（`x_post_id` から生成）。
+        last_publish_error:
+          type: [string, 'null']
+          description: 失敗時のマスク済みエラー（認証情報・トークンは含まない）。
+        archived_at:
+          oneOf:
+            - $ref: '#/components/schemas/Timestamp'
+            - type: 'null'
+        created_by_marketer_id:
+          type: integer
+          format: int64
+        created_at:
+          $ref: '#/components/schemas/Timestamp'
+        updated_at:
+          $ref: '#/components/schemas/Timestamp'
+        text_length:
+          $ref: '#/components/schemas/TextLength'
+        tracking_link:
+          oneOf:
+            - $ref: '#/components/schemas/TrackingLink'
+            - type: 'null'
+          description: 遷移先URL未設定の間は `null`。
+        metric:
+          oneOf:
+            - $ref: '#/components/schemas/PostMetric'
+            - type: 'null'
+          description: 公開前は `null`。
+        metric_failures:
+          type: array
+          items:
+            $ref: '#/components/schemas/MetricFailure'
+        has_memory:
+          type: boolean
+          description: この投稿に紐づく記憶が存在するか（SC-06 の「記憶に保存されました」表示用）。
+        allowed_actions:
+          type: array
+          items:
+            $ref: '#/components/schemas/PostAction'
+
+    # ------------------------------------------------------------ metrics
+    PostMetricStatus:
+      type: string
+      enum: [pending, processing, completed, failed]
+    MetricFailureSource:
+      type: string
+      enum: [x, ga4, system]
+    PostMetric:
+      type: object
+      required: [post_id, scheduled_at, status]
+      properties:
+        post_id:
+          type: integer
+          format: int64
+        scheduled_at:
+          $ref: '#/components/schemas/Timestamp'
+          description: 計測予定日時（公開から7日後）。
+        status:
+          $ref: '#/components/schemas/PostMetricStatus'
+        x_pv_count:
+          type: [integer, 'null']
+          minimum: 0
+          description: X投稿の初週PV数（表示回数）。`completed` のときのみ非 `null`。
+        landing_user_count:
+          type: [integer, 'null']
+          minimum: 0
+          description: 投稿経由で応募ページへ流入したユーザー数。`completed` のときのみ非 `null`。
+        measured_at:
+          oneOf:
+            - $ref: '#/components/schemas/Timestamp'
+            - type: 'null'
+    MetricFailure:
+      type: object
+      required: [id, post_id, source, error_message, retryable, failed_at]
+      properties:
+        id:
+          type: integer
+          format: int64
+        post_id:
+          type: integer
+          format: int64
+        source:
+          $ref: '#/components/schemas/MetricFailureSource'
+        error_code:
+          type: [string, 'null']
+        error_message:
+          type: string
+          description: マスク済みのエラー（認証情報・トークンは含まない）。
+        retryable:
+          type: boolean
+        failed_at:
+          $ref: '#/components/schemas/Timestamp'
+    MetricsReport:
+      type: object
+      required: [campaigns]
+      properties:
+        campaigns:
+          type: array
+          description: 施策ごとのグループ（投稿がある施策のみ。並びは最新の投稿日の降順）。
+          items:
+            type: object
+            required: [campaign, totals, posts]
+            properties:
+              campaign:
+                type: object
+                required: [id, title, status]
+                properties:
+                  id:
+                    type: integer
+                    format: int64
+                  title:
+                    type: string
+                  status:
+                    $ref: '#/components/schemas/CampaignStatus'
+              totals:
+                type: object
+                required: [measured_post_count, x_pv_total, landing_user_total]
+                properties:
+                  measured_post_count:
+                    type: integer
+                    minimum: 0
+                  x_pv_total:
+                    type: integer
+                    minimum: 0
+                  landing_user_total:
+                    type: integer
+                    minimum: 0
+              posts:
+                type: array
+                items:
+                  type: object
+                  required: [post_id, body_excerpt, post_status, failure_count, has_memory]
+                  properties:
+                    post_id:
+                      type: integer
+                      format: int64
+                    body_excerpt:
+                      type: string
+                    post_status:
+                      $ref: '#/components/schemas/PostStatus'
+                    published_at:
+                      oneOf:
+                        - $ref: '#/components/schemas/Timestamp'
+                        - type: 'null'
+                    metric:
+                      oneOf:
+                        - $ref: '#/components/schemas/PostMetric'
+                        - type: 'null'
+                    latest_failure:
+                      oneOf:
+                        - $ref: '#/components/schemas/MetricFailure'
+                        - type: 'null'
+                    failure_count:
+                      type: integer
+                      minimum: 0
+                    has_memory:
+                      type: boolean
+
+    # ------------------------------------------------------------ memories
+    Memory:
+      type: object
+      required: [id, content, campaigns, posts]
+      properties:
+        id:
+          type: integer
+          format: int64
+        content:
+          type: string
+        campaigns:
+          type: array
+          description: 紐づく施策（0件でも可）。
+          items:
+            type: object
+            required: [id, title]
+            properties:
+              id:
+                type: integer
+                format: int64
+              title:
+                type: string
+        posts:
+          type: array
+          description: 紐づく投稿（0件でも可）。
+          items:
+            type: object
+            required: [id, body_excerpt]
+            properties:
+              id:
+                type: integer
+                format: int64
+              body_excerpt:
+                type: string
+        similarity:
+          type: number
+          minimum: 0
+          maximum: 1
+          description: 意味検索（`q` 指定）のときだけ含む。コサイン類似度。
+    MemoryCreate:
+      type: object
+      required: [content]
+      properties:
+        content:
+          type: string
+          minLength: 1
+          maxLength: 2000
+          description: 覚えさせる自然言語。保存前に機密値をマスクする（NFR-SEC-002）。
+        campaign_ids:
+          type: array
+          items:
+            type: integer
+            format: int64
+          uniqueItems: true
+        post_ids:
+          type: array
+          items:
+            type: integer
+            format: int64
+          uniqueItems: true
+
+    # ------------------------------------------------------------ agents / chat
+    AgentType:
+      type: string
+      enum: [parent, campaign_planner, content_creator]
+    AgentSessionStatus:
+      type: string
+      enum: [active, archived]
+    AgentTurnStatus:
+      type: string
+      enum: [pending, running, completed, failed, cancelled, blocked]
+    AgentItemType:
+      type: string
+      enum: [user_message, assistant_message, tool_call, tool_result]
+    AgentContentSource:
+      type: string
+      enum: [user_input, user_document, agent_output, web_content, web_search, database, long_term_memory, external_api, mcp_tool, system]
+    AgentContextClass:
+      type: string
+      enum: [conversation, untrusted_data]
+    ToolExecutionStatus:
+      type: string
+      enum: [pending, running, waiting_for_approval, completed, failed, cancelled, blocked]
+    TurnErrorCode:
+      type: string
+      description: |
+        ターンの終了理由。上限到達は `STEP_LIMIT` / `COST_LIMIT`。それ以外は実装で拡張する。
+      examples:
+        - STEP_LIMIT
+    ChatSession:
+      type: object
+      required: [id, status, created_at, updated_at, pending_approval_count]
+      properties:
+        id:
+          type: integer
+          format: int64
+        title:
+          type: [string, 'null']
+        status:
+          $ref: '#/components/schemas/AgentSessionStatus'
+        pending_approval_count:
+          type: integer
+          minimum: 0
+          description: この会話で承認待ちの承認カードの数。
+        last_turn_status:
+          oneOf:
+            - $ref: '#/components/schemas/AgentTurnStatus'
+            - type: 'null'
+        created_at:
+          $ref: '#/components/schemas/Timestamp'
+        updated_at:
+          $ref: '#/components/schemas/Timestamp'
+        archived_at:
+          oneOf:
+            - $ref: '#/components/schemas/Timestamp'
+            - type: 'null'
+    ChatTurnCreate:
+      type: object
+      required: [message]
+      properties:
+        message:
+          type: string
+          minLength: 1
+          maxLength: 8000
+          description: ユーザーのメッセージ。送信前に機密値をマスクする（NFR-SEC-002）。
+        context:
+          type: object
+          description: '画面から渡す文脈（例: 「この施策で投稿案を作る」）。'
+          properties:
+            campaign_id:
+              type: integer
+              format: int64
+            post_id:
+              type: integer
+              format: int64
+    ApprovalKind:
+      type: string
+      enum: [campaign_commit, post_content_commit, x_publish, data_delete]
+    ApprovalRequest:
+      type: object
+      description: 承認カード。`tool_executions.status = waiting_for_approval` のツール実行に対応する。
+      required: [kind, summary, payload, payload_hash]
+      properties:
+        kind:
+          $ref: '#/components/schemas/ApprovalKind'
+        summary:
+          type: string
+          description: 'カードの見出し（例: 「施策案（未承認）」「Xに投稿」）。'
+        payload:
+          oneOf:
+            - $ref: '#/components/schemas/CampaignCommitPayload'
+            - $ref: '#/components/schemas/PostContentCommitPayload'
+            - $ref: '#/components/schemas/XPublishPayload'
+            - $ref: '#/components/schemas/DataDeletePayload'
+          discriminator:
+            propertyName: kind
+            mapping:
+              campaign_commit: '#/components/schemas/CampaignCommitPayload'
+              post_content_commit: '#/components/schemas/PostContentCommitPayload'
+              x_publish: '#/components/schemas/XPublishPayload'
+              data_delete: '#/components/schemas/DataDeletePayload'
+        payload_hash:
+          type: string
+          description: '`payload` の正規化JSONのSHA-256。承認時に返し、画面表示と実行内容の一致を保証する。'
+    CampaignCommitPayload:
+      allOf:
+        - $ref: '#/components/schemas/CampaignFields'
+        - type: object
+          required: [kind, title, target_profile, background, objective, plan]
+          properties:
+            kind:
+              type: string
+              const: campaign_commit
+            campaign_id:
+              type: [integer, 'null']
+              format: int64
+              description: 既存施策の更新なら対象ID、新規なら `null`。
+            expected_revision:
+              type: [integer, 'null']
+              description: 既存施策の更新時に、提案の元になった改訂番号。
+    PostContentCommitPayload:
+      type: object
+      required: [kind, campaign_id, body, landing_url, tracked_url_preview]
+      properties:
+        kind:
+          type: string
+          const: post_content_commit
+        post_id:
+          type: [integer, 'null']
+          format: int64
+          description: 既存投稿の更新なら対象ID、新規なら `null`。
+        campaign_id:
+          type: integer
+          format: int64
+        campaign_title:
+          type: string
+        body:
+          type: string
+        text_length:
+          $ref: '#/components/schemas/TextLength'
+        landing_url:
+          $ref: '#/components/schemas/LandingUrl'
+        tracked_url_preview:
+          type: string
+          format: uri
+        scheduled_at:
+          oneOf:
+            - $ref: '#/components/schemas/Timestamp'
+            - type: 'null'
+    XPublishPayload:
+      type: object
+      required: [kind, post_id, revision, body, tracked_url]
+      properties:
+        kind:
+          type: string
+          const: x_publish
+        post_id:
+          type: integer
+          format: int64
+        revision:
+          type: integer
+          minimum: 1
+          description: 承認済み改訂。実行時に `approved_revision = revision` を再検証する。
+        campaign_title:
+          type: string
+        body:
+          type: string
+        tracked_url:
+          type: string
+          format: uri
+        notice:
+          type: string
+          description: 「投稿は公開されます。取り消せません」などの注意。
+    DataDeletePayload:
+      type: object
+      required: [kind, resource_type, resource_id, impact]
+      properties:
+        kind:
+          type: string
+          const: data_delete
+        resource_type:
+          type: string
+          enum: [memory, campaign, post]
+        resource_id:
+          type: integer
+          format: int64
+        label:
+          type: string
+          description: 削除対象の表示名（記憶の冒頭、施策タイトルなど）。
+        impact:
+          type: string
+          description: '影響範囲（例: 「内容と埋め込みベクトルを完全に削除します。元に戻せません」）。'
+    ToolExecution:
+      type: object
+      required: [id, tool_call_item_id, status, attempt_count, created_at]
+      properties:
+        id:
+          type: integer
+          format: int64
+        tool_call_item_id:
+          type: integer
+          format: int64
+        tool_name:
+          type: string
+        status:
+          $ref: '#/components/schemas/ToolExecutionStatus'
+        attempt_count:
+          type: integer
+          minimum: 0
+        created_at:
+          $ref: '#/components/schemas/Timestamp'
+        completed_at:
+          oneOf:
+            - $ref: '#/components/schemas/Timestamp'
+            - type: 'null'
+        session_id:
+          type: integer
+          format: int64
+          description: 承認待ち一覧で、どの会話のカードかを示す。
+        approval:
+          oneOf:
+            - $ref: '#/components/schemas/ApprovalRequest'
+            - type: 'null'
+          description: 承認が必要なツール実行のときだけ非 `null`。
+        result_summary:
+          type: [string, 'null']
+          description: 完了・失敗・却下後の結果の要約（マスク済み）。
+    ChatItem:
+      type: object
+      description: |
+        会話の1要素。`display = omitted` の場合は `content` を返さない（隔離済み。「安全のため表示を省略しました」）。
+        `content` の形は `item_type` による。
+        - `user_message`: `{ text, context? }`
+        - `assistant_message`: `{ text }`
+        - `tool_call`: `{ call_id, tool_name, arguments, child_session_id? }`
+        - `tool_result`: `{ call_id, status: success|error|rejected|blocked, output?, error?: {code, message, retryable}, child_session_id? }`
+      required: [id, item_number, item_type, agent, display, created_at]
+      properties:
+        id:
+          type: integer
+          format: int64
+        item_number:
+          type: integer
+          minimum: 1
+        item_type:
+          $ref: '#/components/schemas/AgentItemType'
+        agent:
+          $ref: '#/components/schemas/AgentType'
+          description: このアイテムを持つセッションのエージェント（発話者ラベル用）。
+        display:
+          type: string
+          enum: [normal, omitted]
+        content:
+          type: [object, 'null']
+          additionalProperties: true
+        related_tool_call_item_id:
+          type: [integer, 'null']
+          format: int64
+        tool_execution:
+          oneOf:
+            - $ref: '#/components/schemas/ToolExecution'
+            - type: 'null'
+          description: '`tool_call` のときのみ。'
+        created_at:
+          $ref: '#/components/schemas/Timestamp'
+    ChatTurn:
+      type: object
+      required: [id, session_id, turn_number, status, items, usage]
+      properties:
+        id:
+          type: integer
+          format: int64
+        session_id:
+          type: integer
+          format: int64
+        turn_number:
+          type: integer
+          minimum: 1
+        status:
+          $ref: '#/components/schemas/AgentTurnStatus'
+        waiting_for_approval:
+          type: boolean
+          description: '`running` のまま、承認カードの承認待ちで止まっているか（`API_DESIGN.md` U-15）。'
+        error_code:
+          oneOf:
+            - $ref: '#/components/schemas/TurnErrorCode'
+            - type: 'null'
+        error_message:
+          type: [string, 'null']
+          description: マスク済みの理由。
+        started_at:
+          oneOf:
+            - $ref: '#/components/schemas/Timestamp'
+            - type: 'null'
+        completed_at:
+          oneOf:
+            - $ref: '#/components/schemas/Timestamp'
+            - type: 'null'
+        usage:
+          type: object
+          description: ターンフッターの「コスト・所要時間」（関連するLLM呼び出しの合計）。
+          required: [cost_usd, response_time_ms, llm_call_count]
+          properties:
+            cost_usd:
+              type: [number, 'null']
+              minimum: 0
+              description: 合計コスト（USD）。コスト未取得の呼び出しだけなら `null`。
+            response_time_ms:
+              type: integer
+              minimum: 0
+            llm_call_count:
+              type: integer
+              minimum: 0
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/ChatItem'
+        children:
+          type: array
+          description: '`expand_children=true` のとき、このターンが呼び出したサブエージェントのセッション（インライン展開用）。'
+          items:
+            type: object
+            required: [session_id, agent, turns]
+            properties:
+              session_id:
+                type: integer
+                format: int64
+              agent:
+                $ref: '#/components/schemas/AgentType'
+              turns:
+                type: array
+                items:
+                  type: object
+                  required: [id, turn_number, status, items]
+                  properties:
+                    id:
+                      type: integer
+                      format: int64
+                    turn_number:
+                      type: integer
+                    status:
+                      $ref: '#/components/schemas/AgentTurnStatus'
+                    items:
+                      type: array
+                      items:
+                        $ref: '#/components/schemas/ChatItem'
+    ApprovalResult:
+      type: object
+      required: [tool_execution]
+      properties:
+        tool_execution:
+          $ref: '#/components/schemas/ToolExecution'
+        effect:
+          type: [object, 'null']
+          description: 承認によって作成・更新・削除された業務データ（却下時は `null`）。
+          required: [resource_type, resource_id, action]
+          properties:
+            resource_type:
+              type: string
+              enum: [campaign, post, memory]
+            resource_id:
+              type: integer
+              format: int64
+            action:
+              type: string
+              enum: [created, updated, deleted, publishing]
+            revision:
+              type: [integer, 'null']
+        next_turn:
+          oneOf:
+            - $ref: '#/components/schemas/ChatTurn'
+            - type: 'null'
+          description: 「修正を依頼」で開始した新しいターン。
+
+    # ------------------------------------------------------------ ops
+    CostSummary:
+      type: object
+      required: [from, to, total_cost_usd, llm_call_count, success_rate, calls_without_cost_count, by_day, by_agent]
+      properties:
+        from:
+          $ref: '#/components/schemas/Timestamp'
+        to:
+          $ref: '#/components/schemas/Timestamp'
+        total_cost_usd:
+          type: number
+          minimum: 0
+        llm_call_count:
+          type: integer
+          minimum: 0
+        success_rate:
+          type: [number, 'null']
+          minimum: 0
+          maximum: 1
+          description: 呼び出しが0件なら `null`。
+        avg_response_time_ms:
+          type: [integer, 'null']
+          minimum: 0
+        calls_without_cost_count:
+          type: integer
+          minimum: 0
+          description: 失敗などでコストが取得できなかった呼び出し数（注記用）。
+        limit_terminated_turn_count:
+          type: integer
+          minimum: 0
+          description: ステップ数・コスト上限到達で終了したターン数（失敗一覧とは区別してカウント）。
+        by_day:
+          type: array
+          items:
+            type: object
+            required: [date, cost_usd, llm_call_count]
+            properties:
+              date:
+                type: string
+                format: date
+              cost_usd:
+                type: number
+                minimum: 0
+              llm_call_count:
+                type: integer
+                minimum: 0
+        by_agent:
+          type: array
+          items:
+            type: object
+            required: [agent, cost_usd, llm_call_count]
+            properties:
+              agent:
+                $ref: '#/components/schemas/AgentType'
+              cost_usd:
+                type: number
+                minimum: 0
+              llm_call_count:
+                type: integer
+                minimum: 0
+    LlmCall:
+      type: object
+      required: [id, turn_id, session_id, agent, succeeded, called_at]
+      properties:
+        id:
+          type: integer
+          format: int64
+        turn_id:
+          type: integer
+          format: int64
+        session_id:
+          type: integer
+          format: int64
+        agent:
+          $ref: '#/components/schemas/AgentType'
+        input_tokens:
+          type: [integer, 'null']
+          minimum: 0
+        output_tokens:
+          type: [integer, 'null']
+          minimum: 0
+        cost_usd:
+          type: [number, 'null']
+          minimum: 0
+          description: OrcaRouterが返す確定請求額。取得できなかった場合は `null`。
+        response_time_ms:
+          type: [integer, 'null']
+          minimum: 0
+        succeeded:
+          type: boolean
+        error_code:
+          type: [string, 'null']
+        error_message:
+          type: [string, 'null']
+        orcarouter_request_id:
+          type: [string, 'null']
+        model:
+          type: [string, 'null']
+          description: 使用モデル。**現行DBに保存先がなく常に `null`**（U-5。カラム追加またはOrcaRouterへの照会が決まったら返す）。
+        called_at:
+          $ref: '#/components/schemas/Timestamp'
+    OpsSession:
+      type: object
+      required: [id, agent, status, turn_count, failed_turn_count, blocked_turn_count, created_at, updated_at]
+      properties:
+        id:
+          type: integer
+          format: int64
+        agent:
+          $ref: '#/components/schemas/AgentType'
+        title:
+          type: [string, 'null']
+        status:
+          $ref: '#/components/schemas/AgentSessionStatus'
+        parent_session_id:
+          type: [integer, 'null']
+          format: int64
+        turn_count:
+          type: integer
+          minimum: 0
+        failed_turn_count:
+          type: integer
+          minimum: 0
+        blocked_turn_count:
+          type: integer
+          minimum: 0
+        security_event_count:
+          type: integer
+          minimum: 0
+        cost_usd_total:
+          type: [number, 'null']
+          minimum: 0
+        created_at:
+          $ref: '#/components/schemas/Timestamp'
+        updated_at:
+          $ref: '#/components/schemas/Timestamp'
+    OpsTurnSummary:
+      type: object
+      required: [id, session_id, turn_number, status, llm_call_count]
+      properties:
+        id:
+          type: integer
+          format: int64
+        session_id:
+          type: integer
+          format: int64
+        turn_number:
+          type: integer
+          minimum: 1
+        status:
+          $ref: '#/components/schemas/AgentTurnStatus'
+        error_code:
+          type: [string, 'null']
+        error_message:
+          type: [string, 'null']
+        started_at:
+          oneOf:
+            - $ref: '#/components/schemas/Timestamp'
+            - type: 'null'
+        completed_at:
+          oneOf:
+            - $ref: '#/components/schemas/Timestamp'
+            - type: 'null'
+        cost_usd:
+          type: [number, 'null']
+          minimum: 0
+        llm_call_count:
+          type: integer
+          minimum: 0
+        item_count:
+          type: integer
+          minimum: 0
+    OpsItem:
+      type: object
+      required: [id, item_number, item_type, context_class, content_source, context_status, created_at]
+      properties:
+        id:
+          type: integer
+          format: int64
+        item_number:
+          type: integer
+          minimum: 1
+        item_type:
+          $ref: '#/components/schemas/AgentItemType'
+        context_class:
+          $ref: '#/components/schemas/AgentContextClass'
+        content_source:
+          $ref: '#/components/schemas/AgentContentSource'
+        context_status:
+          type: string
+          enum: [active, quarantined]
+        quarantine_reason:
+          type: [string, 'null']
+        quarantined_at:
+          oneOf:
+            - $ref: '#/components/schemas/Timestamp'
+            - type: 'null'
+        content:
+          type: [object, 'null']
+          additionalProperties: true
+          description: マスク済みの内容。**`quarantined` のアイテムでは返さない**（`null`）。
+        context_override:
+          type: [object, 'null']
+          additionalProperties: true
+          description: 隔離済みアイテムで、LLMに渡された安全な代替内容。
+        related_tool_call_item_id:
+          type: [integer, 'null']
+          format: int64
+        llm_call_id:
+          type: [integer, 'null']
+          format: int64
+        child_session_id:
+          type: [integer, 'null']
+          format: int64
+          description: サブエージェントを呼び出した `tool_call` / `tool_result` から子セッションへのリンク。
+        created_at:
+          $ref: '#/components/schemas/Timestamp'
+    OpsTurn:
+      allOf:
+        - $ref: '#/components/schemas/OpsTurnSummary'
+        - type: object
+          required: [items, tool_executions, llm_calls, security_events]
+          properties:
+            agent:
+              $ref: '#/components/schemas/AgentType'
+            items:
+              type: array
+              items:
+                $ref: '#/components/schemas/OpsItem'
+            tool_executions:
+              type: array
+              items:
+                $ref: '#/components/schemas/ToolExecution'
+            llm_calls:
+              type: array
+              items:
+                $ref: '#/components/schemas/LlmCall'
+            security_events:
+              type: array
+              items:
+                $ref: '#/components/schemas/SecurityEvent'
+    SecurityEventType:
+      type: string
+      enum: [prompt_injection, sensitive_data, unauthorized_tool_call, unsafe_external_action]
+    SecurityDetector:
+      type: string
+      enum: [application, orcarouter_guardrail, orcarouter_firewall]
+    SecurityEnforcement:
+      type: string
+      enum: [observed, sanitized, blocked]
+    SecurityEvent:
+      type: object
+      required: [id, turn_id, session_id, event_type, detector, source, enforcement, summary, metadata, detected_at]
+      properties:
+        id:
+          type: integer
+          format: int64
+        turn_id:
+          type: integer
+          format: int64
+        session_id:
+          type: integer
+          format: int64
+        item_id:
+          type: [integer, 'null']
+          format: int64
+        llm_call_id:
+          type: [integer, 'null']
+          format: int64
+        event_type:
+          $ref: '#/components/schemas/SecurityEventType'
+        detector:
+          $ref: '#/components/schemas/SecurityDetector'
+        source:
+          $ref: '#/components/schemas/AgentContentSource'
+        enforcement:
+          $ref: '#/components/schemas/SecurityEnforcement'
+        external_event_id:
+          type: [string, 'null']
+          description: OrcaRouterのMatch IDまたはFirewall Event ID。アプリケーション検出時は `null`。
+        summary:
+          type: string
+          description: マスク済みの概要。検出した機密値そのものは含まれない。
+        metadata:
+          type: object
+          additionalProperties: true
+          description: 許可リストに含まれるマスク済みの診断値のみ（生の一致内容は含まない）。
+        detected_at:
+          $ref: '#/components/schemas/Timestamp'
