@@ -106,6 +106,14 @@
    "title": "00 概要（ランディング）",
    "is_interactive": true,
    "expand": "fill"
+  },
+  "MetricsA.dc.html": {
+   "x": 6080,
+   "y": 1960,
+   "w": 1440,
+   "h": 1340,
+   "title": "提案A 計測結果：サマリーと施策比較（グラフ）",
+   "is_interactive": true
   }
  },
  "createdOnFiles": {
@@ -157,6 +165,14 @@
    "kind": "title1",
    "maxW": 1440,
    "w": 240
+  },
+  "row5": {
+   "x": 6080,
+   "y": 1700,
+   "text": "05　改善提案：計測結果のグラフ表示",
+   "kind": "title1",
+   "maxW": 1440,
+   "w": 240
   }
  },
  "order": [
@@ -172,7 +188,8 @@
   "Cost.dc.html",
   "Sessions.dc.html",
   "Security.dc.html",
-  "Overview.dc.html"
+  "Overview.dc.html",
+  "MetricsA.dc.html"
  ],
  "pages": [],
  "title": "hiromeru 画面デザイン"
