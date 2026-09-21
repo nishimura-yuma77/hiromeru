@@ -595,7 +595,7 @@ flowchart TD
 - Embedding生成に失敗した場合は施策upsert APIを失敗させ、施策だけが検索対象から欠落する状態を作らない
 
 ## アプリケーションAPI結果の観測
-施策upsert APIとX投稿APIは、認証と親Session所有権を検証できた後の成功結果またはエラーを、指定親SessionのAPI実行Turnへ構造化`api_result`として保存する。API ResultはAgent Tool Resultではないため、アプリケーション生成の`assistant_message`を使用する。
+施策upsert API（承認）とX投稿APIは、認証と親Session所有権を検証できた後の成功結果またはエラーを、指定親SessionのAPI実行Turnへ構造化`api_result`として保存する。API ResultはAgent Tool Resultではないため、アプリケーション生成の`assistant_message`を使用する。
 
 ```json
 {
@@ -791,6 +791,25 @@ flowchart TD
 - 中断時に完了していなかったLLM呼び出しは、`llm_calls`へ記録されない場合がある。OrcaRouter側の利用量との差になり得る（既知の制約）
 - API実行Turnは対象外である。施策のupsertは同じキーの再送で、X投稿は`external_result`の有無に従って、API設計書の冪等性の仕組みで復旧する
 - 同じSessionで前のTurnが実行中（`pending`または`running`で、復旧判定時間の前）のときに、新しいAgent Turnを開始する要求は、`409 TURN_IN_PROGRESS`で拒否する。判定は、Session行をロックした同じTransaction内で、中断Turnの復旧の後に行い、実行中のTurnがなければ新しいTurnを作成する。API実行Turnは実行中のTurnとして数えない
+
+### 進捗イベント（SSE）
+- メッセージ送信API（`API_DESIGN.md`の5.3）が`Accept: text/event-stream`で呼ばれた場合、ループはTool・サブエージェントの呼び出しの前後で、進捗イベント（`activity_started`、`activity_finished`）を呼び出し元へ通知する
+- 通知はループのフック（呼び出しの直前と直後）で行う。LLMのトークン単位のストリーミング（OrcaRouterのstreaming）には依存しない
+- イベントに含めるのは、`activity_id`、`kind`（`tool`または`subagent`）、Agent Tool名（マスク済み）、結果の`status`だけとする。引数、結果、Webの取得内容、隔離された内容は含めない
+- ファイアウォールによってブロックされたToolの呼び出しは、`status: blocked`の`activity_finished`とし、ブロックの理由は含めない
+- サブエージェントの中のTool呼び出しは、`parent_activity_id`で親の呼び出しに紐づける
+- 進捗イベントは、`agent_events`や`llm_calls`へ保存しない。通知の失敗（接続の切断など）は、Turnの実行結果に影響させない
+
+### セキュリティ通知
+セキュリティイベント（`security_events`）は監査記録専用だが、ユーザーが状況を把握し、Agentが説明できるように、種別と制御内容だけを通知として扱う。イベントの一覧画面は設けない。
+
+- **ユーザーへの通知:** Turnを返すAPI（`API_DESIGN.md`の5.1）が、そのTurnのイベントを`security_notices`（`event_type`、`enforcement`、`detected_at`）として返す。SSEでは`turn_finished`に含まれる。Turnが`blocked`や`failed`の場合も返す
+- **同じTurnの中のAgent:** ブロックされたTool Call（`TOOL_CALL_BLOCKED`）と、隔離されたItem（`context_override`）には、`event_type`と`enforcement`に相当する安全な固定ラベルだけを含める。これにより、Agentは最終回答で、何が起きたか（外部情報に不正な指示があった、操作がブロックされたなど）をユーザーへ説明できる
+- **次のTurn以降のAgent:** Context構築時に、同じSessionの直近5Turnで検出したイベントから、種別と制御内容だけの短い通知（`content_source = system`）を作り、Contextへ追加する。通知は保存せず、`security_events`から毎回導出する。ユーザーが「さっきの警告は何か」と尋ねたとき、Agentが答えられるようにするためである
+- **Agentへ渡さない情報:** `summary`、`metadata`、`external_event_id`、検出した機密値、注入された指示の内容は、Contextにも回答にも含めない
+- **Agentができること:** 通知の内容をユーザーへ説明し、安全な代替（別の依頼の言い換え、別の情報源の使用の提案など）を示す。通知を理由に、ブロックされたToolを言い換えて再実行したり、Firewallの判定を回避したりしない
+- **Input Guardrailが復旧不能でTurnを`blocked`にした場合:** LLMを呼び出さないため、`assistant_message`は保存されない。UIは通知と`TURN_BLOCKED`を表示し、次のTurnで、Agentがユーザーの質問に答える
+- サブエージェント（子Session）で検出したイベントは、親Turnと関連付ける情報がないため、ユーザーへの通知には含めない。親Agentは、子Agentの失敗を失敗Tool Resultとして観測し、回答で伝える
 
 ### Context Checkpoint
 - Context Checkpointは、長くなった親セッションの古い会話履歴を要約し、LLMへ送るContext量を抑えるために使用する
