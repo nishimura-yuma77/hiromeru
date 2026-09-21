@@ -100,4 +100,4 @@ docker compose run --rm --no-deps frontend npm run build
 docker compose run --rm --no-deps backend pytest
 ```
 
-本番環境の準備は[DEPLOY.md](./DEPLOY.md)を参照してください。
+本番環境の準備は[DEPLOY.md](./docs/DEPLOY.md)を参照してください。
