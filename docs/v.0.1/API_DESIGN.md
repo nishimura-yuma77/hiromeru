@@ -3,15 +3,15 @@
 ## 1. 目的
 本書は、UI（`SCREEN_DESIGN.md`）とBackendの間のアプリケーションAPIを定義する。認証、Agentとの会話、ユーザーがUIで最終確定した施策内容と投稿内容の反映、公開済みデータと計測結果の参照、記憶の忘却を扱う。
 
-Agentは`propose_campaign`と`propose_x_post`で編集可能な内容を提案する。UIは提案内容をフォームの初期値として表示し、ユーザーは内容を直接編集できる。施策の登録・更新とXへの投稿は、承認ボタン押下時のフォーム値をRequest Bodyへ設定して本APIから実行する。
+Agentは`propose_campaign`と`propose_x_post`で編集可能な内容を提案する。UIは提案内容をフォームの初期値として表示し、ユーザーは内容を直接編集できる。施策の登録・更新とXへの投稿は、承認ボタン押下時のフォーム値をRequest Bodyへ設定して本APIから実行する。施策は、ユーザーが施策詳細画面（SC-05）のフォームで直接編集して、同じAPIで上書きすることもできる（4.1）。
 
 ### 1.1 章の構成
 | 章 | 内容 | 主な利用画面 |
 | --- | --- | --- |
 | 2 | 共通仕様（入力検証、冪等性、承認監査、Response、認証とCSRF、認証API、Turnの同時実行、運用向けエンドポイント） | 全画面 |
 | 3 | X投稿API | SC-02 |
-| 4 | 施策API | SC-02 |
-| 5 | Agent会話API（Turn、Session、履歴） | SC-02、SC-03 |
+| 4 | 施策API | SC-02、SC-05 |
+| 5 | Agent会話API（Turn、Session、履歴） | SC-02 |
 | 6 | 参照API（施策、投稿、計測結果、記憶） | SC-04からSC-09 |
 | 7 | 記憶の忘却API | SC-09 |
 | 8 | 編集・承認フロー | SC-02 |
@@ -22,6 +22,30 @@ Agentは`propose_campaign`と`propose_x_post`で編集可能な内容を提案�
 - 画面から見たAPIの使い方: `SCREEN_DESIGN.md`、`docs/frontend/CODING_STANDARDS.md`（16章 API通信、17章 フォームと最終承認、18章 Errorと画面状態）
 - 実装の規約: `docs/backend/CODING_STANDARDS.md`（7章 API層、8章 エラー処理）。エラーコードは10章に登録されたものだけを使う
 - Agentの動作とTool: `AGENT_DESIGN.md`。データ構造: `DATABASE.dbml`
+
+### 1.3 API一覧
+実装するAPIの一覧である。各APIの処理は、「詳細」の節に、API論理名をタイトルとして記載する。パスの`/api/v1`は、運用向けエンドポイント（`/api`直下）を除く。
+
+| No | メソッド | パス | API論理名 | 処理概要 | 利用画面 | 詳細 |
+| ---: | --- | --- | --- | --- | --- | --- |
+| 1 | `POST` | `/api/v1/auth/login` | ログイン | メールアドレスとパスワードを検証し、署名付きの認証Cookieと`csrf_token` Cookieを発行する | SC-01 | 2.9 |
+| 2 | `POST` | `/api/v1/auth/logout` | ログアウト | 認証Cookieと`csrf_token` Cookieを削除する | 全画面（グローバルナビ） | 2.9 |
+| 3 | `GET` | `/api/health` | ヘルスチェック | プロセスの死活を確認する（DBへ接続しない） | なし（運用） | 2.11 |
+| 4 | `GET` | `/api/health/db` | DB接続確認 | DBへの接続を確認する | なし（運用） | 2.11 |
+| 5 | `POST` | `/api/v1/agent-sessions/{session_id}/x/posts` | X投稿公開 | 最終承認済みの投稿内容をXへ投稿し、成功後に投稿・UTM・計測予定などを保存する。`Idempotency-Key`必須 | SC-02 | 3.1 |
+| 6 | `POST` | `/api/v1/agent-sessions/{session_id}/campaigns` | 施策登録・更新 | 承認済み（または直接編集）の施策のフォーム値を、新規保存または既存施策の全項目上書きで保存する。競合を検出する。`Idempotency-Key`必須 | SC-02、SC-05 | 4.1 |
+| 7 | `POST` | `/api/v1/agent-sessions` | Session作成 | 新しい親Sessionを作成する（Turnは作らない） | SC-02、SC-05、SC-09 | 5.2 |
+| 8 | `POST` | `/api/v1/agent-sessions/{session_id}/turns` | メッセージ送信 | ユーザーのメッセージで親AgentのTurnを実行する。`Accept`によりJSON、またはSSE（進捗イベント付き）で結果を返す | SC-02 | 5.3 |
+| 9 | `GET` | `/api/v1/agent-sessions/{session_id}/turns/{turn_id}` | Turn取得 | Turnの状態と表示対象のItemを返す（応答を受け取れなかった場合の確認、実行中Turnの終了待ち） | SC-02 | 5.4 |
+| 10 | `GET` | `/api/v1/agent-sessions` | Session一覧取得 | 自分の親Sessionを、最終更新日時の新しい順に返す | SC-02、SC-05、SC-09 | 5.5 |
+| 11 | `GET` | `/api/v1/agent-sessions/{session_id}` | Session履歴取得 | Sessionの情報とTurnの履歴を返す | SC-02 | 5.6 |
+| 12 | `GET` | `/api/v1/campaigns` | 施策一覧取得 | 施策を新しい順、または意味検索で返す（計測の集計、流入率を含む） | SC-04、SC-06、SC-02（投稿フォームの対象施策） | 6.2 |
+| 13 | `GET` | `/api/v1/campaigns/{campaign_id}` | 施策詳細取得 | 施策の全項目と、紐づく投稿・記憶、計測の集計を返す | SC-05、SC-06 | 6.3 |
+| 14 | `GET` | `/api/v1/posts` | 投稿一覧取得 | 公開済み投稿を、絞り込み・意味検索・並び替え付きで返す（計測の状態と値を含む） | SC-06 | 6.4 |
+| 15 | `GET` | `/api/v1/posts/{post_id}` | 投稿詳細取得 | 公開済み投稿の内容、対象施策、UTM、計測結果を返す | SC-07 | 6.5 |
+| 16 | `GET` | `/api/v1/metrics` | 計測結果集計取得 | 全体のサマリーと施策ごとの計測結果を集計して返す（流入率を含む） | SC-08 | 6.6 |
+| 17 | `GET` | `/api/v1/memories` | 記憶一覧取得 | 長期記憶を新しい順、または意味検索で返す（関連する施策・投稿を含む） | SC-09 | 6.7 |
+| 18 | `DELETE` | `/api/v1/agent-sessions/{session_id}/memories/{memory_id}` | 記憶忘却 | 長期記憶の内容とEmbeddingを削除する。`Idempotency-Key`必須 | SC-09 | 7.1 |
 
 ## 2. 共通仕様
 
@@ -163,7 +187,7 @@ Agent履歴へ保存しない認証・Session・JSON解析・冪等性Headerエ�
 ### 2.7 HTTP Status
 | Status | 用途 |
 | --- | --- |
-| `200 OK` | 既存施策の上書き成功、記憶の忘却の成功、または取得API（GET）の成功 |
+| `200 OK` | 既存施策の上書き成功、記憶の忘却の成功、取得API（GET）の成功、またはSSEによるTurnの実行開始（5.3。Turnの結果は`turn_finished`で示す） |
 | `201 Created` | 施策の新規作成、X投稿成功、Sessionの作成、またはAgent Turnの完了 |
 | `400 Bad Request` | JSON、型、必須項目、Idempotency-Keyが不正 |
 | `401 Unauthorized` | 未認証、または認証Cookieの期限切れ・署名不正 |
@@ -275,17 +299,28 @@ Agent Turnを開始するAPI（メッセージ送信API。5.3）は、同じ親S
 ### 2.11 運用向けエンドポイント
 死活と接続の確認のためのエンドポイントである。`/api/v1`配下ではなく、認証、CSRF、Agent履歴を使用しない。Responseは、2.5・2.6の共通形式ではない。
 
-| Method / Path | 用途 | 成功 | 失敗 |
-| --- | --- | --- | --- |
-| `GET /api/health` | プロセスの死活確認。DBへ接続しない | `200`、`{"status": "ok"}` | なし |
-| `GET /api/health/db` | DBへの接続確認 | `200`、`{"status": "ok", "database": "ok"}` | `503`、`{"detail": "database unavailable"}` |
+#### ヘルスチェック
+`GET /api/health`
+
+プロセスの死活を確認する。DBへ接続しない。
+
+- 成功: `200`、`{"status": "ok"}`
+- 失敗: なし
+
+#### DB接続確認
+`GET /api/health/db`
+
+DBへの接続を確認する。
+
+- 成功: `200`、`{"status": "ok", "database": "ok"}`
+- 失敗: `503`、`{"detail": "database unavailable"}`
 
 - 認証を必要としないため、接続先、例外の内容、バージョンなどの内部情報を返さない
 - OpenAPIのドキュメント（`/api/docs`、`/api/openapi.json`）は開発向けであり、本書のAPI契約に含めない。本番での公開の可否は決めていない
 
 ## 3. X投稿API
 
-### 3.1 投稿を公開する
+### 3.1 X投稿公開
 `POST /api/v1/agent-sessions/{session_id}/x/posts`
 
 Request Bodyの投稿内容を最終承認済みとしてXへ投稿する。X APIへの投稿成功後にだけ、投稿と関連データを業務テーブルへ保存する。
@@ -457,10 +492,12 @@ UIは`X_POST_SAVE_FAILED`を受けた場合、Xへは投稿済みであること
 
 ## 4. 施策API
 
-### 4.1 施策をupsertする
+### 4.1 施策登録・更新
 `POST /api/v1/agent-sessions/{session_id}/campaigns`
 
 Request Bodyの`id`が省略または`null`なら新規作成し、値があれば既存施策の編集可能な全フィールドを上書きする。部分更新は行わない。
+
+呼び出し元は、2つある。Agentの提案を受けた最終承認（SC-02）と、ユーザーが施策詳細画面（SC-05）で直接行う編集である。いずれも、LLMを使わずに、フォーム値をそのまま保存する。同じ検証、冪等性、API実行Turn、競合検出を適用する。SC-05から呼び出す場合、保存先の親Sessionは、UIが指定する（最終更新が最新の親Session（5.5）を指定し、なければ5.2で作成する）。
 
 #### Request Header
 
@@ -497,7 +534,7 @@ Idempotency-Key: action-uuid
 | Field | Type | 必須 | 説明 |
 | --- | --- | :---: | --- |
 | `id` | integer または null |  | 上書き対象の施策ID。省略または`null`なら新規作成 |
-| `expected_updated_at` | string（ISO 8601、マイクロ秒精度） | 上書き時○ | Agentが施策を提案した時点の施策の`updated_at`。`id`に値がある場合は必須。新規作成では指定しない |
+| `expected_updated_at` | string（ISO 8601、マイクロ秒精度） | 上書き時○ | Agentが施策を提案した時点（SC-05の直接編集では、施策詳細を取得した時点）の施策の`updated_at`。`id`に値がある場合は必須。新規作成では指定しない |
 | `title` | string | ○ | 施策タイトル |
 | `target_profile` | string | ○ | ターゲット像 |
 | `background` | string | ○ | 実施背景 |
@@ -548,7 +585,7 @@ Idempotency-Key: action-uuid
 - 取得したCampaignの`updated_at`が`expected_updated_at`と一致しない場合は、Embedding生成の前に`409 CAMPAIGN_CONFLICT`を返す。別のSessionまたは別のマーケターがAgentの提案後に施策を更新したことを示す
 - 保存時は`WHERE id = :id AND company_id = :company_id AND updated_at = :expected_updated_at`を条件にUPDATEし、更新行数が0なら同様に`409 CAMPAIGN_CONFLICT`とする。事前確認から保存までの間の更新を検出するためで、同一Transaction内で行う
 - `updated_at`の比較は、文字列ではなく`timestamptz`の値として行う。UIは受け取った値を加工せずそのまま送り返す
-- `CAMPAIGN_CONFLICT`は`failed`として保存する。同じキーでは保存済みエラーを返し、利用者は最新の施策を確認したうえでAgentと再相談し、新しい承認操作と新しいキーで再実行する
+- `CAMPAIGN_CONFLICT`は`failed`として保存する。同じキーでは保存済みエラーを返し、利用者は最新の施策を確認したうえで、Agentと再相談するか（SC-05の直接編集では、最新の内容を読み込んで編集し直す）、新しい承認操作と新しいキーで再実行する
 - 会社IDと作成者IDは認証済みContextから設定する
 - 新規作成では検索用Embeddingと`content_hash`を生成する
 - 上書きでは検索対象内容の`content_hash`が変わった場合だけEmbeddingを再生成する
@@ -580,11 +617,11 @@ Idempotency-Key: action-uuid
 
 - 本章のすべてのAPIは、署名付きCookieで認証する（2.8）。状態変更API（POST）にはCSRF対策を適用し、取得API（GET）には適用しない
 - 対象は、認証済みマーケターが所有する親Sessionだけとする。存在しない、他のマーケターが所有する、または子Sessionの場合は、すべて`404 AGENT_SESSION_NOT_FOUND`とする（2.2）
-- メッセージ送信APIは、**Agent Turnが終わってから1回のResponseで結果を返す（同期）**。ストリーミング（SSE）は使わない。Vercel Functionsでは、Responseを返した後の処理に頼れないため、Turnは1回のRequestの中で完了させる。Turnの経過時間には上限があり（既定200秒。`AGENT_DESIGN.md`の「Turnの上限」）、関数の最大実行時間は300秒とする（`docs/backend/CODING_STANDARDS.md`の17.1）
+- メッセージ送信APIは、`Accept`により2つの形式を持つ。SSE（`text/event-stream`）では、Turnの実行中に、ToolとサブエージェントのCallの進捗を返し、最後にTurnを返す。JSON（既定）では、**Agent Turnが終わってから1回のResponseで結果を返す（同期）**。どちらの形式でも、Vercel FunctionsではResponseを返した後の処理に頼れないため、Turnは1回のRequestの中で完了させる（5.3）。Turnの経過時間には上限があり（既定200秒。`AGENT_DESIGN.md`の「Turnの上限」）、関数の最大実行時間は300秒とする（`docs/backend/CODING_STANDARDS.md`の17.1）
 - 本章のAPIは`Idempotency-Key`を使用しない。同じSessionのTurnは直列に実行し、二重送信は`409 TURN_IN_PROGRESS`で防ぐ（2.10）
 
 ### 5.1 TurnとItemの表現
-メッセージ送信API（5.3）、Turn取得API（5.4）、履歴取得API（5.6）は、次の同じ形式でTurnを返す。
+メッセージ送信API（5.3。JSONのResponseと、SSEの`turn_finished`）、Turn取得API（5.4）、履歴取得API（5.6）は、次の同じ形式でTurnを返す。
 
 ```json
 {
@@ -595,6 +632,13 @@ Idempotency-Key: action-uuid
   "error": null,
   "started_at": "2026-09-21T10:00:00Z",
   "completed_at": "2026-09-21T10:00:42Z",
+  "security_notices": [
+    {
+      "event_type": "prompt_injection",
+      "enforcement": "sanitized",
+      "detected_at": "2026-09-21T10:00:20Z"
+    }
+  ],
   "items": [
     {
       "item_id": 9001,
@@ -637,6 +681,7 @@ Idempotency-Key: action-uuid
 | `status` | `pending`、`running`、`completed`、`failed`、`cancelled`、`blocked`のいずれか（`agent_turn_status`） |
 | `error` | `failed`または`blocked`のTurnだけ`{ "code", "message", "retryable" }`を返す。それ以外は`null`。`agent_turns.error_code`とマスク済みの`error_message`から作る |
 | `started_at`、`completed_at` | 開始日時と終了日時。未開始または未終了は`null` |
+| `security_notices` | このTurnで検出したセキュリティイベントの通知。検出がなければ空の配列。`Turn`の状態（`completed`、`failed`、`blocked`など）に関わらず返す |
 | `items` | 表示対象のItem。`item_number`の昇順 |
 
 `items`に含めるItemは、次のとおりとする。
@@ -652,12 +697,15 @@ Idempotency-Key: action-uuid
 
 - 上記以外のItemは返さない。`tool_call`、提案以外の`tool_result`、失敗した提案の`tool_result`、Web検索・Web取得・長期記憶などの外部データ、サブエージェントの内部履歴（子Session）は返さない（情報漏えいとResponseサイズの抑制のため）。監査用の完全な履歴は、DBで確認する
 - `context_status = quarantined`のItemは返さない
-- `status`が`completed`ではないTurnは、`user_message`（`approval`Turnでは`approval_action`）だけを返す。完了していないTurnの出力は、次のContextにも含まれないため（`AGENT_DESIGN.md`の「中断されたTurnの復旧」）、表示もしない
+- `security_notices`は、`security_events`のうち、このTurn（`agent_turn_id`）で検出したものから作る。各要素は`event_type`（`prompt_injection`、`sensitive_data`、`unauthorized_tool_call`、`unsafe_external_action`）、`enforcement`（`observed`、`sanitized`、`blocked`）、`detected_at`だけとし、`detected_at`の昇順で最大20件返す。`summary`、`metadata`、`detector`、`external_event_id`は、検出した内容や内部の識別子の漏えいを防ぐため返さない。UIは、`event_type`と`enforcement`から固定の文言を表示する（`SCREEN_DESIGN.md`のSC-02）
+- サブエージェント（子Session）のTurnで検出したイベントは、親Turnと関連付ける情報がないため、`security_notices`に含めない。子Agentの検出は、失敗した`tool_result`として親Agentが観測し、回答で伝える（`AGENT_DESIGN.md`の「セキュリティ通知」）
+- セキュリティイベントの一覧と検索のAPIは設けない（9章）
+- `status`が`completed`ではないTurnは、`items`として`user_message`（`approval`Turnでは`approval_action`）だけを返す（`security_notices`は返す）。完了していないTurnの出力は、次のContextにも含まれないため（`AGENT_DESIGN.md`の「中断されたTurnの復旧」）、表示もしない
 - `approval`Turnは、APIが失敗しても`api_result`を保存して`completed`になる（2.4）。承認APIの成否は、`api_result`の`success`で判別する
 - 提案（`campaign_proposal`、`x_post_proposal`）は、UIがフォームの初期値として使う。承認は3章・4章のAPIで行う。記憶の忘却は、画面の操作から7章のAPIで行う
 - `agent_turn_id`、`item_id`は、履歴の表示・取得のための識別子であり、業務データの識別子（`campaign_id`など）とは別である
 
-### 5.2 Sessionを作成する
+### 5.2 Session作成
 `POST /api/v1/agent-sessions`
 
 新しい親Sessionを作成する。Request Bodyは不要とし、送られた場合も使用しない。Turnは作成せず、Agent履歴へ何も保存しない。
@@ -678,8 +726,8 @@ Response: `201 Created`
 ```
 
 - Sessionは`agent = parent`、`parent_session_id = null`で作成し、所有者は認証済みマーケターとする。`marketer_id`はRequestから受け取らない
-- `title`は`null`で作成する。最初のメッセージを送信したときに設定する（5.3）
-- `Idempotency-Key`は使用しない。二重クリックなどで複数のSessionが作成されても、履歴は空であり、業務データに影響しない
+- `title`は`null`で作成する。最初のメッセージを送信したときに設定する（5.3）。SC-05・SC-09の保存先としてUIが作成し、メッセージがまだない会話は、`title`が`null`のまま残る。UIは「無題の会話」と表示する（`SCREEN_DESIGN.md`の6.13）
+- `Idempotency-Key`は使用しない。二重クリックなどで複数のSessionが作成されても、履歴は空であり、業務データに影響しない。UIは、保存先として作成したSessionを再試行で作り直さない（`SCREEN_DESIGN.md`の6.13）
 
 | HTTP Status | Code | 条件 | 再試行 |
 | --- | --- | --- | :---: |
@@ -687,10 +735,10 @@ Response: `201 Created`
 | `403` | `CSRF_VALIDATION_FAILED` | CSRF検証に失敗した | × |
 | `500` | `AGENT_SESSION_SAVE_FAILED` | Sessionを保存できない | ○ |
 
-### 5.3 メッセージを送信する
+### 5.3 メッセージ送信
 `POST /api/v1/agent-sessions/{session_id}/turns`
 
-ユーザーのメッセージを入力として、親AgentのTurnを実行する。Turnが終了してから、結果を1回のResponseで返す。
+ユーザーのメッセージを入力として、親AgentのTurnを実行する。`Accept: text/event-stream`では、Turnの実行中に進捗をSSEで返し、最後にTurnを返す。それ以外では、Turnが終了してから、結果を1回のResponseで返す。
 
 Request Body
 
@@ -704,7 +752,21 @@ Request Body
 | --- | --- | :---: | --- |
 | `message` | string | ○ | ユーザーの入力。前後の空白を除いて1文字以上とし、上限はアプリケーション設定とする（既定4,000文字）。添付ファイルは扱わない |
 
-Response: `201 Created`
+#### 応答の形式
+1つのエンドポイントで、`Accept` Headerにより応答の形式を選ぶ。
+
+| `Accept` | 形式 | 用途 |
+| --- | --- | --- |
+| `text/event-stream` | SSE。Turnの実行中に、進捗イベントを送り、最後にTurnを送る | 画面（SC-02）。Toolとサブエージェントの実行状況を表示する |
+| 上記以外（省略、`application/json`） | JSON。Turnが終わってから1回のResponseで返す | 進捗を必要としない呼び出し。SSEを読み取れない場合の代替 |
+
+- どちらの形式でも、Turnの実行、上限（ステップ数、コスト、経過時間）、保存内容、`409 TURN_IN_PROGRESS`による二重送信の防止は同じである。Turnは1回のRequestの中で完了させる（Responseを返した後の処理に頼らない）
+- SSEは、Turnを実行しているRequestをそのまま開いたままにして、途中の状況を返す方式であり、Responseを返した後にTurnを実行し続ける非同期実行ではない。関数の最大実行時間（300秒）で接続は閉じるため、Turnの経過時間の上限（既定200秒）を超えない設計は変わらない
+- SSEで返す進捗は、ToolとサブエージェントのIDに相当する名前と状態だけとする。引数、結果、Webの取得内容、記憶の内容、サブエージェントの内部の出力は、送らない（5.1と同じ理由）
+
+Request Bodyは、どちらの形式でも同じとする。
+
+#### Response（JSON）: `201 Created`
 
 `data`は、5.1のTurnとする。`status`は`completed`であり、`items`には、このTurnの`user_message`と、Agentの回答・提案が含まれる。Agentがユーザーへ質問した場合も、`assistant_message`を返してTurnは`completed`になる（`AGENT_DESIGN.md`）。
 
@@ -727,6 +789,46 @@ Response: `201 Created`
 
 （`items`は5.1の例と同じ形式。省略している）
 
+#### Response（SSE）: `200 OK`
+`Accept: text/event-stream`のとき、Turnを作成して確定した後（下記の処理フローの手順4まで）に、`200 OK`でストリームを開始する。`Content-Type`は`text/event-stream; charset=utf-8`、`Cache-Control`は`no-cache, no-transform`とし、Responseを圧縮せず、中継でバッファされないようにする（`X-Accel-Buffering: no`）。
+
+```text
+event: turn_started
+data: {"agent_turn_id":1902,"turn_number":3,"started_at":"2026-09-21T10:00:00Z"}
+
+event: activity_started
+data: {"activity_id":"a1","kind":"subagent","name":"run_campaign_planner","parent_activity_id":null}
+
+event: activity_started
+data: {"activity_id":"a2","kind":"tool","name":"web_search","parent_activity_id":"a1"}
+
+event: activity_finished
+data: {"activity_id":"a2","status":"succeeded"}
+
+: keep-alive
+
+event: activity_finished
+data: {"activity_id":"a1","status":"succeeded"}
+
+event: turn_finished
+data: {"agent_turn_id":1902,"turn_number":3,"kind":"chat","status":"completed","error":null,"started_at":"2026-09-21T10:00:00Z","completed_at":"2026-09-21T10:00:42Z","items":[]}
+```
+
+（`turn_finished`の`items`は5.1の例と同じ形式。省略している）
+
+| Event | `data` | 送る時点 |
+| --- | --- | --- |
+| `turn_started` | `agent_turn_id`、`turn_number`、`started_at` | ストリームの最初。UIは、`agent_turn_id`を、切断時の確認（5.4）に使う |
+| `activity_started` | `activity_id`、`kind`（`tool`または`subagent`）、`name`、`parent_activity_id` | ToolまたはサブエージェントのCallを受け、実行を始めるとき |
+| `activity_finished` | `activity_id`、`status`（`succeeded`、`failed`、`blocked`） | 実行が終わったとき。Firewallなどで実行を止めた場合は`blocked`とし、理由は送らない |
+| `turn_finished` | 5.1のTurn（`status`は`completed`、`failed`、`blocked`のいずれか。`error`を含む） | ストリームの最後。必ず1回だけ送る |
+| （コメント行`: keep-alive`） | なし | 15秒ごと。Eventを送らない間に、接続がアイドルとして閉じられないようにする |
+
+- `activity_id`は、Turnの中で一意な文字列（`a1`、`a2`、…）で、サーバーが採番する。DBのIDではない。`name`は、Agent Toolの名前（`web_search`、`search_campaigns`、`run_campaign_planner`など。`AGENT_DESIGN.md`）とする。サブエージェントの内部のToolは、`parent_activity_id`にサブエージェントの`activity_id`を設定して送る。UIは、`name`を表示用の文言へ変換し、未知の`name`は「処理中」と表示する
+- `turn_finished`は、5.4の`data`と同じ形式である。失敗やBlockも、HTTP Statusではなく、`data.status`と`data.error`で示す（`TURN_BLOCKED`から`TURN_INTERRUPTED`。下記のエラーコード）
+- 進捗は保存しない。`Last-Event-ID`による再接続と、途中のEventの再送は行わない。UIは、ストリームが途中で切れた場合、Eventの続きを取得せず、5.4でTurnの最終状態を確認する（下記の「通信切断と再送」）
+- アシスタントの回答の本文を、文字単位で送るストリーミングは行わない。回答は、`turn_finished`の`items`で受け取る
+
 #### 処理フロー
 
 ```mermaid
@@ -743,10 +845,15 @@ flowchart TD
     RUNNING -- はい --> E_409([409 TURN_IN_PROGRESS: 履歴へ保存しない])
     RUNNING -- いいえ --> CREATE[Turnをrunningで作成し、user_messageを保存]
     CREATE --> COMMIT[Transactionを確定]
-    COMMIT --> LOOP[[Agentのループを実行]]
+    COMMIT --> MODE{Accept}
+    MODE -- JSON --> LOOP[[Agentのループを実行]]
+    MODE -- SSE --> OPEN([200: ストリームを開始し、turn_startedを送る])
+    OPEN --> LOOP_SSE[[Agentのループを実行: activityを送る]]
     LOOP --> RESULT{Turnの結果}
+    LOOP_SSE --> RESULT_SSE{Turnの結果}
     RESULT -- completed --> OK([201 Turnを返す])
     RESULT -- failed / blocked --> E_TURN([エラーResponse: agent_turn_idを含める])
+    RESULT_SSE -- completed / failed / blocked --> FINISH([turn_finishedでTurnを送り、ストリームを閉じる])
 ```
 
 1. 認証とCSRFを検証する（2.8）。失敗した場合は、履歴へ保存せずResponseだけを返す
@@ -758,9 +865,9 @@ flowchart TD
    - 新しいTurnを`running`で作成する（`turn_number`はSession内の最大値に1を加える。`started_at`を設定する）
    - 入力をマスクし、`user_message`として保存する。`content = { "text": "<マスク済みのmessage>" }`、`content_source = user_input`、`context_class = conversation`、`context_status = active`とする
    - Sessionの`updated_at`を更新する。`title`が`null`の場合は、マスク済みの`message`の先頭50文字（改行は空白へ置き換える）を設定する。タイトルの生成にLLMは使用しない
-5. Transactionを確定してから、Agentのループを実行する（`AGENT_DESIGN.md`の「ループ設計」）。Turnの実行中は、DBのTransactionとロックを保持しない。LLM呼び出しやTool実行などの外部呼び出しを、Transactionの中で行わない
+5. Transactionを確定してから、Agentのループを実行する（`AGENT_DESIGN.md`の「ループ設計」）。SSEでは、Transactionの確定後に`200 OK`でストリームを開始し、`turn_started`を送ってから、ループを実行する。ループは、ToolまたはサブエージェントのCallの前後で進捗を通知する（`AGENT_DESIGN.md`の「進捗イベント」）。Turnの実行中は、DBのTransactionとロックを保持しない。LLM呼び出しやTool実行などの外部呼び出しを、Transactionの中で行わない
 6. ループの終了時に、Turnを終端状態（`completed`、`failed`、`blocked`）へ更新する。更新は`status = running`を条件とする。更新できなかった場合（中断されたTurnとして復旧済み）は、Turnの現在の状態から`TURN_INTERRUPTED`のエラーResponseを返す
-7. `completed`のTurnを`201 Created`で返す。`failed`または`blocked`のTurnは、下記のエラーResponseを返す。Responseの`agent_turn_id`は、そのTurnのIDとする
+7. JSONでは、`completed`のTurnを`201 Created`で返す。`failed`または`blocked`のTurnは、下記のエラーResponseを返す。Responseの`agent_turn_id`は、そのTurnのIDとする。SSEでは、どの終端状態でも、`turn_finished`でTurnを送ってからストリームを閉じる
 
 #### エラーコード
 | HTTP Status | Code | 条件 | 再試行 |
@@ -778,6 +885,7 @@ flowchart TD
 | `500` | `AGENT_EXECUTION_FAILED` | LLMの呼び出し失敗など、Agentの実行を継続できない（`failed`） | ○ |
 | `500` | `TURN_INTERRUPTED` | 実行中に中断され、他の処理がTurnを終了させた（`failed`） | ○ |
 
+- SSEでは、ストリームを開始する前（Turnの作成前）のエラー（`400`、`401`、`403`、`404`、`409`）だけが、上記のHTTP Statusと2.6のエラーResponse（JSON）で返る。ストリームの開始後は、HTTP Statusを変更できないため、`TURN_BLOCKED`から`TURN_INTERRUPTED`までは、HTTP Statusが`200`のまま、`turn_finished`の`data.status`と`data.error`で示す
 - `TURN_BLOCKED`から`TURN_INTERRUPTED`までのエラーは、Turnを`failed`または`blocked`で保存した後に返すため、`agent_turn_id`を含める。`TURN_IN_PROGRESS`と、認証・Session・Request Bodyのエラーは、履歴へ保存しないため`agent_turn_id = null`とする
 - 「再試行」が○のエラーでも、自動で再実行しない。UIはエラーを表示し、ユーザーが同じ依頼を再送する。再送は、新しいTurnとして実行する。失敗したTurnは、次のContextへ含めない
 - エラーの`message`は、マスク済みの利用者向けの説明とし、内部情報を含めない
@@ -785,9 +893,12 @@ flowchart TD
 #### 通信切断と再送
 - 二重クリックなどの二重送信は、`TURN_IN_PROGRESS`で防ぐ。UIは、Turnの実行中は送信ボタンを無効にする
 - Responseを受け取れなかった場合（通信の切断、またはプラットフォームによる本文のない`504`）でも、サーバーではTurnが実行または保存されている可能性がある。UIは、同じメッセージを再送せず、履歴取得API（5.6）で最新のTurnを確認する。Turnが実行中の場合は、Turn取得API（5.4）でTurnの終了を待つ
+- SSEの接続が、`turn_finished`を受け取る前に切れた場合（通信の切断、関数の最大実行時間、本文のない`504`）も、同じく再送せず、`turn_started`で受け取った`agent_turn_id`（受け取れなかった場合は履歴取得API（5.6））で、Turn取得API（5.4）を呼んで最終状態を確認する。途中の進捗は、再取得できない
+- クライアントの切断を検知しても、サーバーはTurnを中止せず、終了まで実行する（進捗の送信だけを止める）。ただし、関数がその後も動き続けることは、Vercelの動作としては確認できていない【要検証】。Turnが止まった場合は、復旧判定時間（330秒）の後に`TURN_INTERRUPTED`で終了する（`AGENT_DESIGN.md`の「中断されたTurnの復旧」）
+- ブラウザの`EventSource`は、GETだけで、自動で再接続するため使用しない。UIは、`fetch`でRequest Bodyを送り、ストリームを読み取る（`docs/frontend/CODING_STANDARDS.md`の11.3、16章）
 - 確認せずに同じメッセージを再送し、前のTurnがすでに完了していた場合は、同じ内容の2つ目のTurnが作成される。会話の履歴には両方が表示されるため、利用者が確認できる。この重複を防ぐ`Idempotency-Key`は、MVPでは設けない
 
-### 5.4 Turnを取得する
+### 5.4 Turn取得
 `GET /api/v1/agent-sessions/{session_id}/turns/{turn_id}`
 
 Turnの状態と表示対象のItemを返す。メッセージ送信APIのResponseを受け取れなかった場合の確認と、実行中のTurnの終了待ちに使う。
@@ -807,7 +918,7 @@ Response: `200 OK`
 | `404` | `AGENT_SESSION_NOT_FOUND` | 親Sessionが存在しない、所有していない | × |
 | `404` | `AGENT_TURN_NOT_FOUND` | Turnが存在しない、または指定したSessionのTurnではない | × |
 
-### 5.5 Sessionを一覧する
+### 5.5 Session一覧取得
 `GET /api/v1/agent-sessions?limit=20&cursor=...`
 
 認証済みマーケターの親Sessionを、最終更新日時の新しい順に返す。子Sessionとアーカイブ済みのSessionは返さない。
@@ -842,7 +953,7 @@ Response: `200 OK`
 - Sessionの`updated_at`は、Turn（メッセージ送信と、承認APIのAPI実行Turn）の作成時に更新する（2.4、5.3）
 - 不正な`limit`または`cursor`は`400 INVALID_ARGUMENT`とする。認証エラーは`401 UNAUTHENTICATED`とする
 
-### 5.6 Sessionの履歴を取得する
+### 5.6 Session履歴取得
 `GET /api/v1/agent-sessions/{session_id}?limit=20&before_turn_number=...`
 
 Sessionの情報と、Turnの履歴を返す。会話を開き直すとき、Sessionを切り替えるとき、およびメッセージ送信APIのResponseを受け取れなかったときに使う。
@@ -944,25 +1055,27 @@ Response: `200 OK`
   "pending_count": 2,
   "failed_count": 0,
   "x_pv_count": 1200,
-  "landing_user_count": 45
+  "landing_user_count": 45,
+  "landing_rate": 0.0375
 }
 ```
 
 - `post_count`は、公開済みの投稿数とする。`completed_count`、`pending_count`、`failed_count`は、それぞれの計測状態の投稿数とし、合計は`post_count`になる
 - `x_pv_count`と`landing_user_count`は、`completed`の投稿の値の合計とする。`pending`と`failed`の投稿は含めず、`completed`の投稿がない場合は`0`とする。合計が小さい理由を判別できるように、`pending_count`と`failed_count`を併せて返す
-- 遷移率などの比率は返さない（指標は、投稿初週PV数と遷移ユーザー数の2つだけ）
+- `landing_rate`は、施策の効果の目安とする流入率で、`landing_user_count`を`x_pv_count`で割った値（0以上の小数。例: 0.0375は3.75%）とする。`completed`の投稿だけの合計から算出するため、`pending`と`failed`の投稿は含まれない。`x_pv_count`が`0`の場合（`completed`の投稿がない場合を含む）は`null`とする。丸めは行わず、表示の桁数はUIが決める
+- 指標は、投稿初週PV数と遷移ユーザー数の2つだけとし、`landing_rate`は2つから算出する値である。CTR、CVRなど、他の比率は返さない（`REQUIREMENTS.md`の「その他マーケティング指標」）。投稿ごとの流入率も返さない
 
 #### 共通のエラー
 | HTTP Status | Code | 条件 | 再試行 |
 | --- | --- | --- | :---: |
-| `400` | `INVALID_ARGUMENT` | Path内のID、`limit`、`cursor`、`query`、日時、`campaign_id`が不正。または`query`と`cursor`を同時に指定した | × |
+| `400` | `INVALID_ARGUMENT` | Path内のID、`limit`、`cursor`、`query`、日時、`campaign_id`、`sort`、`order`が不正。または`query`と`cursor`（投稿一覧では、`query`と`sort`・`order`）を同時に指定した。または`cursor`と異なる`sort`・`order`を指定した | × |
 | `401` | `UNAUTHENTICATED` | 未認証、または期限切れ | × |
 | `500` | `EMBEDDING_FAILED` | 意味検索のEmbeddingを生成できない | ○ |
 | `500` | `INTERNAL_ERROR` | DBの読み取りなど、内部処理に失敗した | ○ |
 
 対象が存在しない場合の`404`は、各APIで示す。
 
-### 6.2 施策を一覧する
+### 6.2 施策一覧取得
 `GET /api/v1/campaigns?query=...&created_from=...&created_to=...&limit=20&cursor=...`
 
 会社の施策を返す。並び順は`created_at`の降順とする（`cursor`は、最後の行の`created_at`と`id`から作る）。
@@ -993,7 +1106,8 @@ Response: `200 OK`
           "pending_count": 2,
           "failed_count": 0,
           "x_pv_count": 1200,
-          "landing_user_count": 45
+          "landing_user_count": 45,
+          "landing_rate": 0.0375
         }
       }
     ],
@@ -1005,9 +1119,9 @@ Response: `200 OK`
 
 - 意味検索の対象は`campaign_embeddings`とする。検索用テキストは`target_profile`、`background`、`objective`、`plan`から作り、`title`は含めない（`AGENT_DESIGN.md`）
 - 一覧では、`target_profile`、`background`、`plan`を返さない。全項目は施策の取得（6.3）で返す
-- MVPには施策のアーカイブ操作がないため、`archived_at`では絞り込まない（9章の非対象を参照）
+- `archived_at`がNULLの施策だけを返す。MVPには施策のアーカイブ操作がないため（9章の非対象を参照）、現在はすべての施策が対象になる。SC-06の絞り込みと投稿フォームの対象施策の選択（`SCREEN_DESIGN.md`の6.11）は、この一覧を`query`で検索して使う
 
-### 6.3 施策を取得する
+### 6.3 施策詳細取得
 `GET /api/v1/campaigns/{campaign_id}`
 
 施策の全項目と、紐づく投稿・記憶、計測の集計を返す。
@@ -1034,7 +1148,8 @@ Response: `200 OK`
       "pending_count": 2,
       "failed_count": 0,
       "x_pv_count": 1200,
-      "landing_user_count": 45
+      "landing_user_count": 45,
+      "landing_rate": 0.0375
     },
     "posts": [
       {
@@ -1063,15 +1178,16 @@ Response: `200 OK`
 - `posts`は、この施策の公開済み投稿を`published_at`の降順で最大20件返す。20件を超える場合は`has_more_posts = true`とし、UIは`GET /posts?campaign_id=...`（6.4）へ誘導する
 - `memories`は、この施策に関連付けられた記憶（`memory_campaigns`）を`id`の降順で最大20件返す。20件を超える場合は`has_more_memories = true`とする
 - `metrics_summary`は、件数の上限に関わらず、この施策の公開済み投稿すべてを集計する
+- `posts[].metrics`は、SC-05が投稿ごとの初週PV数（`x_pv_count`）をバーで表示するために使う。`status`が`completed`の投稿だけが数値を持つ（`SCREEN_DESIGN.md`の6.10）
 
 | HTTP Status | Code | 条件 | 再試行 |
 | --- | --- | --- | :---: |
 | `404` | `CAMPAIGN_NOT_FOUND` | 施策が存在しない、または別会社に属する | × |
 
-### 6.4 投稿を一覧する
+### 6.4 投稿一覧取得
 `GET /api/v1/posts?query=...&campaign_id=12&published_from=...&published_to=...&limit=20&cursor=...`
 
-会社の公開済み投稿を、計測の状態と値を含めて返す。並び順は`published_at`の降順とする（`cursor`は、最後の行の`published_at`と`id`から作る）。
+会社の公開済み投稿を、計測の状態と値を含めて返す。並び順は、`sort`と`order`で指定する。既定は`published_at`の降順とする。
 
 | Query | Type | 必須 | 説明 |
 | --- | --- | :---: | --- |
@@ -1079,6 +1195,8 @@ Response: `200 OK`
 | `campaign_id` | integer | | この施策の投稿だけを返す |
 | `published_from` | string（ISO 8601） | | `posts.published_at`がこの日時以上 |
 | `published_to` | string（ISO 8601） | | `posts.published_at`がこの日時未満 |
+| `sort` | string | | 並び替えの項目。`published_at`（既定）または`x_pv_count` |
+| `order` | string | | 並び順。`desc`（既定。新しい順・多い順）または`asc`（古い順・少ない順） |
 
 Response: `200 OK`
 
@@ -1111,13 +1229,17 @@ Response: `200 OK`
 ```
 
 - 意味検索の対象は、`post_embeddings`、`posts`、`api_idempotency_requests`を内部結合した、公開済みの投稿とする。検索用テキストは、投稿本文からURLを除去したものとする（`AGENT_DESIGN.md`）
+- `metrics`は、SC-06が投稿ごとの初週PV数（`x_pv_count`）をバーで表示するために使う。`status`が`completed`の投稿だけが数値を持つ（`SCREEN_DESIGN.md`の6.10）
+- 並び順は、`sort`の値を`order`の向きで並べ、同じ値の場合は`id`を`order`と同じ向きで並べる。`sort=x_pv_count`のとき、`x_pv_count`が`null`の投稿（`pending`と`failed`）は、`order`に関わらず末尾に並べ、その中は`published_at`の降順とする
+- `cursor`は、`sort`、`order`、最後の行の並び替えの値と`id`から作る。`cursor`と異なる`sort`または`order`を同時に指定した場合は、`400 INVALID_ARGUMENT`とする
+- `query`（意味検索）は類似度順で固定のため、`query`と`sort`または`order`を同時に指定した場合は`400 INVALID_ARGUMENT`とする
 - `campaign_id`が存在しない、または別会社に属する場合は、空の一覧ではなく`404 CAMPAIGN_NOT_FOUND`とする
 
 | HTTP Status | Code | 条件 | 再試行 |
 | --- | --- | --- | :---: |
 | `404` | `CAMPAIGN_NOT_FOUND` | `campaign_id`の施策が存在しない、または別会社に属する | × |
 
-### 6.5 投稿を取得する
+### 6.5 投稿詳細取得
 `GET /api/v1/posts/{post_id}`
 
 公開済み投稿の本文、紐づく施策、トラッキングURL（UTM）、計測結果を返す。
@@ -1165,7 +1287,7 @@ Response: `200 OK`
 - 成功した`publish_x_post`のRequestに紐づかない投稿は、存在しないものとして`404 POST_NOT_FOUND`とする（6.1）
 - `body`はURLを含まない本文とし、`tracking.tracked_url`は投稿時に確定したUTM付きURLとする。UTMの値は、投稿時にアプリケーションが決定した値をそのまま返す（3.1）
 
-### 6.6 計測結果を集計する
+### 6.6 計測結果集計取得
 `GET /api/v1/metrics?published_from=...&published_to=...`
 
 全体のサマリーと、施策ごとの集計を返す。投稿ごとの値は、投稿の一覧（6.4）と取得（6.5）で得る。
@@ -1189,7 +1311,8 @@ Response: `200 OK`
       "pending_count": 1,
       "failed_count": 1,
       "x_pv_count": 3400,
-      "landing_user_count": 120
+      "landing_user_count": 120,
+      "landing_rate": 0.0353
     },
     "campaigns": [
       {
@@ -1200,7 +1323,8 @@ Response: `200 OK`
         "pending_count": 1,
         "failed_count": 0,
         "x_pv_count": 2600,
-        "landing_user_count": 90
+        "landing_user_count": 90,
+        "landing_rate": 0.0346
       }
     ]
   },
@@ -1215,7 +1339,7 @@ Response: `200 OK`
 - 対象に投稿がない場合も`200 OK`とし、件数と合計は`0`、`campaigns`は空とする
 - 期間の指定が不正な場合は、`400 INVALID_ARGUMENT`とする
 
-### 6.7 記憶を一覧する
+### 6.7 記憶一覧取得
 `GET /api/v1/memories?query=...&limit=20&cursor=...`
 
 会社の長期記憶を、関連する施策と投稿とあわせて返す。`agent_memories`には作成日時がないため、並び順は`id`の降順（採番の新しい順）とする（`cursor`は、最後の行の`id`から作る）。日付や種別による絞り込みは設けない。
@@ -1257,7 +1381,7 @@ Response: `200 OK`
 ## 7. 記憶の忘却API
 画面（SC-09）から、ユーザーが不要な長期記憶を削除する。Agent Toolの`delete_long_term_memory`（`AGENT_DESIGN.md`）と同じく、記憶の内容とEmbeddingを完全に削除する。API呼び出し自体を、ユーザーの最終承認として扱う（2.1）。3章・4章の承認APIと同じく、親Sessionの配下で実行し、`Idempotency-Key`を必須とする。外部APIとLLMは使用しない。
 
-### 7.1 記憶を忘却する
+### 7.1 記憶忘却
 `DELETE /api/v1/agent-sessions/{session_id}/memories/{memory_id}`
 
 #### Request Header
@@ -1305,7 +1429,7 @@ Request Bodyは持たない。UIは、確認ダイアログで削除を確定し
 
 - 本APIはAgent Toolを呼び出さない。信頼済み忘却イベントは、Tool経由の削除の条件であり、本APIには適用しない
 - 両方の経路とも、記憶の内容とEmbeddingを完全に削除する
-- 既知の制約: 過去の`chat`Turnに、`search_long_term_memory`の`tool_result`として記憶の内容が残っている場合がある。本APIはAgent履歴を書き換えないため、履歴に残った内容は削除されない。画面には`tool_result`を表示しない（5.1）が、DBには残る。履歴からの除去は、MVPでは扱わない
+- 既知の制約: 過去の`chat`Turnに、`search_long_term_memory`の`tool_result`として記憶の内容が残っている場合がある。本APIはAgent履歴を書き換えないため、履歴に残った内容は削除されない。画面には`tool_result`を表示しない（5.1）が、DBには残る。履歴からの除去は、MVPでは扱わない（レビューで、この挙動でよいと確認した。忘却した記憶は、新しい会話からは参照されない）
 
 #### エラーコード
 | HTTP Status | Code | 条件 | 再試行 |
@@ -1324,7 +1448,7 @@ Request Bodyは持たない。UIは、確認ダイアログで削除を確定し
 
 ## 8. 編集・承認フロー
 
-記憶の忘却API（7章）も、外部APIを使用しない点を除いて、認証・冪等性・API実行Turn・API Resultの流れは同じである（下図の施策upsertとX投稿の分岐に相当する処理は、記憶の削除だけである）。
+施策の直接編集（SC-05）は、Agentの提案とフォームの表示を経ずに、フォームの保存操作から下図の「最終承認」以降の流れへ入る。処理は同じである。記憶の忘却API（7章）も、外部APIを使用しない点を除いて、認証・冪等性・API実行Turn・API Resultの流れは同じである（下図の施策upsertとX投稿の分岐に相当する処理は、記憶の削除だけである）。
 
 ```mermaid
 sequenceDiagram
@@ -1391,10 +1515,13 @@ sequenceDiagram
 - 未公開投稿案を`posts`へ保存すること
 - X投稿結果不明時の自動再投稿
 - 公開済み投稿本文の更新と削除
+- セキュリティイベントの一覧・検索API（チャット内の通知は、Turnの`security_notices`で返す。5.1）
 - 施策の削除
 - ユーザー登録API（マーケターは初期データ投入スクリプトで事前登録する）
 - 認証Cookieのサーバー側での個別失効
-- 会話APIのストリーミング応答（SSE）、およびResponse後にTurnを実行し続ける非同期実行とポーリング
+- Response後にTurnを実行し続ける非同期実行（SSEは、Turnを実行しているRequestを開いたままにする方式であり、対象とする。5.3）
+- アシスタントの回答の本文を、文字単位で送るストリーミング
+- SSEの進捗Eventの保存と、`Last-Event-ID`による再接続・再送
 - 会話APIへの添付ファイルの送信
 - 実行中のAgent Turnを中止するAPI
 - Sessionのアーカイブと削除のAPI（`archived_at`を設定する操作は本書で未定義）
