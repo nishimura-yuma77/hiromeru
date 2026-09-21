@@ -79,6 +79,7 @@
   "success": true,
   "data": {
     "id": null,
+    "expected_updated_at": null,
     "title": "経験者Webエンジニア採用",
     "target_profile": "20代後半のWebエンジニア",
     "background": "経験者採用の応募数が減少している",
@@ -122,7 +123,7 @@ flowchart TD
     VALIDATE -- いいえ --> END_INVALID([INVALID_ARGUMENT])
     VALIDATE -- はい --> LOAD[Itemと所属Turnを取得]
     LOAD --> AUTHORIZE{現在の親Sessionかつ完了Turnか}
-    AUTHORIZE -- いいえ --> END_FORBIDDEN([ITEM_ACCESS_DENIED])
+    AUTHORIZE -- いいえ --> END_NOT_FOUND([ITEM_NOT_FOUND])
     AUTHORIZE -- はい --> STATUS{context_status}
     STATUS -- active --> CONTENT[contentを採用]
     STATUS -- quarantined --> OVERRIDE[context_overrideを採用]
@@ -131,7 +132,7 @@ flowchart TD
     ORDER --> END_OK([元Itemを返す])
 ```
 
-出力には`item_id`、`turn_id`、`item_type`、`content_source`、安全な内容を含める。子SessionのItem、生の隔離内容、存在しないItemは返さない。主な失敗は`INVALID_ARGUMENT`、`ITEM_NOT_FOUND`、`ITEM_ACCESS_DENIED`。
+出力には`item_id`、`turn_id`、`item_type`、`content_source`、安全な内容を含める。子SessionのItem、生の隔離内容、存在しないItemは返さない。別のSessionのItem、未完了TurnのItem、存在しないItemは存在確認による情報漏えいを防ぐため区別せず`ITEM_NOT_FOUND`として扱う。主な失敗は`INVALID_ARGUMENT`、`ITEM_NOT_FOUND`。
 
 ### `search_long_term_memory`
 **利用Agent:** 親エージェント、施策立案エージェント、コンテンツ制作エージェント
@@ -343,6 +344,7 @@ flowchart TD
 ```json
 {
   "id": null,
+  "expected_updated_at": null,
   "title": "経験者Webエンジニア採用",
   "target_profile": "20代後半のWebエンジニア",
   "background": "経験者採用の応募数が減少している",
@@ -355,15 +357,19 @@ flowchart TD
 flowchart TD
     START([propose_campaign開始]) --> SOURCE{現在のTurnに施策立案結果があるか}
     SOURCE -- いいえ --> END_SOURCE([INVALID_PROPOSAL_SOURCE])
-    SOURCE -- はい --> AUTHORIZE{既存Campaignの会社所有権は正常か}
-    AUTHORIZE -- いいえ --> END_FORBIDDEN([PROPOSAL_ACCESS_DENIED])
+    SOURCE -- はい --> AUTHORIZE{既存Campaignは現在の会社に属するか}
+    AUTHORIZE -- いいえ --> END_NOT_FOUND([CAMPAIGN_NOT_FOUND])
     AUTHORIZE -- はい --> VALIDATE{施策案Schemaは正常か}
     VALIDATE -- いいえ --> END_INVALID([INVALID_CAMPAIGN_PROPOSAL])
     VALIDATE -- はい --> RESULT[実際の施策内容をTool Resultへ保存]
     RESULT --> COMPLETE([親Turnを完了])
 ```
 
-新規案では`id = null`、既存施策の変更案では会社所有権を検証済みのCampaign IDを`id`へ指定する。成功時は入力した施策内容を正規化してTool Resultへ返し、UIが編集可能なフォームとして表示して親Turnを完了する。主な失敗は`INVALID_PROPOSAL_SOURCE`、`PROPOSAL_ACCESS_DENIED`、`INVALID_CAMPAIGN_PROPOSAL`、`CAMPAIGN_NOT_FOUND`。
+新規案では`id = null`、既存施策の変更案では会社所有権を検証済みのCampaign IDを`id`へ指定する。別会社のCampaignは存在しないCampaignと区別せず`CAMPAIGN_NOT_FOUND`として扱う。
+
+既存施策の変更案では、所有権の検証で取得したCampaignの`updated_at`を、アプリケーションが`expected_updated_at`へ設定する。値はLLMに生成させず、新規案では`null`とする。UIはこの値をフォームに保持し、最終承認時に施策upsert APIのRequest Bodyへそのまま設定する。承認までの間に別のSessionまたは別のマーケターが施策を更新した場合、APIが`409 CAMPAIGN_CONFLICT`を返す。
+
+成功時は入力した施策内容を正規化してTool Resultへ返し、UIが編集可能なフォームとして表示して親Turnを完了する。主な失敗は`INVALID_PROPOSAL_SOURCE`、`INVALID_CAMPAIGN_PROPOSAL`、`CAMPAIGN_NOT_FOUND`。
 
 ### `get_post`
 **利用Agent:** 親エージェント、施策立案エージェント、コンテンツ制作エージェント
@@ -436,7 +442,7 @@ flowchart TD
     START([get_marketing_metrics開始]) --> VALIDATE{検索Scopeが一つだけか}
     VALIDATE -- いいえ --> END_INVALID([INVALID_ARGUMENT])
     VALIDATE -- はい --> AUTHORIZE{対象が現在の会社に属するか}
-    AUTHORIZE -- いいえ --> END_FORBIDDEN([METRICS_ACCESS_DENIED])
+    AUTHORIZE -- いいえ --> END_NOT_FOUND([METRICS_NOT_FOUND])
     AUTHORIZE -- はい --> LOAD[post_metricsを取得]
     LOAD --> SCOPE{Campaign集計か}
     SCOPE -- はい --> AGGREGATE[投稿単位の値を集計]
@@ -445,7 +451,7 @@ flowchart TD
     SINGLE --> END_OK
 ```
 
-未計測の場合は失敗ではなく`status: pending`を返す。主な失敗は`INVALID_ARGUMENT`、`METRICS_ACCESS_DENIED`、`METRICS_NOT_FOUND`、`METRICS_QUERY_FAILED`。
+未計測の場合は失敗ではなく`status: pending`を返す。別会社の対象は存在しない対象と区別せず`METRICS_NOT_FOUND`として扱う。主な失敗は`INVALID_ARGUMENT`、`METRICS_NOT_FOUND`、`METRICS_QUERY_FAILED`。
 
 ### `propose_x_post`
 **利用Agent:** 親エージェント
@@ -464,15 +470,15 @@ flowchart TD
 flowchart TD
     START([propose_x_post開始]) --> SOURCE{現在のTurnにコンテンツ制作結果があるか}
     SOURCE -- いいえ --> END_SOURCE([INVALID_PROPOSAL_SOURCE])
-    SOURCE -- はい --> AUTHORIZE{Campaignの会社所有権は正常か}
-    AUTHORIZE -- いいえ --> END_FORBIDDEN([PROPOSAL_ACCESS_DENIED])
+    SOURCE -- はい --> AUTHORIZE{Campaignは現在の会社に属するか}
+    AUTHORIZE -- いいえ --> END_NOT_FOUND([CAMPAIGN_NOT_FOUND])
     AUTHORIZE -- はい --> VALIDATE{本文と遷移先URLは正常か}
     VALIDATE -- いいえ --> END_INVALID([INVALID_POST_PROPOSAL])
     VALIDATE -- はい --> RESULT[実際の投稿内容をTool Resultへ保存]
     RESULT --> COMPLETE([親Turnを完了])
 ```
 
-成功時は入力した投稿内容を正規化してTool Resultへ返し、UIが編集可能なフォームとして表示して親Turnを完了する。X向け文字数の最終検証はUTM付きURL結合後に投稿APIでも実施する。主な失敗は`INVALID_PROPOSAL_SOURCE`、`PROPOSAL_ACCESS_DENIED`、`CAMPAIGN_NOT_FOUND`、`INVALID_POST_PROPOSAL`。
+成功時は入力した投稿内容を正規化してTool Resultへ返し、UIが編集可能なフォームとして表示して親Turnを完了する。X向け文字数の最終検証はUTM付きURL結合後に投稿APIでも実施する。別会社のCampaignは存在しないCampaignと区別せず`CAMPAIGN_NOT_FOUND`として扱う。主な失敗は`INVALID_PROPOSAL_SOURCE`、`CAMPAIGN_NOT_FOUND`、`INVALID_POST_PROPOSAL`。
 
 ### `run_campaign_planner`
 **利用Agent:** 親エージェント
@@ -616,9 +622,12 @@ flowchart TD
 - 親Agentがエラーを観測しても、施策保存やX投稿を自動再実行しない
 - 施策upsert APIとX投稿APIは永続的な冪等性レコードで保護し、同じ`Idempotency-Key`の完了済みRequestには保存済みResponseを返す。`outcome_unknown`の手動照合後は解決後の確定Responseを返す
 - 冪等Responseの再返却では新しいAPI実行Turn、`user_message`、API Resultを作成せず、Responseには最初の`agent_turn_id`を含める
-- `X_POST_OUTCOME_UNKNOWN`と`X_POST_SAVE_FAILED`は、外部投稿の状態確認なしに再投稿しない
+- `X_POST_OUTCOME_UNKNOWN`は、外部投稿の状態確認なしに再投稿しない
+- `X_POST_SAVE_FAILED`は、Xへ投稿済みでDB保存だけが失敗した状態を示す。X投稿結果を`external_result`へ保持しており、UIが同じ`Idempotency-Key`で再送するとDB保存だけを再実行する。Xへは再投稿しない
+- `X_POST_SAVE_FAILED`のResponseは確定Responseではなく、API実行Turnは再送で完了するまで終端にならない。`api_result`は再送で確定した時点で保存するため、親Agentが観測するのは確定後の結果である
+- `CAMPAIGN_CONFLICT`を観測した親Agentは、`get_campaign`で最新の施策を取得し、その内容を踏まえて新しい提案を作成する。上書きを自動再実行しない
 - `outcome_unknown`の間は対応する内容を`get_post`と`search_posts`へ公開せず、手動照合後は元Itemを変更せず新しい監査Turnの確定結果をContextへ含める
-- 認証または親Session所有権を検証できない場合は安全な保存先がないため、そのRequestのAPI ResultをAgent履歴へ保存しない
+- 認証、CSRF検証、または親Session所有権を検証できない場合は安全な保存先がないため、そのRequestのAPI ResultをAgent履歴へ保存しない
 - `AGENT_SESSION_NOT_FOUND`では、UIが利用可能な親Sessionを選択または作成し、マスク済みエラーを新しい`user_message`として送信した後に親Agentワークフローを開始する
 
 ```mermaid

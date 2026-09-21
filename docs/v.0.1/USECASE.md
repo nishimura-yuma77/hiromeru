@@ -20,7 +20,7 @@
 | X API | X投稿を公開し、X投稿IDを返す |
 
 ## 3. 共通前提
-- ユーザーは認証済みで、マーケタープロファイルを持つ
+- ユーザーは署名付きCookieでログイン済みで、マーケタープロファイルを持つ。認証とCSRF対策は`API_DESIGN.md`の2.8を参照する
 - UIはユーザーが現在利用している未アーカイブの親Session IDを保持する
 - 子Sessionはユーザーから直接操作しない
 - 提案Toolは業務テーブルへの保存と外部公開を行わない
@@ -48,8 +48,9 @@
 ### 4.3 最終承認
 - UIは承認操作用の`Idempotency-Key`を生成し、承認時点のフォーム値とともにSession配下のAPIへ送信する
 - API呼び出し自体を、送信内容に対する最終承認として扱う
-- APIは認証、親Session所有権、会社所有権、入力Schemaを検証する
-- 検証済みRequestを指定親Sessionの新しいTurnへ保存する
+- APIは認証、CSRF、親Session所有権、安全なJSON解析、冪等性を検証する
+- 実行権を得たRequestを、指定親Sessionの新しいTurnへ保存する
+- APIは保存後に、入力Schemaと会社所有権を検証する
 - API処理後、成功結果またはマスク済みエラーを同じTurnへ保存する
 - 同じキーの再送では新しいTurnや業務データを作成せず、保存済みResponseを返す
 - 最終承認後の処理にLLMを使用しない
@@ -61,7 +62,7 @@
 - 次のユーザー入力で親Agent Turnを開始した際、Context構築処理が`api_result`を通常の会話履歴として読み込む
 - 親Agentは失敗した操作、エラーコード、利用者向け説明、再試行可否を観測して回答や修正提案へ利用する
 - 親Agentがエラーを観測しても、施策保存やX投稿などの副作用を自動再実行しない
-- 認証失敗、親Session所有権の検証失敗、安全に解析・マスクできないRequestは保存先または安全な内容を確定できないため、そのRequestをAgent履歴へ保存せずUIへエラーを返す
+- 認証失敗、CSRF検証の失敗、親Session所有権の検証失敗、安全に解析・マスクできないRequestは保存先または安全な内容を確定できないため、そのRequestをAgent履歴へ保存せずUIへエラーを返す
 - `AGENT_SESSION_NOT_FOUND`では、UIが利用可能な親Sessionを再取得し、ユーザーが既存Sessionを選択するか新しい親Sessionを作成した後、マスク済みエラーを新しい`user_message`として送信して親Agentワークフローへ接続する
 
 ```json
@@ -126,16 +127,18 @@ flowchart TD
 7. 親Agentは実際の施策内容を引数に`propose_campaign`を実行する
 8. UIは`propose_campaign`のTool Resultを編集可能なフォームとして表示する
 9. ユーザーは共通レビューを行う
-10. 最終承認時、UIは承認操作用の`Idempotency-Key`とフォーム値を指定して`POST /api/v1/agent-sessions/{session_id}/campaigns`を呼び出す
-11. Request Bodyの`id`が省略または`null`なら新規作成として処理する
-12. `id`に値があれば、同じ会社の既存Campaignを全項目上書きする
-13. APIはCampaign、検索用Embedding、成功API Result、Turn完了、冪等性の成功状態を同一Transactionで保存する
-14. APIは結果を指定親Sessionの同じTurnへ保存する
-15. UIは保存結果をユーザーへ表示する
+10. 最終承認時、UIは承認操作用の`Idempotency-Key`とフォーム値（既存施策の変更では`expected_updated_at`を含む）を指定して`POST /api/v1/agent-sessions/{session_id}/campaigns`を呼び出す
+11. APIは認証、CSRF、親Session所有権、冪等性を検証し、実行権を得たRequestの最終内容を指定親Sessionの新しいTurnへ保存する
+12. APIはRequest Bodyを施策Schemaと業務条件で検証する
+13. Request Bodyの`id`が省略または`null`なら新規作成として処理する
+14. `id`に値があれば、同じ会社の既存Campaignの`updated_at`が`expected_updated_at`と一致する場合だけ、全項目を上書きする
+15. APIはCampaign、検索用Embedding、成功API Result、Turn完了、冪等性の成功状態を同一Transactionで保存する
+16. UIは保存結果をユーザーへ表示する
 
 ### 5.5 完了条件
 - 新規作成ではCampaignとCampaign Embeddingが作成されている
 - 上書きではCampaignと必要なCampaign Embeddingが同期されている
+- 上書きでは、Agentの提案後に別のSessionまたは別のマーケターが施策を更新していた場合に上書きされない
 - 最終RequestとAPI結果が指定親Sessionに保存されている
 - 同じ承認操作が再送されてもCampaignとAgent履歴が重複作成されない
 
@@ -152,7 +155,8 @@ flowchart TD
 | 同一Requestを処理中 | Leaseが有効なら`409 IDEMPOTENCY_REQUEST_IN_PROGRESS`を返し、UIは処理完了後に同じキーで結果を再取得する |
 | Campaign処理のLease切れ | 新しい実行TokenとLeaseをCAS設定し、既存のAPI実行Turnを再利用して安全に再開する |
 | キーの不正再利用 | 異なるRequestまたはSessionでは`409 IDEMPOTENCY_KEY_REUSED`を返し、施策を保存しない |
-| 上書き対象なし | `404 CAMPAIGN_NOT_FOUND`を親Turnへ保存し、指定IDで新規作成せず次回Agentワークフローへ接続する |
+| 上書き対象なし | 存在しない場合も別会社に属する場合も`404 CAMPAIGN_NOT_FOUND`を親Turnへ保存し、指定IDで新規作成せず次回Agentワークフローへ接続する |
+| 上書きの競合 | `expected_updated_at`が現在の`updated_at`と一致しない場合は`409 CAMPAIGN_CONFLICT`を親Turnへ保存し、上書きしない。次回Agentワークフローで親Agentが最新の施策を取得し、新しい提案を作成する。再実行には新しい承認操作と新しいキーを必要とする |
 | Embedding生成失敗 | Campaignを保存せず、構造化エラーを親Turnへ保存して次回Agentワークフローへ接続する |
 | DB保存失敗 | TransactionをRollbackし、構造化エラーを親Turnへ保存して次回Agentワークフローへ接続する |
 
@@ -186,12 +190,15 @@ flowchart TD
     IDEMPOTENCY -- 完了済みの同一Request --> REPLAY([元Responseを表示])
     IDEMPOTENCY -- Lease有効で処理中または不正再利用 --> IDEMPOTENCY_ERROR([409を表示して重複実行しない])
     IDEMPOTENCY -- Lease切れ --> REACQUIRE[新しい実行TokenとLeaseをCAS設定]
-    REACQUIRE --> VALIDATE
-    IDEMPOTENCY -- 新規 --> VALIDATE{Schema・業務条件は正常か}
+    REACQUIRE --> START_TURN
+    IDEMPOTENCY -- 新規 --> START_TURN[API実行Turnを作成または再利用し最終Requestを保存]
+    START_TURN --> VALIDATE{Schema・業務条件は正常か}
     VALIDATE -- いいえ --> SAVE_ERROR[構造化エラーを親Turnへ保存]
     VALIDATE -- はい --> MODE{idがあるか}
     MODE -- いいえ --> CREATE[CampaignとEmbeddingを新規作成]
-    MODE -- はい --> UPDATE[CampaignとEmbeddingを上書き]
+    MODE -- はい --> CONFLICT{updated_atは提案時点と一致するか}
+    CONFLICT -- いいえ --> SAVE_ERROR
+    CONFLICT -- はい --> UPDATE[CampaignとEmbeddingを上書き]
     CREATE --> API_RESULT{保存結果}
     UPDATE --> API_RESULT
     API_RESULT -- 失敗 --> SAVE_ERROR
@@ -227,13 +234,13 @@ flowchart TD
 8. UIは`propose_x_post`のTool Resultを編集可能なフォームとして表示する
 9. ユーザーは共通レビューを行う
 10. 最終承認時、UIは承認操作用の`Idempotency-Key`とフォーム値を指定して`POST /api/v1/agent-sessions/{session_id}/x/posts`を呼び出す
-11. APIは親Session、Campaign所有権、本文、遷移先URLを検証する
-12. APIは投稿検索用EmbeddingとUTM付きURLを生成する
-13. APIはURL結合後の本文がX文字数規則を満たすことを検証する
-14. APIは最終Requestを指定親Sessionの新しいTurnへ保存する
-15. APIはX APIへ投稿する
-16. X投稿成功後、Post、Post Embedding、UTM情報、計測予定、成功API Result、Turn完了、冪等性の成功状態を同一Transactionで保存し、Postから成功Requestを参照する
-17. APIは結果を指定親Sessionの同じTurnへ保存する
+11. APIは認証、CSRF、親Session所有権、冪等性を検証し、実行権を得たRequestの最終内容を指定親Sessionの新しいTurnへ保存する
+12. APIはCampaign所有権、本文、遷移先URLを検証する
+13. APIは投稿検索用EmbeddingとUTM付きURLを生成する
+14. APIはURL結合後の本文がX文字数規則を満たすことを検証する
+15. APIはX API送信直前に外部作用開始日時を保存し、X APIへ投稿する
+16. X投稿成功直後、APIはDB保存より先にX投稿結果（X投稿ID、送信本文、UTM付きURL、公開日時）を冪等性レコードの`external_result`へ保存する
+17. APIはPost、Post Embedding、UTM情報、計測予定、成功API Result、Turn完了、冪等性の成功状態を同一Transactionで保存し、Postから成功Requestを参照する
 18. UIは公開結果をユーザーへ表示する
 
 ### 6.5 完了条件
@@ -242,6 +249,7 @@ flowchart TD
 - 最終RequestとAPI結果が指定親Sessionに保存されている
 - 投稿から1週間後の評価処理が予定されている
 - 同じ承認操作が再送されてもX投稿、Post、Agent履歴が重複作成されない
+- X投稿成功後にDB保存が失敗した場合も、同じキーの再送でDB保存だけが再実行され、Xへ再投稿されない
 - `get_post`と`search_posts`の対象になるのは、成功状態の`publish_x_post` Requestを参照するPostだけである
 
 ### 6.6 代替・エラーフロー
@@ -257,7 +265,7 @@ flowchart TD
 | 同一Requestの再送 | 保存済みResponseを返し、X投稿とAgent Turnを重複作成しない。`outcome_unknown`の手動照合後は解決後の確定Responseを返す |
 | 同一Requestを処理中 | Leaseが有効なら`409 IDEMPOTENCY_REQUEST_IN_PROGRESS`を返し、Xへ重複投稿しない |
 | X送信前のLease切れ | 新しい実行TokenとLeaseをCAS設定し、既存のAPI実行Turnを再利用して安全に再開する |
-| X送信後のLease切れ | 専用の復旧CASで`outcome_unknown`へ変更し、Postを作成せず手動照合へ送る |
+| X送信後のLease切れ | `external_result`が保存済みなら新しい実行TokenとLeaseをCAS設定し、Xを呼ばずDB保存だけを再開する。未保存なら専用の復旧CASで`outcome_unknown`へ変更し、Postを作成せず手動照合へ送る |
 | キーの不正再利用 | 異なるRequestまたはSessionでは`409 IDEMPOTENCY_KEY_REUSED`を返し、Xへ投稿しない |
 | 別キーの同一投稿が未解決 | `409 X_POST_UNRESOLVED`を返し、処理中または結果不明の投稿が解決するまでXへ投稿しない |
 | APIによるCampaign取得失敗 | `404 CAMPAIGN_NOT_FOUND`を親Turnへ保存し、X投稿を行わず次回Agentワークフローへ接続する |
@@ -265,7 +273,8 @@ flowchart TD
 | Embedding生成失敗 | 構造化エラーを親Turnへ保存し、X投稿を行わず次回Agentワークフローへ接続する |
 | X API明確失敗 | `502 X_POST_FAILED`を親Turnへ保存し、Postを保存せず次回Agentワークフローへ接続する |
 | X投稿結果不明 | `504 X_POST_OUTCOME_UNKNOWN`を親Turnへ保存し、Postを保存せず、自動再投稿せずに手動照合へ送る。成功確認後だけ復旧TransactionでPostを作成する |
-| X成功後のDB保存失敗 | `500 X_POST_SAVE_FAILED`を親Turnへ保存し、未完了のPostを残さず、自動再投稿せずに手動照合へ送る |
+| 外部結果の保存失敗 | X API成功後に`external_result`を保存できない場合は、X投稿結果を復旧できないため`504 X_POST_OUTCOME_UNKNOWN`と同様に`outcome_unknown`として保存し、手動照合へ送る |
+| X成功後のDB保存失敗 | Post関連の保存Transactionをロールバックし、`external_result`を保持したまま`processing`に留めてLeaseを即時失効させ、`500 X_POST_SAVE_FAILED`（同じキーで再送可）を返す。この時点では確定Responseを保存せず、API実行Turnも終端にしない。UIは投稿済みであることを表示して同じキーで再送し、再送時はXを呼ばずDB保存だけを再実行して確定Responseを保存する。再送されないまま残った場合は運用スクリプトで検出する |
 
 ```mermaid
 flowchart TD
@@ -299,9 +308,14 @@ flowchart TD
     IDEMPOTENCY -- Lease有効で処理中または不正再利用 --> IDEMPOTENCY_ERROR([409を表示して重複実行しない])
     IDEMPOTENCY -- Lease切れ --> EXTERNAL{X API送信を開始済みか}
     EXTERNAL -- いいえ --> REACQUIRE[新しい実行TokenとLeaseをCAS設定]
-    REACQUIRE --> VALIDATE
-    EXTERNAL -- はい --> SAVE_ERROR
-    IDEMPOTENCY -- 新規 --> UNRESOLVED{別キーの同じ内容が未解決か}
+    REACQUIRE --> START_TURN
+    EXTERNAL -- はい --> RESULT_SAVED{external_resultは保存済みか}
+    RESULT_SAVED -- はい --> REACQUIRE_RESUME[新しい実行TokenとLeaseをCAS設定]
+    REACQUIRE_RESUME --> EMBED_RESUME[保存済み本文からEmbeddingを再生成]
+    EMBED_RESUME --> SAVE
+    RESULT_SAVED -- いいえ --> SAVE_ERROR
+    IDEMPOTENCY -- 新規 --> START_TURN[API実行Turnを作成または再利用し最終Requestを保存]
+    START_TURN --> UNRESOLVED{別キーの同じ内容が未解決か}
     UNRESOLVED -- はい --> SAVE_ERROR
     UNRESOLVED -- いいえ --> VALIDATE{Schema・業務条件は正常か}
     VALIDATE -- いいえ --> SAVE_ERROR[構造化エラーを親Turnへ保存]
@@ -313,9 +327,12 @@ flowchart TD
     XPOST --> RESULT{X投稿結果}
     RESULT -- 明確な失敗 --> SAVE_ERROR
     RESULT -- 結果不明 --> SAVE_ERROR
-    RESULT -- 成功 --> SAVE[Post関連データと成功Request参照を保存]
+    RESULT -- 成功 --> SAVE_EXTERNAL[external_resultを先に保存]
+    SAVE_EXTERNAL --> EXTERNAL_OK{保存成功か}
+    EXTERNAL_OK -- いいえ --> SAVE_ERROR
+    EXTERNAL_OK -- はい --> SAVE[Post関連データと成功Request参照を保存]
     SAVE --> SAVED{DB保存成功か}
-    SAVED -- いいえ --> SAVE_ERROR
+    SAVED -- いいえ --> RETRY_LATER([Leaseを即時失効し500 X_POST_SAVE_FAILED<br/>同じキーで再送しDB保存だけを再実行])
     SAVED -- はい --> AUDIT[成功結果を親Turnへ保存]
     AUDIT --> END_OK([公開結果を表示])
     SAVE_ERROR --> DISPLAY_ERROR[エラーを表示]

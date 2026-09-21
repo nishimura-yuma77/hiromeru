@@ -12,7 +12,7 @@ Project hiromeru {
     - 施策に紐づく投稿は同じ会社に所属しなければならない。
     - 業務データを操作するマーケターは、そのデータを所有する会社に所属しなければならない。
     - 記憶と、それに紐づく施策または投稿は同じ会社に所属しなければならない。
-    - 記憶、施策検索、投稿検索用の埋め込みベクトルは、単一設定されたモデルと次元数を使用して生成する。
+    - 記憶、施策検索、投稿検索用の埋め込みベクトルは、単一設定されたモデルと次元数を使用して生成する。MVPはopenai/text-embedding-3-small（OrcaRouter経由）、1536次元とし、各埋め込み列はvector(1536)、コサイン距離のHNSWインデックス（vector_cosine_ops）をSQL migrationで追加する。
     - 施策と施策検索用の埋め込みベクトルは同じトランザクションで保存・更新し、埋め込み生成に失敗した場合は施策を保存しない。
     - 投稿検索用の埋め込みベクトルはXへの投稿前に生成し、X投稿成功後に投稿と同じトランザクションで保存する。埋め込み生成に失敗した場合はXへ投稿しない。
     - postsにはX公開成功を確認できた投稿だけを保存する。各Postは成功状態へ確定したpublish_x_postのAPI冪等性Requestを一意に参照し、失敗・処理中・結果不明のRequestをget_postとsearch_postsの取得元にしない。
@@ -21,7 +21,7 @@ Project hiromeru {
     - 施策案と未公開投稿案は人間が承認するまでエージェント履歴に保持し、承認後の施策登録・更新とX投稿はLLMを介さずアプリケーションAPIで実行する。
     - 承認APIのPathで指定できるのは、認証済みマーケターが所有する未アーカイブの親エージェントセッションだけとする。最終RequestとAPI結果は、そのセッションに作成した新しいターンへ保存する。
     - 施策upsert APIとX投稿APIは、マーケター、操作種別、Idempotency-Keyの組み合わせで最初のRequestだけを実行する。同じキーによる再送では業務データとエージェント履歴を重複作成しない。
-    - 施策または投稿の業務データ保存、API Result、API実行Turnの完了、冪等性レコードの成功確定は同じトランザクションで行う。X投稿結果を確定できない場合は同じキーで再投稿しない。
+    - 施策または投稿の業務データ保存、API Result、API実行Turnの完了、冪等性レコードの成功確定は同じトランザクションで行う。X投稿結果を確定できない場合は同じキーで再投稿しない。X投稿成功後は、業務データの保存より先にX投稿結果をexternal_resultへ保存し、その後のDB保存が失敗しても同じキーの再送でDB保存だけを再実行する。
     - 公開済み投稿と完了済み監査記録は通常のCRUD操作で削除してはならない。
     - エージェントセッションは順序付けられたターンを持ち、各ターンは順序付けられたアイテムを持つ。アイテムはセッションを直接参照しない。
     - エージェントアイテムの内容は追記後に変更しない。コンテキスト状態のみactiveからquarantinedへ変更できる。
@@ -42,29 +42,10 @@ Project hiromeru {
   '''
 }
 
-Enum user_status {
-  active
-  disabled
-}
-
-Enum campaign_status {
-  draft
-  pending_approval
-  approved
-  rejected
-  archived
-}
-
 Enum post_metric_status {
   pending
   completed
   failed
-}
-
-Enum post_metric_failure_source {
-  x
-  ga4
-  system
 }
 
 Enum agent_type {
@@ -115,7 +96,6 @@ Enum agent_turn_status {
 Enum tool_execution_status {
   pending
   running
-  waiting_for_approval
   completed
   failed
   cancelled
@@ -156,7 +136,7 @@ Enum security_enforcement {
 Table users {
   id bigint [pk, increment, note: '【ユーザーID】']
   email varchar(255) [not null, note: '【メールアドレス】']
-  password varchar(255) [not null, note: '【パスワード】']
+  password varchar(255) [not null, note: '【パスワード】argon2でハッシュ化した値。平文は保存しない。']
   created_at timestamptz [not null, default: `now()`, note: '【作成日時】']
   updated_at timestamptz [not null, default: `now()`, note: '【更新日時】']
 
@@ -213,7 +193,7 @@ Ref: campaigns.created_by_marketer_id > marketers.id [delete: restrict]
 
 Table campaign_embeddings {
   campaign_id bigint [pk, note: '【施策ID】']
-  embedding vector [not null, note: '【施策埋め込みベクトル】ターゲット像、実施背景、施策目的、施策内容を正規化したテキストから生成する。単一の埋め込みモデルと次元数を決定後、vector(n)とHNSWコサイン距離インデックスを設定する。']
+  embedding vector(1536) [not null, note: '【施策埋め込みベクトル】ターゲット像、実施背景、施策目的、施策内容を正規化したテキストから生成する。HNSWコサイン距離インデックス（vector_cosine_ops）をSQL migrationで追加する。']
   content_hash varchar(64) [not null, note: '【埋め込み元ハッシュ】正規化した埋め込み元テキストのSHA-256。内容が変わっていない場合の再生成を防ぐ。']
   created_at timestamptz [not null, default: `now()`, note: '【作成日時】']
   updated_at timestamptz [not null, default: `now()`, note: '【更新日時】']
@@ -253,7 +233,7 @@ Ref: posts.api_idempotency_request_id > api_idempotency_requests.id [delete: res
 
 Table post_embeddings {
   post_id bigint [pk, note: '【投稿ID】']
-  embedding vector [not null, note: '【投稿埋め込みベクトル】投稿本文からURLを除去して正規化したテキストから生成する。単一の埋め込みモデルと次元数を決定後、vector(n)とHNSWコサイン距離インデックスを設定する。']
+  embedding vector(1536) [not null, note: '【投稿埋め込みベクトル】投稿本文からURLを除去して正規化したテキストから生成する。HNSWコサイン距離インデックス（vector_cosine_ops）をSQL migrationで追加する。']
   content_hash varchar(64) [not null, note: '【埋め込み元ハッシュ】URLを除去して正規化した投稿本文のSHA-256。']
   created_at timestamptz [not null, default: `now()`, note: '【作成日時】']
 
@@ -273,13 +253,13 @@ Table post_tracking_links {
   utm_source varchar(255) [not null, default: 'x', note: '【UTM流入元】現状x固定']
   utm_medium varchar(255) [not null, default: 'social', note: '【UTMメディア】現状social固定']
   utm_campaign varchar(255) [not null, note: '【UTMキャンペーン】campaignの一意の識別子']
-  utm_content varchar(255) [not null, note: '【UTMコンテンツ】postの一意の識別子']
+  utm_content varchar(255) [not null, note: '【UTMコンテンツ】publish_x_postのIdempotency-Key（UUID）。UTM付きURLはX投稿前に確定する必要があり、その時点ではpost_idが存在しないため、承認操作ごとの一意なキーを使用する。']
   tracked_url text [not null, note: '【トラッキングURL】UTMパラメータを付与した遷移先URL。']
   created_at timestamptz [not null, default: `now()`, note: '【作成日時】']
   updated_at timestamptz [not null, default: `now()`, note: '【更新日時】']
 
   indexes {
-    (utm_source, utm_medium, utm_campaign, utm_content)
+    (utm_source, utm_medium, utm_campaign, utm_content) [unique]
   }
 
   Note: 'UTM生成は決定論的なアプリケーションロジックとし、LLMを呼び出さない。'
@@ -309,7 +289,7 @@ Table agent_memories {
   id bigint [pk, increment, note: '【エージェント記憶ID】']
   company_id bigint [not null, note: '【会社ID】']
   content text [not null, note: '【記憶内容】']
-  embedding vector [not null, note: '【埋め込みベクトル】記憶内容から生成する。単一の埋め込みモデルと次元数を決定後、vector(n)とHNSWコサイン距離インデックスを設定する。']
+  embedding vector(1536) [not null, note: '【埋め込みベクトル】記憶内容から生成する。HNSWコサイン距離インデックス（vector_cosine_ops）をSQL migrationで追加する。']
 
   indexes {
     company_id
@@ -405,6 +385,7 @@ Table api_idempotency_requests {
   execution_token uuid [not null, note: '【実行Token】実行権取得時にサーバーが生成するFencing Token。最終書き込み時に一致を必須とする。']
   lease_expires_at timestamptz [not null, note: '【実行権期限】processingの実行権を再判定できる日時。']
   external_effect_started_at timestamptz [note: '【外部作用開始日時】publish_x_postでX APIへのRequest送信直前に記録する。NULLなら外部投稿を開始していない。']
+  external_result jsonb [note: '【外部作用結果】publish_x_postでX APIの成功を確認した直後に、業務データの保存より先に独立したTransactionで保存する。x_post_id、X APIへ送信したtext、tracked_url、published_atを含む。NULLならX投稿の成功を確認していない。']
   http_status smallint [note: '【HTTP Status】完了済みResponseのStatus。']
   response_body jsonb [note: '【Response Body】再送時に返すマスク済みの確定Response。']
   created_at timestamptz [not null, default: `now()`, note: '【作成日時】']
@@ -417,7 +398,7 @@ Table api_idempotency_requests {
     (status, lease_expires_at)
   }
 
-  Note: '施策upsert APIとX投稿APIに共通する永続的な冪等性制御。最初のRequestだけがprocessing行の作成に成功して実行権を得る。同じキーの再送ではsession_idとrequest_hashの一致を確認し、完了済みなら保存済みResponseを返す。実行権取得時はexecution_tokenとlease_expires_atを設定し、通常の業務処理を完了する最終Transactionはstatusがprocessing、execution_tokenが一致、かつLeaseが有効な場合だけCommitする。succeeded、failed、outcome_unknownではhttp_status、response_body、completed_atを必須とし、processingではNULLとするCHECK制約を追加する。publish_x_postのexternal_effect_started_atはX API送信直前に設定し、外部作用開始後にLeaseが切れた場合だけ、期限切れと旧Tokenを条件とする専用の復旧Transactionでoutcome_unknown、API Result、元Turn完了を同時に保存する。outcome_unknownからsucceededまたはfailedへの変更と暫定Responseの置換は、外部結果を手動照合した管理処理だけに許可する。postsが参照できるのはoperationがpublish_x_postで、同じTransactionの終了時にsucceededとなるRequestだけとする。通常運用では削除しない。'
+  Note: '施策upsert APIとX投稿APIに共通する永続的な冪等性制御。最初のRequestだけがprocessing行の作成に成功して実行権を得る。同じキーの再送ではsession_idとrequest_hashの一致を確認し、完了済みなら保存済みResponseを返す。実行権取得時はexecution_tokenとlease_expires_atを設定し、通常の業務処理を完了する最終Transactionはstatusがprocessing、execution_tokenが一致、かつLeaseが有効な場合だけCommitする。succeeded、failed、outcome_unknownではhttp_status、response_body、completed_atを必須とし、processingではNULLとするCHECK制約を追加する。publish_x_postのexternal_effect_started_atはX API送信直前に設定し、X API成功直後にexternal_resultを設定する。external_resultの保存後にDB保存が失敗した場合は、processingのままLeaseを即時失効させ、同じキーの再送でexternal_resultを使ってDB保存だけを再実行する。外部作用開始後にLeaseが切れ、かつexternal_resultがNULLの場合だけ、期限切れと旧Tokenを条件とする専用の復旧Transactionでoutcome_unknown、API Result、元Turn完了を同時に保存する。external_resultがNULLでないのはoperationがpublish_x_postでexternal_effect_started_atがNULLでない行だけとするCHECK制約を追加する。outcome_unknownからsucceededまたはfailedへの変更と暫定Responseの置換は、外部結果を手動照合した管理処理だけに許可する。postsが参照できるのはoperationがpublish_x_postで、同じTransactionの終了時にsucceededとなるRequestだけとする。通常運用では削除しない。'
 }
 
 Ref: api_idempotency_requests.marketer_id > marketers.id [delete: restrict]
