@@ -18,13 +18,17 @@ Agentは`propose_campaign`と`propose_x_post`で編集可能な内容を提案�
 - X APIやEmbedding APIの認証情報はサーバー側だけで管理する
 
 ### 2.2 入力検証
-APIはAgent履歴を入力元として参照せず、Request Bodyの最終フォーム値を正本として使用する。各APIは以下を検証する。
+APIはAgent履歴を入力元として参照せず、Request Bodyの最終フォーム値を正本として使用する。履歴保存先を安全に確定するため、最初に以下を検証する。
 
 - Pathの`session_id`が正の整数である
 - Sessionが認証済みマーケターに属する
 - Sessionが`agent = parent`かつ`parent_session_id = null`の親Sessionである
 - Sessionがアーカイブされていない
-- JSONとフィールド型がAPI Schemaに適合する
+- Requestがサイズ上限内で、安全にJSON解析・マスクできる
+
+親Sessionと安全なRequestを確定した後、API実行Turnを作成してマスク済みRequestを保存し、以下のSchema・業務条件を検証する。
+
+- JSONのフィールド型がAPI Schemaに適合する
 - 必須文字列が空ではなく、長さ上限を満たす
 - Request内で既存Campaign IDを参照する場合、そのCampaignが存在し、認証済みマーケターの会社に属する
 - URLが許可されたSchemeと形式を満たす
@@ -34,8 +38,8 @@ APIはAgent履歴を入力元として参照せず、Request Bodyの最終フォ
 
 存在しないSession、他のマーケターが所有するSession、子Session、アーカイブ済みSessionは、存在確認による情報漏えいを防ぐため、すべて`404 AGENT_SESSION_NOT_FOUND`として扱う。会社IDは検証済み親Sessionのマーケターから決定する。
 
-### 2.3 承認監査
-承認ボタンからAPIを呼び出し、認証・親Session所有権・Schema検証に成功した時点で、バックエンドはPathで指定された親Sessionに新しいTurnを作成し、APIが実際に受け取った最終内容を信頼済み`user_message`へ保存する。
+### 2.3 承認監査とAPI Result
+承認ボタンからAPIを呼び出し、認証・親Session所有権・安全なJSON解析に成功した時点で、バックエンドはPathで指定された親Sessionに新しいTurnを作成し、APIが実際に受け取った最終内容をマスクして信頼済み`user_message`へ保存する。
 
 ```json
 {
@@ -51,7 +55,29 @@ APIはAgent履歴を入力元として参照せず、Request Bodyの最終フォ
 }
 ```
 
-監査用内容はSchema検証と機密値のマスク後に保存する。API完了後は、HTTP Status、業務レコードID、外部サービスIDまたはマスク済みエラーを、アプリケーション生成の`assistant_message`として同じTurnへ保存する。API処理に`tool_call`、`tool_result`、`tool_executions`は使用しない。
+APIはSchema検証、業務条件検証、外部API、DB処理の成功またはエラーを構造化`api_result`として同じTurnへ保存する。API処理に`tool_call`、`tool_result`、`tool_executions`は使用しない。
+
+```json
+{
+  "kind": "api_result",
+  "operation": "publish_x_post",
+  "success": false,
+  "error": {
+    "code": "INVALID_X_POST",
+    "message": "投稿本文が文字数上限を超えています。",
+    "retryable": false
+  }
+}
+```
+
+- API Resultは`item_type = assistant_message`、`llm_call_id = NULL`、`content_source = system`、`context_class = conversation`、`context_status = active`で保存する
+- Responseを返す前にAPI Resultを保存し、API実行Turnを終端状態へ変更する
+- エラーResponseの`agent_turn_id`は、API Resultを保存したTurnを示す
+- API Result保存だけでは親Agentを自動起動しない
+- 次のユーザー入力で親Agent Turnを開始した際、通常のContext構築処理がAPI Resultを読み込む
+- 親AgentはAPI Resultを観測して回答や修正提案へ利用できるが、副作用を伴うAPIを自動再実行しない
+- 認証、親Session所有権、安全なJSON解析のいずれかに失敗した場合は安全な保存先または内容を確定できないため、Agent履歴へ保存せずResponseだけを返す
+- `AGENT_SESSION_NOT_FOUND`を受けたUIは、利用可能な親Sessionを選択または作成し、マスク済みエラーを新しいユーザー入力として送信することで親Agentワークフローへ接続する。詳細は`USECASE.md`を参照する
 
 ### 2.4 成功Response
 
@@ -72,10 +98,13 @@ APIはAgent履歴を入力元として参照せず、Request Bodyの最終フォ
   "error": {
     "code": "ERROR_CODE",
     "message": "利用者向けのマスク済み説明",
-    "retryable": false
+    "retryable": false,
+    "agent_turn_id": 1902
   }
 }
 ```
+
+Agent履歴へ保存しない認証・Session・JSON解析エラーでは`agent_turn_id = null`とする。
 
 ### 2.6 HTTP Status
 | Status | 用途 |
@@ -147,30 +176,34 @@ flowchart TD
     AUTH -- 失敗 --> END_AUTH([401または403])
     AUTH -- 成功 --> SESSION{所有する有効な親Sessionか}
     SESSION -- いいえ --> END_SESSION([404 AGENT_SESSION_NOT_FOUND])
-    SESSION -- はい --> VALIDATE{Request Schemaは正常か}
-    VALIDATE -- いいえ --> END_INVALID([400または422])
+    SESSION -- はい --> PARSE{安全に解析・マスクできるか}
+    PARSE -- いいえ --> END_PARSE([400 履歴保存なし])
+    PARSE -- はい --> START_TURN[API実行Turnと最終Requestを保存]
+    START_TURN --> VALIDATE{Request Schemaは正常か}
+    VALIDATE -- いいえ --> SAVE_ERROR[構造化api_resultを保存]
     VALIDATE -- はい --> CAMPAIGN[Campaignを会社単位で取得]
     CAMPAIGN --> OWNED{存在し所有権があるか}
-    OWNED -- いいえ --> END_CAMPAIGN([404])
+    OWNED -- いいえ --> SAVE_ERROR
     OWNED -- はい --> LOCK{同じIdempotency-Keyを処理中か}
-    LOCK -- はい --> END_CONFLICT([409])
+    LOCK -- はい --> SAVE_ERROR
     LOCK -- いいえ --> EMBED[URL除去本文からEmbeddingを生成]
     EMBED --> EMBED_OK{生成成功か}
-    EMBED_OK -- いいえ --> END_EMBED([500 EMBEDDING_FAILED])
+    EMBED_OK -- いいえ --> SAVE_ERROR
     EMBED_OK -- はい --> UTM[UTM付きURLとX投稿本文を生成]
     UTM --> LENGTH{X文字数規則を満たすか}
-    LENGTH -- いいえ --> END_LENGTH([422 INVALID_X_POST])
-    LENGTH -- はい --> AUDIT[最終RequestをAgent履歴へ保存]
-    AUDIT --> XPOST[X API POST /2/tweets]
+    LENGTH -- いいえ --> SAVE_ERROR
+    LENGTH -- はい --> XPOST[X API POST /2/tweets]
     XPOST --> XRESULT{X投稿結果}
-    XRESULT -- 明確な失敗 --> END_X_FAILED([502 X_POST_FAILED])
-    XRESULT -- 結果不明 --> END_UNKNOWN([504 X_POST_OUTCOME_UNKNOWN])
+    XRESULT -- 明確な失敗 --> SAVE_ERROR
+    XRESULT -- 結果不明 --> SAVE_ERROR
     XRESULT -- 成功 --> TRANSACTION[DB Transaction開始]
     TRANSACTION --> SAVE[Post・Embedding・UTM・計測予定を保存]
     SAVE --> SAVED{保存成功か}
-    SAVED -- いいえ --> END_SAVE_FAILED([500 X_POST_SAVE_FAILED])
-    SAVED -- はい --> SAVE_RESULT[成功結果をAgent履歴へ保存]
-    SAVE_RESULT --> END_CREATED([201 Created])
+    SAVED -- いいえ --> SAVE_ERROR
+    SAVED -- はい --> SAVE_SUCCESS[成功api_resultを保存]
+    SAVE_ERROR --> COMPLETE_ERROR[Turnを完了してエラーResponse]
+    SAVE_SUCCESS --> COMPLETE_SUCCESS[Turnを完了して201 Response]
+    COMPLETE_ERROR -. 次回Contextへ読込 .-> NEXT_AGENT([次回の親Agentワークフロー])
 ```
 
 #### X API Request
@@ -284,6 +317,7 @@ Request Bodyの`id`が省略または`null`なら新規作成し、値があれ�
 
 #### 処理
 - Pathの`session_id`から、認証済みマーケターが所有する有効な親Sessionを取得する
+- Requestを安全に解析・マスクした後、指定親SessionにAPI実行Turnを作成して最終Requestを保存する
 - Request Bodyを施策Schemaで検証する
 - `id`が省略または`null`の場合は新規作成として処理する
 - `id`に値がある場合は認証済みマーケターの会社単位でCampaignを取得し、存在しなければ`404`を返す
@@ -294,7 +328,9 @@ Request Bodyの`id`が省略または`null`なら新規作成し、値があれ�
 - 上書きでは検索対象内容の`content_hash`が変わった場合だけEmbeddingを再生成する
 - CampaignとEmbeddingを同一Transactionで保存または更新する
 - 上書き時は`updated_at`を処理完了時刻へ変更する
-- 成功またはマスク済みエラーを同じ親Turnへ保存する
+- Schema、業務条件、Embedding、DB処理の成功またはマスク済みエラーを`api_result`として同じ親Turnへ保存する
+- API Result保存後にTurnを完了し、Responseを返す
+- 保存したエラーは次回の親Agent TurnでContextへ読み込むが、親Agentを自動起動しない
 
 #### 主なエラー
 `INVALID_ARGUMENT`、`AGENT_SESSION_NOT_FOUND`、`CAMPAIGN_NOT_FOUND`、`CAMPAIGN_ACCESS_DENIED`、`INVALID_CAMPAIGN`、`EMBEDDING_FAILED`、`CAMPAIGN_SAVE_FAILED`、`CAMPAIGN_UPDATE_FAILED`。
@@ -320,17 +356,27 @@ sequenceDiagram
         A-->>UI: 新しい提案Tool Result
     else 最終承認
         UI->>API: 親Session IDと現在のフォーム値を送信
-        API->>API: 認証・親Session所有権・Schema検証
-        API->>H: 指定親Sessionへ最終Requestを保存
-        alt 施策のupsert
-            API->>DB: CampaignとEmbeddingを保存
-        else X投稿
-            API->>X: 投稿
-            X-->>API: X投稿ID
-            API->>DB: Post関連データを保存
+        API->>API: 認証・親Session所有権・安全な解析
+        alt 信頼できる親Sessionを確定できない
+            API-->>UI: 履歴へ保存せずエラーResponse
+        else API実行Turnを作成
+            API->>H: 指定親Sessionへ最終Requestを保存
+            alt 施策のupsert
+                API->>DB: CampaignとEmbeddingを保存
+            else X投稿
+                API->>X: 投稿
+                X-->>API: X投稿IDまたはエラー
+                API->>DB: 成功時だけPost関連データを保存
+            end
+            alt API処理成功
+                API->>H: 成功api_resultを同じ親Turnへ保存
+                API-->>UI: 成功Response
+            else API処理失敗
+                API->>H: エラーapi_resultを同じ親Turnへ保存
+                API-->>UI: エラーResponse
+                Note over A,H: 次回親TurnのContextへapi_resultを含める
+            end
         end
-        API->>H: 同じ親Turnへ成功またはエラー結果を保存
-        API-->>UI: HTTP Response
     end
 ```
 

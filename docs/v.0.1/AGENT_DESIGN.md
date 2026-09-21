@@ -585,6 +585,53 @@ flowchart TD
 - 施策upsert APIの上書きでは正規化した検索用テキストのSHA-256を`content_hash`と比較し、内容が変わった場合だけEmbeddingを再生成する
 - Embedding生成に失敗した場合は施策upsert APIを失敗させ、施策だけが検索対象から欠落する状態を作らない
 
+## アプリケーションAPI結果の観測
+施策upsert APIとX投稿APIは、認証と親Session所有権を検証できた後の成功結果またはエラーを、指定親SessionのAPI実行Turnへ構造化`api_result`として保存する。API ResultはAgent Tool Resultではないため、アプリケーション生成の`assistant_message`を使用する。
+
+```json
+{
+  "kind": "api_result",
+  "operation": "publish_x_post",
+  "success": false,
+  "error": {
+    "code": "INVALID_X_POST",
+    "message": "投稿本文が文字数上限を超えています。",
+    "retryable": false
+  }
+}
+```
+
+- `item_type = assistant_message`とする
+- `llm_call_id = NULL`とする
+- `content_source = system`とする
+- `context_class = conversation`とする
+- `context_status = active`とする
+- API Result保存後にAPI実行Turnを終端状態へ変更する
+- API Resultの保存だけではLLMや親Agentを自動起動しない
+- 次のユーザー入力で開始する親TurnのContext構築時に、他の完了Turnと同じ経路でAPI Resultを読み込む
+- 親Agentは`operation`、`success`、エラーコード、マスク済み説明、再試行可否を観測して回答や修正提案へ利用する
+- 親Agentがエラーを観測しても、施策保存やX投稿を自動再実行しない
+- `X_POST_OUTCOME_UNKNOWN`と`X_POST_SAVE_FAILED`は、外部投稿の状態確認なしに再投稿しない
+- 認証または親Session所有権を検証できない場合は安全な保存先がないため、そのRequestのAPI ResultをAgent履歴へ保存しない
+- `AGENT_SESSION_NOT_FOUND`では、UIが利用可能な親Sessionを選択または作成し、マスク済みエラーを新しい`user_message`として送信した後に親Agentワークフローを開始する
+
+```mermaid
+flowchart TD
+    API_ERROR[APIエラー発生] --> TRUSTED{親Sessionを検証済みか}
+    TRUSTED -- いいえ --> UI_ONLY[履歴へ保存せずUIへ返す]
+    UI_ONLY --> RECOVER[有効な親Sessionを選択または作成]
+    RECOVER --> FORWARD[マスク済みエラーをuser_messageへ保存]
+    FORWARD --> LOOP
+    TRUSTED -- はい --> SAVE[api_resultを親Sessionへ保存]
+    SAVE --> COMPLETE[API実行Turnを完了]
+    COMPLETE --> UI[UIへエラーを表示]
+    UI --> WAIT[次のユーザー入力を待つ]
+    WAIT --> TURN[親Agent Turn開始]
+    TURN --> HISTORY[完了Turnの履歴を取得]
+    HISTORY --> CONTEXT[api_resultをContextへ追加]
+    CONTEXT --> LOOP([親Agentワークフローを実行])
+```
+
 ## セッション設計
 - 1マーケターにつき複数持ち、新しいセッションを開くことができる
 - サブエージェントは親エージェントを介してのみ呼び出すことができ、ユーザーが直接呼び出すことはできない
