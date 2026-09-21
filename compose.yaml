@@ -46,6 +46,9 @@ services:
     environment:
       DATABASE_URL: postgresql+psycopg://app:app@db:5432/app
       DATABASE_URL_UNPOOLED: postgresql+psycopg://app:app@db:5432/app
+      # ローカルはHTTPのため、Cookieの Secure 属性を付けない。署名鍵は開発用の既定値を使う。
+      COOKIE_SECURE: "false"
+      ALLOWED_ORIGINS: http://localhost:3000
     depends_on:
       migrate:
         condition: service_completed_successfully

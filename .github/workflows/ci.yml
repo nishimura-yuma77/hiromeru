@@ -59,5 +59,9 @@ jobs:
           cache: pip
           cache-dependency-path: backend/requirements*.txt
       - run: pip install -r requirements-dev.txt
+      - run: ruff format --check .
+      - run: ruff check .
+      - run: pyright
       - run: alembic upgrade head
+      - run: alembic check
       - run: pytest

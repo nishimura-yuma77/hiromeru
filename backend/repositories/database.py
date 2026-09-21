@@ -1,3 +1,5 @@
+"""DB接続。アプリケーション側では接続をプールしない（BE_STD 17.2）。"""
+
 from collections.abc import AsyncGenerator
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
@@ -17,5 +19,6 @@ SessionLocal = async_sessionmaker(bind=engine, expire_on_commit=False)
 
 
 async def get_db() -> AsyncGenerator[AsyncSession, None]:
+    """Request単位のDBセッションを返す（運用向けエンドポイント用）。"""
     async with SessionLocal() as session:
         yield session

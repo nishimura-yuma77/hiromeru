@@ -6,5 +6,5 @@
     "**/__pycache__",
     "**/.*"
   ],
-  "extraPaths": ["backend"]
+  "extraPaths": ["backend", "backend/scripts"]
 }
