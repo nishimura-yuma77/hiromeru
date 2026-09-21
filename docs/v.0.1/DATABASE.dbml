@@ -1,86 +1,58 @@
 Project hiromeru {
   database_type: 'PostgreSQL'
   Note: '''
-    MVP database schema for the AI-assisted X marketing system.
+    AI支援型XマーケティングシステムのMVPデータベーススキーマ。
 
-    PostgreSQL extensions:
-    - vector: long-term memory embeddings
+    PostgreSQL拡張:
+    - vector: 長期記憶、施策、投稿の検索用埋め込みベクトル
 
-    Application invariants that DBML cannot fully express:
-    - Editing an approved campaign or post increments its revision and requires approval again.
-    - Companies own business data, while marketers are the actors operating on that data.
-    - A post linked to a campaign must belong to the same company.
-    - A marketer acting on business data must belong to the company that owns the data.
-    - A memory and its related campaigns or posts must belong to the same company.
-    - Memory embeddings are generated only from content with the single configured embedding model and dimensions.
-    - Child records such as post metrics, agent turns, agent items, tool executions, and LLM calls inherit company ownership from their required parent.
-    - Only an approved post revision may be published to X.
-    - Agent-generated campaign proposals remain in agent history until human approval; the approved campaign is then persisted as business data.
-    - Published posts and completed audit records must not be deleted by normal CRUD operations.
-    - An agent session contains ordered turns, and each turn contains ordered items. Items do not directly reference sessions.
-    - Agent item content is append-only. Only context status may transition from active to quarantined.
-    - Effective provider context uses content for active items and context_override for quarantined items. Sensitive values must be redacted before they are written.
-    - Raw reasoning and hidden chain-of-thought are not stored in agent items.
-    - Subagents are invoked as tools. Their resumable task IDs are stored in the tool call and result content, while parent_session_id retains the session hierarchy.
-    - Context checkpoints are created only at completed turn boundaries. Reconstruction uses the latest valid checkpoint followed by later turns.
-    - Quarantining an item invalidates every checkpoint whose compacted turn range contains that item.
-    - A turn is sealed when it enters a terminal status. No items, tool executions for its tool-call items, or LLM calls may be added afterward.
-    - Turn step and cost limits are application configuration. Used steps and cost are derived from related LLM calls; limit termination is recorded in the turn error code.
-    - Each tool execution belongs to exactly one tool_call item, and each tool_result item references its tool_call item in the same turn.
-    - External content remains classified as untrusted data even after passing guardrail checks.
-    - Security events are audit records only. Agent item context status is the source of truth for context inclusion.
-    - Security events record findings that require observation or enforcement; successful Guardrail and Agent Firewall checks are not duplicated.
-    - JSONB content schemas and tool-specific input and output schemas are validated by the application before insertion.
-    - Forgetting a memory permanently deletes its content and embedding.
-    - CHECK constraints described in notes must be added in SQL migrations.
+    DBMLでは完全に表現できないアプリケーション不変条件:
+    - 提案Tool Resultは変更せず、UIフォームの中間編集は保存しない。Agentへの再相談内容とAPIが受け取った最終フォーム値をエージェント履歴へ追記する。
+    - 会社は業務データを所有し、マーケターはそのデータを操作する主体となる。
+    - 施策に紐づく投稿は同じ会社に所属しなければならない。
+    - 業務データを操作するマーケターは、そのデータを所有する会社に所属しなければならない。
+    - 記憶と、それに紐づく施策または投稿は同じ会社に所属しなければならない。
+    - 記憶、施策検索、投稿検索用の埋め込みベクトルは、単一設定されたモデルと次元数を使用して生成する。MVPはopenai/text-embedding-3-small（OrcaRouter経由）、1536次元とし、各埋め込み列はvector(1536)、コサイン距離のHNSWインデックス（vector_cosine_ops）をSQL migrationで追加する。
+    - 施策と施策検索用の埋め込みベクトルは同じトランザクションで保存・更新し、埋め込み生成に失敗した場合は施策を保存しない。
+    - 投稿検索用の埋め込みベクトルはXへの投稿前に生成し、X投稿成功後に投稿と同じトランザクションで保存する。埋め込み生成に失敗した場合はXへ投稿しない。
+    - postsにはX公開成功を確認できた投稿だけを保存する。各Postは成功状態へ確定したpublish_x_postのAPI冪等性Requestを一意に参照し、失敗・処理中・結果不明のRequestをget_postとsearch_postsの取得元にしない。
+    - 投稿計測、エージェントターン、エージェントアイテム、ツール実行、LLM呼び出しなどの子レコードは、必須の親レコードから会社所有権を継承する。
+    - Xへ公開できるのは、認証済みUIの承認・公開ボタンから最終フォーム値をX投稿APIへ送信し、認証、会社所有権、入力Schemaを検証できた投稿だけとする。
+    - 施策案と未公開投稿案は人間が承認するまでエージェント履歴に保持し、承認後の施策登録・更新とX投稿はLLMを介さずアプリケーションAPIで実行する。
+    - 承認APIのPathで指定できるのは、認証済みマーケターが所有する未アーカイブの親エージェントセッションだけとする。最終RequestとAPI結果は、そのセッションに作成した新しいターンへ保存する。
+    - 施策upsert APIとX投稿APIは、マーケター、操作種別、Idempotency-Keyの組み合わせで最初のRequestだけを実行する。同じキーによる再送では業務データとエージェント履歴を重複作成しない。
+    - 施策または投稿の業務データ保存、API Result、API実行Turnの完了、冪等性レコードの成功確定は同じトランザクションで行う。X投稿結果を確定できない場合は同じキーで再投稿しない。X投稿成功後は、業務データの保存より先にX投稿結果をexternal_resultへ保存し、その後のDB保存が失敗しても同じキーの再送でDB保存だけを再実行する。
+    - 公開済み投稿と完了済み監査記録は通常のCRUD操作で削除してはならない。
+    - エージェントセッションは順序付けられたターンを持ち、各ターンは順序付けられたアイテムを持つ。アイテムはセッションを直接参照しない。
+    - エージェントアイテムの内容は追記後に変更しない。コンテキスト状態のみactiveからquarantinedへ変更できる。
+    - LLMへ渡す有効なコンテキストは、activeなアイテムではcontent、quarantinedなアイテムではcontext_overrideを使用する。機密値は保存前にマスクする。
+    - 生の推論内容と非公開のChain of Thoughtはエージェントアイテムへ保存しない。
+    - サブエージェントはツールとして呼び出す。再開可能なタスクIDはTool CallとTool Resultの内容へ保存し、parent_session_idでセッション階層を保持する。
+    - コンテキストチェックポイントは完了済みターンの境界でのみ作成する。再構築時は最新の有効なチェックポイントと、それより後のターンを使用する。
+    - アイテムを隔離した場合、そのアイテムを要約範囲に含むすべてのチェックポイントを無効化する。
+    - ターンが終端状態になった時点で書き込みを終了し、それ以降はアイテム、そのTool Callに対するツール実行、LLM呼び出しを追加しない。
+    - ターンのステップ上限、コスト上限、経過時間の上限はアプリケーション設定とする。経過時間の上限は関数の最大実行時間（300秒）より短い値とし、ターンのstarted_atから計測する。使用回数とコストは関連するLLM呼び出しから算出し、上限到達による終了はターンのエラーコードへ記録する。
+    - 関数の強制終了などで中断され、pendingまたはrunningのまま残ったターンは、開始日時（未開始ならcreated_at）から復旧判定時間（関数の最大実行時間に余裕を加えた値）が経過した時点で、failed（error_code=TURN_INTERRUPTED）へ更新する。更新はstatusを条件とする条件付きUPDATEで行い、更新後のターンへは書き込まない。api_idempotency_requestsから参照されるAPI実行ターンは対象外とし、冪等性のLeaseと復旧処理に従う。
+    - 各ツール実行は1つのtool_callアイテムに所属し、各tool_resultアイテムは同じターンのtool_callアイテムを参照する。
+    - 外部コンテンツはGuardrail検査を通過した後もuntrusted_dataとして扱う。
+    - セキュリティイベントは監査記録専用とし、コンテキストへ含めるかどうかの正本はエージェントアイテムのコンテキスト状態とする。
+    - セキュリティイベントには観測または制御が必要な検出結果だけを記録し、成功したGuardrail検査とAgent Firewall検査は重複記録しない。
+    - JSONB内容スキーマとツール固有の入出力スキーマは、保存前にアプリケーションで検証する。
+    - 記憶を忘却する場合は、その内容と埋め込みベクトルを完全に削除する。
+    - Noteに記載したCHECK制約はSQL migrationで追加する。
   '''
-}
-
-Enum user_status {
-  active
-  disabled
-}
-
-Enum campaign_status {
-  draft
-  pending_approval
-  approved
-  rejected
-  archived
-}
-
-Enum post_status {
-  draft
-  pending_approval
-  approved
-  publishing
-  published
-  publish_failed
-  archived
 }
 
 Enum post_metric_status {
   pending
-  processing
   completed
   failed
-}
-
-Enum post_metric_failure_source {
-  x
-  ga4
-  system
 }
 
 Enum agent_type {
   parent
   campaign_planner
   content_creator
-}
-
-Enum agent_session_status {
-  active
-  archived
 }
 
 Enum agent_item_type {
@@ -125,11 +97,22 @@ Enum agent_turn_status {
 Enum tool_execution_status {
   pending
   running
-  waiting_for_approval
   completed
   failed
   cancelled
   blocked
+}
+
+Enum api_operation {
+  upsert_campaign
+  publish_x_post
+}
+
+Enum api_idempotency_status {
+  processing
+  succeeded
+  failed
+  outcome_unknown
 }
 
 Enum security_event_type {
@@ -152,69 +135,56 @@ Enum security_enforcement {
 }
 
 Table users {
-  id bigint [pk, increment]
-  email varchar(320) [not null]
-  auth_provider varchar(100) [not null]
-  auth_subject varchar(255) [not null, note: 'The immutable user ID issued by the authentication provider.']
-  status user_status [not null, default: 'active']
-  last_signed_in_at timestamptz
-  created_at timestamptz [not null, default: `now()`]
-  updated_at timestamptz [not null, default: `now()`]
+  id bigint [pk, increment, note: '【ユーザーID】']
+  email varchar(255) [not null, note: '【メールアドレス】']
+  password varchar(255) [not null, note: '【パスワード】argon2でハッシュ化した値。平文は保存しない。']
+  created_at timestamptz [not null, default: `now()`, note: '【作成日時】']
+  updated_at timestamptz [not null, default: `now()`, note: '【更新日時】']
 
   indexes {
     email [unique]
-    (auth_provider, auth_subject) [unique]
   }
 
-  Note: 'Authentication identities only. Business actions are performed by marketers.'
+  Note: '認証主体だけを管理する。業務操作はマーケターが行う。'
 }
 
 Table companies {
-  id bigint [pk, increment]
-  name varchar(255) [not null]
-  created_at timestamptz [not null, default: `now()`]
-  updated_at timestamptz [not null, default: `now()`]
+  id bigint [pk, increment, note: '【会社ID】']
+  name varchar(255) [not null, note: '【会社名】']
+  created_at timestamptz [not null, default: `now()`, note: '【作成日時】']
+  updated_at timestamptz [not null, default: `now()`, note: '【更新日時】']
 
-  Note: 'The owner of campaign-related and operational business data.'
+  Note: '施策関連データと業務データの所有主体。'
 }
 
 Table marketers {
-  id bigint [pk, increment]
-  user_id bigint [not null, unique]
-  company_id bigint [not null, unique]
-  created_at timestamptz [not null, default: `now()`]
-  updated_at timestamptz [not null, default: `now()`]
+  id bigint [pk, increment, note: '【マーケターID】']
+  user_id bigint [not null, unique, note: '【ユーザーID】']
+  name varchar(255) [not null, note: '【個人名】']
+  company_id bigint [not null, unique, note: '【会社ID】']
+  created_at timestamptz [not null, default: `now()`, note: '【作成日時】']
+  updated_at timestamptz [not null, default: `now()`, note: '【更新日時】']
 
-  indexes {
-    (id, company_id) [unique]
-  }
-
-  Note: 'The business actor for all current product features. Each user and company has at most one marketer profile in the MVP.'
+  Note: '現行機能における業務操作主体。MVPでは各ユーザーと各会社に紐づくマーケタープロファイルは最大1件とする。'
 }
 
 Ref: marketers.user_id > users.id [delete: restrict]
 Ref: marketers.company_id > companies.id [delete: restrict]
 
 Table campaigns {
-  id bigint [pk, increment]
-  company_id bigint [not null]
-  created_by_marketer_id bigint [not null]
-  title varchar(255) [not null]
-  target_profile text [not null, note: 'The attributes, context, challenges, and motivations of the people this campaign aims to reach.']
-  background text [not null]
-  objective text [not null]
-  plan text [not null, note: 'The approved or proposed marketing strategy and execution details.']
-  status campaign_status [not null, default: 'draft']
-  revision int [not null, default: 1, note: 'Must be greater than zero and increment whenever approval-relevant content changes.']
-  approved_revision int [note: 'Must equal revision while status is approved.']
-  submitted_at timestamptz
-  approved_at timestamptz
-  created_at timestamptz [not null, default: `now()`]
-  updated_at timestamptz [not null, default: `now()`]
-  archived_at timestamptz
+  id bigint [pk, increment, note: '【施策ID】']
+  company_id bigint [not null, note: '【会社ID】']
+  created_by_marketer_id bigint [not null, note: '【作成者マーケターID】']
+  title varchar(255) [not null, note: '【施策タイトル】']
+  target_profile text [not null, note: '【ターゲット像】施策でリーチする対象者の属性、状況、課題、動機。']
+  background text [not null, note: '【実施背景】']
+  objective text [not null, note: '【施策目的】']
+  plan text [not null, note: '【施策内容】承認済みのマーケティング戦略と実行内容。提案中の内容はエージェント履歴へ保持する。']
+  created_at timestamptz [not null, default: `now()`, note: '【作成日時】']
+  updated_at timestamptz [not null, default: `now()`, note: '【更新日時】']
+  archived_at timestamptz [note: '【アーカイブ日時】']
 
   indexes {
-    (company_id, status)
     (company_id, created_at)
   }
 }
@@ -222,111 +192,118 @@ Table campaigns {
 Ref: campaigns.company_id > companies.id [delete: restrict]
 Ref: campaigns.created_by_marketer_id > marketers.id [delete: restrict]
 
-Table posts {
-  id bigint [pk, increment]
-  company_id bigint [not null]
-  created_by_marketer_id bigint [not null]
-  campaign_id bigint [not null]
-  body text [not null, note: 'The application must validate the current X text length rules.']
-  status post_status [not null, default: 'draft']
-  revision int [not null, default: 1, note: 'Must be greater than zero and increment whenever the body or destination changes.']
-  approved_revision int [note: 'Must equal revision before publishing.']
-  scheduled_at timestamptz
-  approved_at timestamptz
-  published_at timestamptz
-  x_post_id varchar(255) [unique]
-  last_publish_error text [note: 'Sanitized error only; credentials and tokens must never be stored.']
-  created_at timestamptz [not null, default: `now()`]
-  updated_at timestamptz [not null, default: `now()`]
-  archived_at timestamptz
+Table campaign_embeddings {
+  campaign_id bigint [pk, note: '【施策ID】']
+  embedding vector(1536) [not null, note: '【施策埋め込みベクトル】ターゲット像、実施背景、施策目的、施策内容を正規化したテキストから生成する。HNSWコサイン距離インデックス（vector_cosine_ops）をSQL migrationで追加する。']
+  content_hash varchar(64) [not null, note: '【埋め込み元ハッシュ】正規化した埋め込み元テキストのSHA-256。内容が変わっていない場合の再生成を防ぐ。']
+  created_at timestamptz [not null, default: `now()`, note: '【作成日時】']
+  updated_at timestamptz [not null, default: `now()`, note: '【更新日時】']
 
   indexes {
-    (company_id, status)
-    (campaign_id, status)
-    (status, scheduled_at)
+    content_hash
   }
+
+  Note: '施策の意味検索に使用する1対1の検索Projection。施策のタイトルは埋め込み元に含めない。埋め込みを生成してからDBトランザクションを開始し、施策と本レコードを同じトランザクションで保存・更新する。'
+}
+
+Ref: campaign_embeddings.campaign_id > campaigns.id [delete: cascade]
+
+Table posts {
+  id bigint [pk, increment, note: '【投稿ID】']
+  company_id bigint [not null, note: '【会社ID】']
+  created_by_marketer_id bigint [not null, note: '【作成者マーケターID】']
+  campaign_id bigint [not null, note: '【施策ID】']
+  api_idempotency_request_id bigint [not null, unique, note: '【API冪等性Request ID】X公開成功を確定したpublish_x_post Request。']
+  body text [not null, note: '【投稿本文】現行のXテキスト文字数規則をアプリケーションで検証する。']
+  x_post_id varchar(255) [not null, unique, note: '【X投稿ID】']
+  published_at timestamptz [not null, note: '【X公開日時】通常処理ではX公開成功を確認した日時、手動照合ではXから確認した実際の公開日時。']
+  created_at timestamptz [not null, default: `now()`, note: '【作成日時】']
+  updated_at timestamptz [not null, default: `now()`, note: '【更新日時】']
+
+  indexes {
+    (company_id, published_at)
+  }
+
+  Note: 'X公開成功を確認した投稿だけを保存する。api_idempotency_request_idの参照先はpublish_x_postかつTransaction終了時にsucceededであることをアプリケーションで保証する。failed、processing、outcome_unknownの投稿試行は本テーブルへ保存しない。'
 }
 
 Ref: posts.company_id > companies.id [delete: restrict]
 Ref: posts.created_by_marketer_id > marketers.id [delete: restrict]
 Ref: posts.campaign_id > campaigns.id [delete: restrict]
+Ref: posts.api_idempotency_request_id > api_idempotency_requests.id [delete: restrict]
 
-Table post_tracking_links {
-  id bigint [pk, increment]
-  post_id bigint [not null, unique]
-  landing_url text [not null]
-  utm_source varchar(255) [not null, default: 'x']
-  utm_medium varchar(255) [not null, default: 'social']
-  utm_campaign varchar(255) [not null]
-  utm_content varchar(255) [not null]
-  utm_term varchar(255)
-  tracked_url text [not null]
-  created_at timestamptz [not null, default: `now()`]
-  updated_at timestamptz [not null, default: `now()`]
+Table post_embeddings {
+  post_id bigint [pk, note: '【投稿ID】']
+  embedding vector(1536) [not null, note: '【投稿埋め込みベクトル】投稿本文からURLを除去して正規化したテキストから生成する。HNSWコサイン距離インデックス（vector_cosine_ops）をSQL migrationで追加する。']
+  content_hash varchar(64) [not null, note: '【埋め込み元ハッシュ】URLを除去して正規化した投稿本文のSHA-256。']
+  created_at timestamptz [not null, default: `now()`, note: '【作成日時】']
 
   indexes {
-    (utm_source, utm_medium, utm_campaign, utm_content)
+    content_hash
   }
 
-  Note: 'UTM generation is deterministic application logic and must not invoke an LLM.'
+  Note: '公開済み投稿の意味検索に使用する1対1の検索Projection。EmbeddingはXへの投稿前に生成し、X投稿成功後にposts、post_tracking_links、post_metricsと同じDBトランザクションで保存する。公開済み投稿本文はMVPでは更新しない。'
+}
+
+Ref: post_embeddings.post_id > posts.id [delete: cascade]
+
+Table post_tracking_links {
+  id bigint [pk, increment, note: '【トラッキングリンクID】']
+  post_id bigint [not null, unique, note: '【投稿ID】']
+  landing_url text [not null, note: '【遷移先URL】']
+  utm_source varchar(255) [not null, default: 'x', note: '【UTM流入元】現状x固定']
+  utm_medium varchar(255) [not null, default: 'social', note: '【UTMメディア】現状social固定']
+  utm_campaign varchar(255) [not null, note: '【UTMキャンペーン】campaignの一意の識別子']
+  utm_content varchar(255) [not null, note: '【UTMコンテンツ】publish_x_postのIdempotency-Key（UUID）。UTM付きURLはX投稿前に確定する必要があり、その時点ではpost_idが存在しないため、承認操作ごとの一意なキーを使用する。']
+  tracked_url text [not null, note: '【トラッキングURL】UTMパラメータを付与した遷移先URL。']
+  created_at timestamptz [not null, default: `now()`, note: '【作成日時】']
+  updated_at timestamptz [not null, default: `now()`, note: '【更新日時】']
+
+  indexes {
+    (utm_source, utm_medium, utm_campaign, utm_content) [unique]
+  }
+
+  Note: 'UTM生成は決定論的なアプリケーションロジックとし、LLMを呼び出さない。'
 }
 
 Ref: post_tracking_links.post_id > posts.id [delete: cascade]
 
 Table post_metrics {
-  post_id bigint [pk]
-  scheduled_at timestamptz [not null, note: 'The first-week measurement is scheduled for seven days after publication.']
-  status post_metric_status [not null, default: 'pending']
-  x_pv_count bigint [note: 'First-week X post view count; must be zero or greater.']
-  landing_user_count bigint [note: 'Users reaching the application page through this post; must be zero or greater.']
-  measured_at timestamptz
+  post_id bigint [pk, note: '【投稿ID】']
+  scheduled_at timestamptz [not null, note: '【計測予定日時】公開から7日後に初週計測を予定する。']
+  status post_metric_status [not null, default: 'pending', note: '【計測ステータス】']
+  x_pv_count bigint [note: '【X投稿PV数】初週の表示回数。0以上とする。']
+  landing_user_count bigint [note: '【遷移ユーザー数】この投稿からアプリケーションページへ到達したユーザー数。0以上とする。']
+  measured_at timestamptz [note: '【計測日時】']
 
   indexes {
     (status, scheduled_at)
   }
 
-  Note: 'The post primary key makes metric collection idempotent. Both counts and measured_at must be present when status is completed.'
+  Note: '投稿IDを主キーとして計測処理を冪等にする。計測ステータスがcompletedの場合は、両方の計測値と計測日時を必須とする。'
 }
 
 Ref: post_metrics.post_id > posts.id [delete: restrict]
 
-Table post_metric_failures {
-  id bigint [pk, increment]
-  post_id bigint [not null]
-  source post_metric_failure_source [not null]
-  error_code varchar(100)
-  error_message text [not null, note: 'Sanitized error only; credentials and tokens must never be stored.']
-  retryable boolean [not null]
-  failed_at timestamptz [not null, default: `now()`]
-
-  indexes {
-    (post_id, failed_at)
-    (retryable, failed_at)
-  }
-
-  Note: 'Each failed metric collection attempt is retained. Retry limits are evaluated from this history.'
-}
-
-Ref: post_metric_failures.post_id > post_metrics.post_id [delete: cascade]
 
 Table agent_memories {
-  id bigint [pk, increment]
-  company_id bigint [not null]
-  content text [not null]
-  embedding vector [not null, note: 'The vector generated from content. Set to vector(n) and add an HNSW cosine index after selecting the single embedding model and dimensions.']
+  id bigint [pk, increment, note: '【エージェント記憶ID】']
+  company_id bigint [not null, note: '【会社ID】']
+  content text [not null, note: '【記憶内容】']
+  embedding vector(1536) [not null, note: '【埋め込みベクトル】記憶内容から生成する。HNSWコサイン距離インデックス（vector_cosine_ops）をSQL migrationで追加する。']
 
   indexes {
     company_id
   }
 
-  Note: 'Company-level long-term memory. A memory may exist without any campaign or post relation.'
+  Note: '会社単位の長期記憶。施策または投稿との関連がなくても保持できる。'
 }
 
 Ref: agent_memories.company_id > companies.id [delete: restrict]
 
 Table memory_campaigns {
-  memory_id bigint [not null]
-  campaign_id bigint [not null]
+  memory_id bigint [not null, note: '【エージェント記憶ID】']
+  campaign_id bigint [not null, note: '【施策ID】']
 
   indexes {
     (memory_id, campaign_id) [pk]
@@ -338,8 +315,8 @@ Ref: memory_campaigns.memory_id > agent_memories.id [delete: cascade]
 Ref: memory_campaigns.campaign_id > campaigns.id [delete: cascade]
 
 Table memory_posts {
-  memory_id bigint [not null]
-  post_id bigint [not null]
+  memory_id bigint [not null, note: '【エージェント記憶ID】']
+  post_id bigint [not null, note: '【投稿ID】']
 
   indexes {
     (memory_id, post_id) [pk]
@@ -351,45 +328,39 @@ Ref: memory_posts.memory_id > agent_memories.id [delete: cascade]
 Ref: memory_posts.post_id > posts.id [delete: cascade]
 
 Table agent_sessions {
-  id bigint [pk, increment]
-  company_id bigint [not null]
-  marketer_id bigint [not null]
-  parent_session_id bigint
-  agent agent_type [not null]
-  title varchar(255)
-  status agent_session_status [not null, default: 'active']
-  next_turn_number int [not null, default: 1, note: 'Atomically allocated under a session row lock; must be greater than zero.']
-  archived_at timestamptz
-  created_at timestamptz [not null, default: `now()`]
-  updated_at timestamptz [not null, default: `now()`]
+  id bigint [pk, increment, note: '【エージェントセッションID】']
+  marketer_id bigint [not null, note: '【マーケターID】']
+  parent_session_id bigint [note: '【親エージェントセッションID】サブエージェントを呼び出したセッション。']
+  agent agent_type [not null, note: '【エージェント種別】']
+  title varchar(255) [note: '【セッションタイトル】セッション一覧での識別に使用し、会話内容から自動生成できる。']
+  archived_at timestamptz [note: '【アーカイブ日時】']
+  created_at timestamptz [not null, default: `now()`, note: '【作成日時】']
+  updated_at timestamptz [not null, default: `now()`, note: '【更新日時】']
 
   indexes {
-    (id, company_id, marketer_id) [unique]
-    (company_id, updated_at)
+    (id, marketer_id) [unique]
     (marketer_id, updated_at)
     (parent_session_id, created_at)
-    (status, updated_at)
   }
 
-  Note: 'A resumable conversation owned by one agent. A subagent receives its own session linked through parent_session_id. Task completion is represented by turns, not by completing the session.'
+  Note: '1つのエージェントが所有する再開可能な会話。ユーザーが切り替えるのは親セッションだけとし、サブエージェントにはparent_session_idで親と紐づく内部セッションを割り当てる。'
 }
 
-Ref: agent_sessions.company_id > companies.id [delete: restrict]
-Ref: agent_sessions.(marketer_id, company_id) > marketers.(id, company_id) [delete: restrict]
-Ref: agent_sessions.(parent_session_id, company_id, marketer_id) > agent_sessions.(id, company_id, marketer_id) [delete: restrict]
+Ref: agent_sessions.marketer_id > marketers.id [delete: restrict]
+Ref: agent_sessions.(parent_session_id, marketer_id) > agent_sessions.(id, marketer_id) [delete: restrict]
 
 Table agent_turns {
-  id bigint [pk, increment]
-  session_id bigint [not null]
-  turn_number int [not null, note: 'Allocated monotonically within the session; must be greater than zero.']
-  status agent_turn_status [not null, default: 'pending']
-  next_item_number int [not null, default: 1, note: 'Atomically allocated under a turn row lock; must be greater than zero.']
-  error_code varchar(100)
-  error_message text [note: 'Sanitized error only.']
-  started_at timestamptz
-  completed_at timestamptz
-  created_at timestamptz [not null, default: `now()`]
-  updated_at timestamptz [not null, default: `now()`]
+  id bigint [pk, increment, note: '【エージェントターンID】']
+  session_id bigint [not null, note: '【エージェントセッションID】']
+  turn_number int [not null, note: '【ターン番号】セッション行をロックし、セッション内の最大ターン番号に1を加えて採番する。1以上とする。']
+  status agent_turn_status [not null, default: 'pending', note: '【ターンステータス】']
+  next_item_number int [not null, default: 1, note: '【次回アイテム番号】ターン行をロックして原子的に採番する。1以上とする。']
+  error_code varchar(100) [note: '【エラーコード】']
+  error_message text [note: '【エラーメッセージ】マスク済みエラーだけを保存する。']
+  started_at timestamptz [note: '【開始日時】']
+  completed_at timestamptz [note: '【完了日時】']
+  created_at timestamptz [not null, default: `now()`, note: '【作成日時】']
+  updated_at timestamptz [not null, default: `now()`, note: '【更新日時】']
 
   indexes {
     (session_id, turn_number) [unique]
@@ -398,63 +369,95 @@ Table agent_turns {
     (status, created_at)
   }
 
-  Note: 'One agent loop from a single input to an assistant response or subagent tool result. A turn may contain multiple LLM calls and tool executions. Step and cost usage are derived from related LLM calls.'
+  Note: '1つの入力を受けてから、アシスタント回答またはサブエージェントのTool Resultを返すまでのエージェントループ。1ターン内で複数のLLM呼び出しとツール実行を行える。使用回数とコストは関連するLLM呼び出しから算出する。'
 }
 
 Ref: agent_turns.session_id > agent_sessions.id [delete: restrict]
 
-Table tool_executions {
-  id bigint [pk, increment]
-  tool_call_item_id bigint [not null, unique]
-  status tool_execution_status [not null, default: 'pending']
-  attempt_count int [not null, default: 0, note: 'The number of internal attempts for this logical tool call; must be zero or greater.']
-  created_at timestamptz [not null, default: `now()`]
-  completed_at timestamptz
+Table api_idempotency_requests {
+  id bigint [pk, increment, note: '【API冪等性Request ID】']
+  marketer_id bigint [not null, note: '【マーケターID】認証済みContextから設定する。']
+  session_id bigint [not null, note: '【親エージェントセッションID】最初のRequestで確定し、再送時に変更しない。']
+  agent_turn_id bigint [unique, note: '【API実行ターンID】最初のRequestで作成した監査Turn。Turn作成前の障害時はNULLを許可する。']
+  operation api_operation [not null, note: '【API操作種別】']
+  idempotency_key uuid [not null, note: '【Idempotency-Key】承認操作ごとにUIが生成し、同じ操作の再送では同じ値を使用する。']
+  request_hash varchar(64) [not null, note: '【Requestハッシュ】正規化したRequest BodyのSHA-256。']
+  status api_idempotency_status [not null, default: 'processing', note: '【処理状態】']
+  execution_token uuid [not null, note: '【実行Token】実行権取得時にサーバーが生成するFencing Token。最終書き込み時に一致を必須とする。']
+  lease_expires_at timestamptz [not null, note: '【実行権期限】processingの実行権を再判定できる日時。']
+  external_effect_started_at timestamptz [note: '【外部作用開始日時】publish_x_postでX APIへのRequest送信直前に記録する。NULLなら外部投稿を開始していない。']
+  external_result jsonb [note: '【外部作用結果】publish_x_postでX APIの成功を確認した直後に、業務データの保存より先に独立したTransactionで保存する。x_post_id、X APIへ送信したtext、tracked_url、published_atを含む。NULLならX投稿の成功を確認していない。']
+  http_status smallint [note: '【HTTP Status】完了済みResponseのStatus。']
+  response_body jsonb [note: '【Response Body】再送時に返すマスク済みの確定Response。']
+  created_at timestamptz [not null, default: `now()`, note: '【作成日時】']
+  updated_at timestamptz [not null, default: `now()`, note: '【更新日時】']
+  completed_at timestamptz [note: '【完了日時】']
 
-  Note: 'Minimal operational state for one logical tool_call item. Tool name, call ID, and arguments are stored in the tool_call content; output and final error are stored in the tool_result content. Internal retry details remain in application logs. The application ensures tool_call_item_id references an item whose item_type is tool_call.'
+  indexes {
+    (marketer_id, operation, idempotency_key) [unique]
+    (session_id, created_at)
+    (status, lease_expires_at)
+  }
+
+  Note: '施策upsert APIとX投稿APIに共通する永続的な冪等性制御。最初のRequestだけがprocessing行の作成に成功して実行権を得る。同じキーの再送ではsession_idとrequest_hashの一致を確認し、完了済みなら保存済みResponseを返す。実行権取得時はexecution_tokenとlease_expires_atを設定し、通常の業務処理を完了する最終Transactionはstatusがprocessing、execution_tokenが一致、かつLeaseが有効な場合だけCommitする。succeeded、failed、outcome_unknownではhttp_status、response_body、completed_atを必須とし、processingではNULLとするCHECK制約を追加する。publish_x_postのexternal_effect_started_atはX API送信直前に設定し、X API成功直後にexternal_resultを設定する。external_resultの保存後にDB保存が失敗した場合は、processingのままLeaseを即時失効させ、同じキーの再送でexternal_resultを使ってDB保存だけを再実行する。外部作用開始後にLeaseが切れ、かつexternal_resultがNULLの場合だけ、期限切れと旧Tokenを条件とする専用の復旧Transactionでoutcome_unknown、API Result、元Turn完了を同時に保存する。external_resultがNULLでないのはoperationがpublish_x_postでexternal_effect_started_atがNULLでない行だけとするCHECK制約を追加する。outcome_unknownからsucceededまたはfailedへの変更と暫定Responseの置換は、外部結果を手動照合した管理処理だけに許可する。postsが参照できるのはoperationがpublish_x_postで、同じTransactionの終了時にsucceededとなるRequestだけとする。通常運用では削除しない。'
+}
+
+Ref: api_idempotency_requests.marketer_id > marketers.id [delete: restrict]
+Ref: api_idempotency_requests.(session_id, marketer_id) > agent_sessions.(id, marketer_id) [delete: restrict]
+Ref: api_idempotency_requests.(agent_turn_id, session_id) > agent_turns.(id, session_id) [delete: restrict]
+
+Table tool_executions {
+  id bigint [pk, increment, note: '【ツール実行ID】']
+  tool_call_item_id bigint [not null, unique, note: '【Tool CallアイテムID】実行対象となるtool_callアイテム。']
+  status tool_execution_status [not null, default: 'pending', note: '【ツール実行ステータス】']
+  attempt_count int [not null, default: 0, note: '【試行回数】論理的なTool Callに対する内部実行回数。0以上とする。']
+  created_at timestamptz [not null, default: `now()`, note: '【作成日時】']
+  completed_at timestamptz [note: '【完了日時】']
+
+  Note: '1つの論理的なtool_callアイテムに対する最小限の実行状態。ツール名、Call ID、引数はtool_callの内容へ、出力と最終エラーはtool_resultの内容へ保存する。内部再試行の詳細はアプリケーションログへ記録する。tool_call_item_idの参照先がtool_callであることをアプリケーションで保証する。'
 }
 
 Ref: tool_executions.tool_call_item_id > agent_items.id [delete: restrict]
 
 Table llm_calls {
-  id bigint [pk, increment]
-  agent_turn_id bigint [not null]
-  orcarouter_request_id varchar(255) [unique, note: 'Used to retrieve settled usage and cost from OrcaRouter.']
-  input_tokens int [note: 'OrcaRouter usage.prompt_tokens; must be zero or greater.']
-  output_tokens int [note: 'OrcaRouter usage.completion_tokens; must be zero or greater.']
-  cost_usd decimal(18,8) [note: 'Exact billed cost returned by OrcaRouter; must be zero or greater. Convert to JPY only for display.']
-  response_time_ms int [note: 'Must be zero or greater.']
-  succeeded boolean [not null]
-  error_code varchar(100)
-  error_message text [note: 'Sanitized error only.']
-  called_at timestamptz [not null, default: `now()`]
+  id bigint [pk, increment, note: '【LLM呼び出しID】']
+  agent_turn_id bigint [not null, note: '【エージェントターンID】']
+  orcarouter_request_id varchar(255) [unique, note: '【OrcaRouterリクエストID】OrcaRouterから確定済み利用量とコストを取得するために使用する。']
+  input_tokens int [note: '【入力トークン数】OrcaRouterのusage.prompt_tokens。0以上とする。']
+  output_tokens int [note: '【出力トークン数】OrcaRouterのusage.completion_tokens。0以上とする。']
+  cost_usd decimal(18,8) [note: '【利用コスト（USD）】OrcaRouterが返す確定請求額。0以上とし、日本円への換算は表示時だけ行う。']
+  response_time_ms int [note: '【応答時間（ミリ秒）】0以上とする。']
+  succeeded boolean [not null, note: '【成功可否】']
+  error_code varchar(100) [note: '【エラーコード】']
+  error_message text [note: '【エラーメッセージ】マスク済みエラーだけを保存する。']
+  called_at timestamptz [not null, default: `now()`, note: '【呼び出し日時】']
 
   indexes {
     (agent_turn_id, called_at)
     (id, agent_turn_id) [unique]
   }
 
-  Note: 'The MVP uses one configured model. Failed calls may not have token usage or cost.'
+  Note: 'MVPでは単一設定されたモデルを使用する。失敗した呼び出しではトークン数とコストが取得できない場合がある。'
 }
 
 Ref: llm_calls.agent_turn_id > agent_turns.id [delete: restrict]
 
 Table agent_items {
-  id bigint [pk, increment]
-  agent_turn_id bigint [not null]
-  related_tool_call_item_id bigint
-  llm_call_id bigint
-  item_number int [not null, note: 'Allocated monotonically within the turn; must be greater than zero.']
-  idempotency_key varchar(255) [not null, note: 'Stable application-generated key used to prevent duplicate persistence during retries and crash recovery.']
-  item_type agent_item_type [not null]
-  context_class agent_context_class [not null, note: 'Classified from provenance by the application. Passing a guardrail does not promote untrusted_data to conversation.']
-  content_source agent_content_source [not null]
-  context_status agent_item_context_status [not null, default: 'active']
-  quarantine_reason varchar(100)
-  context_override jsonb [note: 'Required for a quarantined item. Provider context uses this safe replacement instead of content.']
-  quarantined_at timestamptz
-  content jsonb [not null, note: 'Immutable redacted content. Tool inputs belong to tool_call items and outputs belong to tool_result items.']
-  created_at timestamptz [not null, default: `now()`]
+  id bigint [pk, increment, note: '【エージェントアイテムID】']
+  agent_turn_id bigint [not null, note: '【エージェントターンID】']
+  related_tool_call_item_id bigint [note: '【関連Tool CallアイテムID】tool_resultが応答対象とする同一ターン内のtool_callアイテム。']
+  llm_call_id bigint [note: '【LLM呼び出しID】このアイテムを生成したLLM呼び出し。']
+  item_number int [not null, note: '【アイテム番号】ターン内で単調増加させる。1以上とする。']
+  idempotency_key varchar(255) [not null, note: '【冪等性キー】再試行やクラッシュ復旧時の二重保存を防ぐためにアプリケーションが生成する安定したキー。']
+  item_type agent_item_type [not null, note: '【アイテム種別】']
+  context_class agent_context_class [not null, note: '【コンテキスト分類】取得元に基づいてアプリケーションが分類する。Guardrail検査を通過してもuntrusted_dataをconversationへ昇格させない。']
+  content_source agent_content_source [not null, note: '【コンテンツ取得元】']
+  context_status agent_item_context_status [not null, default: 'active', note: '【コンテキスト状態】']
+  quarantine_reason varchar(100) [note: '【隔離理由】']
+  context_override jsonb [note: '【コンテキスト代替内容】隔離済みアイテムでは必須とし、LLMへは元内容ではなくこの安全な代替内容を渡す。']
+  quarantined_at timestamptz [note: '【隔離日時】']
+  content jsonb [not null, note: '【アイテム内容】変更不可かつマスク済みの内容。Tool Callの入力はtool_call、Tool Resultの出力はtool_resultへ保存する。']
+  created_at timestamptz [not null, default: `now()`, note: '【作成日時】']
 
   indexes {
     (id, agent_turn_id) [unique]
@@ -464,7 +467,7 @@ Table agent_items {
     llm_call_id
   }
 
-  Note: 'Ordered history within one turn. Content is immutable; context_status may only transition from active to quarantined. A tool_result requires related_tool_call_item_id; other item types require it to be null. The referenced item must have item_type tool_call. CHECK constraints require quarantine fields and context_override exactly when context_status is quarantined.'
+  Note: '1ターン内の順序付き履歴。内容は変更せず、context_statusはactiveからquarantinedへのみ変更できる。tool_resultではrelated_tool_call_item_idを必須とし、他のアイテム種別ではNULLとする。参照先アイテムの種別はtool_callとする。context_statusがquarantinedの場合だけ隔離関連項目とcontext_overrideを必須とするCHECK制約を追加する。'
 }
 
 Ref: agent_items.agent_turn_id > agent_turns.id [delete: restrict]
@@ -472,37 +475,37 @@ Ref: agent_items.(related_tool_call_item_id, agent_turn_id) > agent_items.(id, a
 Ref: agent_items.(llm_call_id, agent_turn_id) > llm_calls.(id, agent_turn_id) [delete: restrict]
 
 Table agent_context_checkpoints {
-  id bigint [pk, increment]
-  session_id bigint [not null]
-  compacted_through_turn_id bigint [not null]
-  summary text [not null, note: 'Redacted context summary; raw reasoning is not included.']
-  invalidated_at timestamptz
-  invalidation_reason varchar(100)
-  created_at timestamptz [not null, default: `now()`]
+  id bigint [pk, increment, note: '【コンテキストチェックポイントID】']
+  session_id bigint [not null, note: '【エージェントセッションID】']
+  compacted_through_turn_id bigint [not null, note: '【要約済み最終ターンID】このターンまでの履歴を要約に含める。']
+  summary text [not null, note: '【コンテキスト要約】マスク済みの要約とし、生の推論内容は含めない。']
+  invalidated_at timestamptz [note: '【無効化日時】']
+  invalidation_reason varchar(100) [note: '【無効化理由】']
+  created_at timestamptz [not null, default: `now()`, note: '【作成日時】']
 
   indexes {
     (session_id, compacted_through_turn_id)
     (session_id, created_at)
   }
 
-  Note: 'An additive checkpoint created only after the referenced turn completes. Original items are retained. Resume uses the newest non-invalidated checkpoint plus later turns. A SQL partial unique index permits at most one non-invalidated checkpoint per turn boundary.'
+  Note: '参照先ターンの完了後にだけ追加するチェックポイント。元のアイテムは保持し、再開時は最新の有効なチェックポイントと、それより後のターンを使用する。同じターン境界で有効なチェックポイントを最大1件に制限する部分ユニークインデックスをSQL migrationで追加する。'
 }
 
 Ref: agent_context_checkpoints.(compacted_through_turn_id, session_id) > agent_turns.(id, session_id) [delete: restrict]
 
 Table security_events {
-  id bigint [pk, increment]
-  agent_turn_id bigint [not null]
-  agent_item_id bigint
-  llm_call_id bigint
-  event_type security_event_type [not null]
-  detector security_detector [not null]
-  source agent_content_source [not null]
-  enforcement security_enforcement [not null]
-  external_event_id varchar(255) [note: 'OrcaRouter Match ID or Firewall Event ID. Null for application-detected events.']
-  summary text [not null, note: 'A redacted description; never store the detected secret itself.']
-  metadata jsonb [not null, default: '{}', note: 'Allow-listed and redacted diagnostic values only.']
-  detected_at timestamptz [not null, default: `now()`]
+  id bigint [pk, increment, note: '【セキュリティイベントID】']
+  agent_turn_id bigint [not null, note: '【エージェントターンID】']
+  agent_item_id bigint [note: '【エージェントアイテムID】検出対象となったアイテム。']
+  llm_call_id bigint [note: '【LLM呼び出しID】検出対象となったLLM呼び出し。']
+  event_type security_event_type [not null, note: '【セキュリティイベント種別】']
+  detector security_detector [not null, note: '【検出主体】']
+  source agent_content_source [not null, note: '【検出対象取得元】']
+  enforcement security_enforcement [not null, note: '【制御内容】']
+  external_event_id varchar(255) [note: '【外部イベントID】OrcaRouterのMatch IDまたはFirewall Event ID。アプリケーション検出時はNULLとする。']
+  summary text [not null, note: '【イベント概要】マスク済みの説明だけを保存し、検出した機密値そのものは保存しない。']
+  metadata jsonb [not null, default: '{}', note: '【診断メタデータ】許可リストに含まれるマスク済み診断値だけを保存する。']
+  detected_at timestamptz [not null, default: `now()`, note: '【検出日時】']
 
   indexes {
     (event_type, detected_at)
@@ -512,7 +515,7 @@ Table security_events {
     llm_call_id
   }
 
-  Note: 'Append-only audit findings within one agent turn. Tool-related findings reference the affected tool_call or tool_result through agent_item_id. Successful checks are omitted. Runtime context inclusion is controlled by agent_items.context_status. Composite foreign keys require optional item and LLM references to use the same turn. OrcaRouter stage, rule type, and verdict are stored as allow-listed metadata without raw matched content.'
+  Note: '1ターン内で検出した追記専用の監査記録。ツール関連の検出結果はagent_item_idから対象のtool_callまたはtool_resultを参照する。成功した検査は記録しない。実行時のコンテキスト包含可否はagent_items.context_statusで制御する。複合外部キーにより、任意参照のアイテムとLLM呼び出しを同じターンに制限する。OrcaRouterのステージ、ルール種別、判定結果は生の一致内容を含めず、許可リストに基づくメタデータとして保存する。'
 }
 
 Ref: security_events.agent_turn_id > agent_turns.id [delete: restrict]
