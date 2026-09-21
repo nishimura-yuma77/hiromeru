@@ -49,3 +49,4 @@ Thumbs.db
 # Generated documentation artifacts
 *DATABASE.dbdiagram
 dbml-error.log
+artifacts*
