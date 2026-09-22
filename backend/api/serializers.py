@@ -233,6 +233,7 @@ def serialize_metrics_report(view: MetricsReportView) -> dict[str, Any]:
             }
             for item in view.campaigns
         ],
+        "next_cursor": view.next_cursor,
     }
 
 

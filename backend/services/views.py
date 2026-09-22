@@ -233,6 +233,7 @@ class MetricsReportView:
     published_to: datetime | None
     summary: MetricsSummary
     campaigns: list[CampaignMetricsView]
+    next_cursor: str | None
 
 
 @dataclass(frozen=True)
