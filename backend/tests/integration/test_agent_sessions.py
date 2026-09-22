@@ -65,7 +65,7 @@ async def test_Session一覧のページング_limitとcursorで続きを取得�
     assert page2["next_cursor"] is None
 
 
-async def test_メッセージ送信_JSON_201でTurnとAgentの回答を返す(
+async def test_メッセージ送信_JSON_LLM生成元なしのassistantを表示しない(
     account: Account, agent: FakeAgentRunner
 ) -> None:
     session_id = await account.create_session()
@@ -78,10 +78,16 @@ async def test_メッセージ送信_JSON_201でTurnとAgentの回答を返す(
     assert data["status"] == "completed"
     assert data["kind"] == "chat"
     assert data["turn_number"] == 1
-    assert [item["type"] for item in data["items"]] == ["user_message", "assistant_message"]
+    assert [item["type"] for item in data["items"]] == ["user_message"]
     assert data["items"][0]["content"] == {"text": "春のキャンペーンを考えて"}
-    assert data["items"][1]["content"] == {"text": "提案です"}
+    assert data["approval_state"] is None
     assert agent.inputs[0].company_id == account.company_id
+    turn = await account.client.get(
+        f"/api/v1/agent-sessions/{session_id}/turns/{data['agent_turn_id']}"
+    )
+    history = await account.client.get(f"/api/v1/agent-sessions/{session_id}")
+    assert turn.json()["data"] == data
+    assert history.json()["data"]["turns"] == [data]
 
 
 async def test_タイトル_最初のメッセージの先頭50文字がマスクされて設定される(
@@ -298,6 +304,13 @@ async def test_SSE_Accept指定のときturn_startedからturn_finishedまで進
     assert events[1][1]["name"] == "search_campaigns"
     finished = events[-1][1]
     assert finished["status"] == "completed"
+    turn_id = finished["agent_turn_id"]
+    turn = await account.client.get(f"/api/v1/agent-sessions/{session_id}/turns/{turn_id}")
+    history = await account.client.get(f"/api/v1/agent-sessions/{session_id}")
+    projected = next(
+        item for item in history.json()["data"]["turns"] if item["agent_turn_id"] == turn_id
+    )
+    assert finished == turn.json()["data"] == projected
 
 
 async def test_SSE_Agent失敗のときturn_finishedのstatusがfailed(

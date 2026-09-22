@@ -84,6 +84,10 @@ async def test_実Runnerはmulti_step_loopを実行しLLM生成元を関連付�
     assert response.status_code == 201, response.text
     data = response.json()["data"]
     assert data["status"] == "completed"
+    assert [item["type"] for item in data["items"]] == [
+        "user_message",
+        "assistant_message",
+    ]
     assert data["items"][-1]["content"] == {"text": "最終回答です"}
     assert len(model.requests) == 2
     assert model.requests[0].tools

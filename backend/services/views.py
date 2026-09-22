@@ -66,6 +66,17 @@ class TurnItemView:
 
 
 @dataclass(frozen=True)
+class ApprovalStateView:
+    """Credentialや外部結果本文を含まないApproval Turnの復旧状態。"""
+
+    operation: str
+    status: str
+    external_effect_started: bool
+    external_succeeded: bool
+    recovery: str | None
+
+
+@dataclass(frozen=True)
 class TurnView:
     """5.1のTurn。"""
 
@@ -74,6 +85,7 @@ class TurnView:
     kind: str
     status: str
     error: TurnErrorView | None
+    approval_state: ApprovalStateView | None
     started_at: datetime | None
     completed_at: datetime | None
     security_notices: list[SecurityNoticeView] = field(default_factory=list)

@@ -114,8 +114,7 @@ async def test_結果不明を公開済みへ解決_Post関連と監査TurnとRe
     ]
     audit_view = next(turn for turn in history["turns"] if turn["agent_turn_id"] == audit.id)
     assert [item["content"]["text"] for item in audit_view["items"]] == [
-        "X投稿の手動照合を実施しました。",
-        "X投稿の手動照合が完了しました。",
+        "X投稿の手動照合を実施しました。"
     ]
 
 

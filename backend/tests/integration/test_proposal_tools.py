@@ -257,6 +257,52 @@ async def test_missing情報は成功し提案元には使えない(
     assert invalid.error is not None and invalid.error.code == "INVALID_PROPOSAL_SOURCE"
 
 
+async def test_保存済みProposalがSchema不正ならTurn表示から除外する(
+    account: Account, ctx: ServiceContext, agent: FakeAgentRunner
+) -> None:
+    session_id = await account.create_session()
+    turn_id, request_id = await _turn(ctx, account, session_id)
+    proposal = _campaign_proposal()
+    agent.child_output = CampaignPlannerOutput(proposal=proposal)
+    executor = await _executor(ctx, account, session_id, turn_id)
+    await executor.invoke(
+        ToolCall(
+            name="run_campaign_planner",
+            stable_key="planner-malformed-view",
+            arguments={"request_item_id": request_id},
+        )
+    )
+    proposed = await executor.invoke(
+        ToolCall(
+            name="propose_campaign",
+            stable_key="proposal-malformed-view",
+            arguments=proposal.model_dump(mode="json"),
+        )
+    )
+    assert proposed.success is True
+    async with ctx.session_factory() as session, session.begin():
+        call = await session.scalar(
+            select(AgentItem).where(
+                AgentItem.agent_turn_id == turn_id,
+                AgentItem.idempotency_key == "tool:proposal-malformed-view",
+            )
+        )
+        assert call is not None
+        result = await session.scalar(
+            select(AgentItem).where(AgentItem.related_tool_call_item_id == call.id)
+        )
+        assert result is not None
+        result.content = {"success": True, "data": {"title": "incomplete"}, "error": None}
+        await TurnRepository(session).finish_turn(
+            turn_id, status=AgentTurnStatus.COMPLETED, now=ctx.clock.now()
+        )
+
+    response = await account.client.get(
+        f"/api/v1/agent-sessions/{session_id}/turns/{turn_id}"
+    )
+    assert [item["type"] for item in response.json()["data"]["items"]] == ["user_message"]
+
+
 @pytest.mark.parametrize("malformed", [{"proposal": {}}, object()])
 async def test_不正な子出力はchild_failedになり内部詳細を返さない(
     malformed: object,

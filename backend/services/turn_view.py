@@ -7,11 +7,17 @@ from pydantic import ValidationError
 from agent_runtime.proposal_tools import ProposeCampaignOutput, ProposeXPostOutput
 from core.errors import DEFAULT_MESSAGES, ERROR_SPECS
 from domain.constants import SECURITY_NOTICES_LIMIT
-from domain.enums import AgentItemType, AgentTurnStatus
+from domain.enums import AgentItemType, AgentTurnStatus, ApiIdempotencyStatus
 from models import AgentItem
 from repositories.agent import TurnBundle, TurnRepository
 from services.context import ServiceContext
-from services.views import SecurityNoticeView, TurnErrorView, TurnItemView, TurnView
+from services.views import (
+    ApprovalStateView,
+    SecurityNoticeView,
+    TurnErrorView,
+    TurnItemView,
+    TurnView,
+)
 
 
 def _approval_item(item: AgentItem, *, completed: bool) -> tuple[str, dict[str, Any]] | None:
@@ -45,7 +51,11 @@ def _chat_item(
     """
     if item.item_type == AgentItemType.USER_MESSAGE:
         return "user_message", {"text": item.content.get("text", "")}
-    if item.item_type == AgentItemType.ASSISTANT_MESSAGE and completed:
+    if (
+        item.item_type == AgentItemType.ASSISTANT_MESSAGE
+        and item.llm_call_id is not None
+        and completed
+    ):
         return "assistant_message", {"text": item.content.get("text", "")}
     related = item.related_tool_call_item_id
     if (
@@ -112,12 +122,29 @@ def build_turn_view(bundle: TurnBundle) -> TurnView:
         SecurityNoticeView(event.event_type.value, event.enforcement.value, event.detected_at)
         for event in bundle.notices[:SECURITY_NOTICES_LIMIT]
     ]
+    approval_state = None
+    if bundle.approval is not None:
+        request = bundle.approval
+        external_succeeded = request.external_result is not None
+        recovery = None
+        if request.status == ApiIdempotencyStatus.OUTCOME_UNKNOWN:
+            recovery = "manual_reconciliation"
+        elif request.status == ApiIdempotencyStatus.PROCESSING and external_succeeded:
+            recovery = "retry_same_key"
+        approval_state = ApprovalStateView(
+            operation=request.operation.value,
+            status=request.status.value,
+            external_effect_started=request.external_effect_started_at is not None,
+            external_succeeded=external_succeeded,
+            recovery=recovery,
+        )
     return TurnView(
         agent_turn_id=turn.id,
         turn_number=turn.turn_number,
         kind="approval" if bundle.is_approval else "chat",
         status=turn.status.value,
         error=error,
+        approval_state=approval_state,
         started_at=turn.started_at,
         completed_at=turn.completed_at,
         security_notices=notices,

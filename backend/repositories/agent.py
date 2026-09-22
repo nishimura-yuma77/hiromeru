@@ -60,8 +60,13 @@ class TurnBundle:
     turn: AgentTurn
     items: list[AgentItem]
     notices: list[SecurityEvent]
-    is_approval: bool
+    approval: ApiIdempotencyRequest | None
     completed_tool_call_ids: frozenset[int] = frozenset()
+
+    @property
+    def is_approval(self) -> bool:
+        """冪等性Requestから参照されるAPI実行Turnか。"""
+        return self.approval is not None
 
 
 @dataclass(frozen=True)
@@ -703,15 +708,17 @@ class TurnRepository:
         )
         for event in (await self._session.execute(event_stmt)).scalars():
             notices[event.agent_turn_id].append(event)
-        approval_ids = set(
-            (
+        approvals = {
+            request.agent_turn_id: request
+            for request in (
                 await self._session.execute(
-                    select(ApiIdempotencyRequest.agent_turn_id).where(
+                    select(ApiIdempotencyRequest).where(
                         ApiIdempotencyRequest.agent_turn_id.in_(ids)
                     )
                 )
             ).scalars()
-        )
+            if request.agent_turn_id is not None
+        }
         completed_tool_call_ids = frozenset(
             (
                 await self._session.execute(
@@ -729,7 +736,7 @@ class TurnRepository:
                 turn,
                 items[turn.id],
                 notices[turn.id],
-                turn.id in approval_ids,
+                approvals.get(turn.id),
                 completed_tool_call_ids,
             )
             for turn in turns

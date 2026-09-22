@@ -82,6 +82,15 @@ def serialize_turn(view: TurnView) -> dict[str, Any]:
             "message": view.error.message,
             "retryable": view.error.retryable,
         },
+        "approval_state": None
+        if view.approval_state is None
+        else {
+            "operation": view.approval_state.operation,
+            "status": view.approval_state.status,
+            "external_effect_started": view.approval_state.external_effect_started,
+            "external_succeeded": view.approval_state.external_succeeded,
+            "recovery": view.approval_state.recovery,
+        },
         "started_at": _iso(view.started_at),
         "completed_at": _iso(view.completed_at),
         "security_notices": [
