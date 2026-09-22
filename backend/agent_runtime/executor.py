@@ -8,11 +8,14 @@ from typing import Any
 from pydantic import BaseModel, ValidationError
 
 from agent_runtime.firewall import FirewallDecision, FirewallRequest
-from agent_runtime.runner import ActivityStatus, ProgressReporter
+from agent_runtime.runner import ActivityStatus, AgentContext, AgentContextEntry, ProgressReporter
 from agent_runtime.tools import (
     ToolCall,
     ToolDefinition,
+    ToolDomainError,
     ToolError,
+    ToolProvenance,
+    ToolProvenanceRef,
     ToolResult,
     TransientToolError,
     TrustedToolContext,
@@ -21,6 +24,8 @@ from core.masking import mask_json, mask_text
 from domain.enums import (
     AgentContentSource,
     AgentContextClass,
+    AgentItemContextStatus,
+    AgentItemType,
     AgentTurnStatus,
     SecurityDetector,
     SecurityEventType,
@@ -47,11 +52,11 @@ _ERROR_MESSAGES = {
 }
 
 
-def _failure(code: str) -> ToolResult:
+def _failure(code: str, *, retryable: bool = False, message: str | None = None) -> ToolResult:
     return ToolResult(
         success=False,
         data=None,
-        error=ToolError(code=code, message=_ERROR_MESSAGES[code]),
+        error=ToolError(code=code, message=message or _ERROR_MESSAGES[code], retryable=retryable),
     )
 
 
@@ -67,6 +72,7 @@ class ToolExecutor:
         session_id: int,
         turn_id: int,
         reporter: ProgressReporter,
+        agent_context: AgentContext | None = None,
     ) -> None:
         """認証済みTenantと現在TurnへExecutorを束縛する。"""
         self._ctx = ctx
@@ -75,13 +81,20 @@ class ToolExecutor:
         self._session_id = session_id
         self._turn_id = turn_id
         self._reporter = reporter
+        self._agent_context = agent_context or AgentContext((), 0)
 
-    async def invoke(self, call: ToolCall, parent_activity_id: str | None = None) -> ToolResult:
+    async def invoke(  # noqa: PLR0912, PLR0915 - 永続化から終端保存までの単一境界
+        self, call: ToolCall, parent_activity_id: str | None = None
+    ) -> ToolResult:
         """論理Callを一度だけ実行する。"""
         context = await self._trusted_context()
         if context is None:
             return _failure("TOOL_TURN_ENDED")
         definition = self._ctx.tool_registry.resolve(context.agent_type, call.name)
+        provenance_valid = self._validate_provenance(call.provenance)
+        context = context.model_copy(
+            update={"provenance": call.provenance if provenance_valid else ()}
+        )
         validated_input = None
         input_error = False
         if definition is not None:
@@ -94,15 +107,22 @@ class ToolExecutor:
             if validated_input is not None
             else mask_json(call.arguments)
         )
+        persisted_provenance = (
+            [reference.model_dump(mode="json") for reference in call.provenance]
+            if provenance_valid
+            else []
+        )
         if context.turn_status != AgentTurnStatus.RUNNING:
             try:
-                terminal = await self._terminal_by_key(call, persisted_arguments)
+                terminal = await self._terminal_by_key(
+                    call, persisted_arguments, persisted_provenance
+                )
             except ToolCallConflictError:
                 return _failure("TOOL_CALL_CONFLICT")
             return terminal or _failure("TOOL_TURN_ENDED")
 
         try:
-            prepared = await self._prepare(call, persisted_arguments)
+            prepared = await self._prepare(call, persisted_arguments, persisted_provenance)
         except ToolCallConflictError:
             return _failure("TOOL_CALL_CONFLICT")
         if prepared is None:
@@ -120,13 +140,27 @@ class ToolExecutor:
         detector: SecurityDetector | None = None
         result_source = AgentContentSource.SYSTEM
         result_class = AgentContextClass.CONVERSATION
-        if definition is None:
+        if not provenance_valid:
+            result = _failure("TOOL_AUTHORIZATION_DENIED")
+            status = ToolExecutionStatus.BLOCKED
+            event_type = SecurityEventType.UNAUTHORIZED_TOOL_CALL
+            detector = SecurityDetector.APPLICATION
+        elif definition is None:
             result = _failure("TOOL_NOT_ALLOWED")
             status = ToolExecutionStatus.BLOCKED
             event_type = SecurityEventType.UNAUTHORIZED_TOOL_CALL
             detector = SecurityDetector.APPLICATION
         elif input_error or validated_input is None:
-            result = _failure("TOOL_INPUT_INVALID")
+            invalid = definition.errors.get("INVALID_ARGUMENT")
+            result = (
+                _failure(
+                    "INVALID_ARGUMENT",
+                    retryable=invalid.retryable,
+                    message=invalid.message,
+                )
+                if invalid is not None
+                else _failure("TOOL_INPUT_INVALID")
+            )
             status = ToolExecutionStatus.FAILED
         else:
             result_source = definition.result_source
@@ -143,8 +177,10 @@ class ToolExecutor:
             event_type,
             detector,
         )
-        final_status = "blocked" if status == ToolExecutionStatus.BLOCKED else (
-            "succeeded" if status == ToolExecutionStatus.COMPLETED else "failed"
+        final_status = (
+            "blocked"
+            if status == ToolExecutionStatus.BLOCKED
+            else ("succeeded" if status == ToolExecutionStatus.COMPLETED else "failed")
         )
         self._activity_finished(activity_id, final_status)
         return result if saved else _failure("TOOL_TURN_ENDED")
@@ -164,6 +200,8 @@ class ToolExecutor:
     ]:
         try:
             authorized = await definition.handler.authorize(context, validated_input)
+        except ToolDomainError as error:
+            return self._domain_failure(definition, error)
         except Exception:  # noqa: BLE001 - 詳細を外へ出さないpermanent failure
             return _failure("TOOL_EXECUTION_FAILED"), ToolExecutionStatus.FAILED, None, None
         if not authorized:
@@ -226,6 +264,9 @@ class ToolExecutor:
                 await self._ctx.sleep(delay)
             except ValidationError:
                 return _failure("TOOL_OUTPUT_INVALID"), ToolExecutionStatus.FAILED
+            except ToolDomainError as error:
+                result, status, _, _ = self._domain_failure(definition, error)
+                return result, status
             except Exception:  # noqa: BLE001 - Tool詳細をResultやlogへ出さない
                 return _failure("TOOL_EXECUTION_FAILED"), ToolExecutionStatus.FAILED
         return _failure("TOOL_RETRY_EXHAUSTED"), ToolExecutionStatus.FAILED
@@ -255,8 +296,75 @@ class ToolExecutor:
             turn_started_at=record.started_at,
         )
 
+    def _validate_provenance(self, refs: tuple[ToolProvenanceRef, ...]) -> bool:
+        """Runner申告を構築済みContextの安全なmetadataだけで照合する。"""
+        entries = {
+            entry.item_id: entry
+            for entry in self._agent_context.entries
+            if entry.kind == "item" and entry.item_id is not None
+        }
+        seen: set[tuple[ToolProvenance, int | None]] = set()
+        for ref in refs:
+            key = (ref.source, ref.item_id)
+            if key in seen:
+                return False
+            seen.add(key)
+            if ref.source == ToolProvenance.SYSTEM:
+                if ref.item_id is not None:
+                    return False
+                continue
+            if ref.item_id is None:
+                return False
+            entry = entries.get(ref.item_id)
+            if entry is None or entry.context_status != AgentItemContextStatus.ACTIVE:
+                return False
+            if not self._provenance_matches(ref.source, entry):
+                return False
+        return True
+
+    @staticmethod
+    def _provenance_matches(source: ToolProvenance, entry: AgentContextEntry) -> bool:
+        if source == ToolProvenance.USER_INPUT:
+            return (
+                entry.role == "user"
+                and entry.item_type == AgentItemType.USER_MESSAGE
+                and entry.content_source == AgentContentSource.USER_INPUT
+            )
+        if source == ToolProvenance.TOOL_RESULT:
+            return entry.role == "tool" and entry.item_type == AgentItemType.TOOL_RESULT
+        if source == ToolProvenance.AGENT_CONTEXT:
+            return (
+                entry.role == "assistant"
+                and entry.item_type in (AgentItemType.ASSISTANT_MESSAGE, AgentItemType.TOOL_CALL)
+                and entry.content_source == AgentContentSource.AGENT_OUTPUT
+            )
+        return False
+
+    @staticmethod
+    def _domain_failure(
+        definition: ToolDefinition, error: ToolDomainError
+    ) -> tuple[ToolResult, ToolExecutionStatus, SecurityEventType | None, SecurityDetector | None]:
+        """定義と完全一致する固定Errorだけを公開する。"""
+        spec = definition.errors.get(error.code)
+        if (
+            spec is None
+            or spec.message != error.message
+            or spec.retryable != error.retryable
+            or spec.blocked != error.blocked
+        ):
+            return _failure("TOOL_EXECUTION_FAILED"), ToolExecutionStatus.FAILED, None, None
+        return (
+            _failure(error.code, retryable=spec.retryable, message=spec.message),
+            ToolExecutionStatus.BLOCKED if spec.blocked else ToolExecutionStatus.FAILED,
+            SecurityEventType.UNAUTHORIZED_TOOL_CALL if spec.blocked else None,
+            SecurityDetector.APPLICATION if spec.blocked else None,
+        )
+
     async def _prepare(
-        self, call: ToolCall, arguments: dict[str, Any]
+        self,
+        call: ToolCall,
+        arguments: dict[str, Any],
+        provenance: list[dict[str, Any]],
     ) -> PreparedToolExecution | None:
         async with self._ctx.session_factory() as session, session.begin():
             return await ToolExecutionRepository(session).prepare(
@@ -264,6 +372,7 @@ class ToolExecutor:
                 stable_key=call.stable_key,
                 name=call.name,
                 arguments=arguments,
+                provenance=provenance,
                 now=self._ctx.clock.now(),
             )
 
@@ -287,7 +396,10 @@ class ToolExecutor:
         return ToolResult.model_validate(item.content) if item is not None else None
 
     async def _terminal_by_key(
-        self, call: ToolCall, arguments: dict[str, Any]
+        self,
+        call: ToolCall,
+        arguments: dict[str, Any],
+        provenance: list[dict[str, Any]],
     ) -> ToolResult | None:
         async with self._ctx.session_factory() as session:
             item = await ToolExecutionRepository(session).terminal_result_by_key(
@@ -295,6 +407,7 @@ class ToolExecutor:
                 call.stable_key,
                 name=call.name,
                 arguments=arguments,
+                provenance=provenance,
             )
         return ToolResult.model_validate(item.content) if item is not None else None
 

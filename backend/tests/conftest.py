@@ -10,8 +10,8 @@ from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 from pydantic import SecretStr
 
+from agent_runtime.business_tools import ToolHandlerDependencies, build_default_tool_registry
 from agent_runtime.firewall import FakeAgentFirewall
-from agent_runtime.tools import ToolRegistry
 from api.main import create_app
 from core.config import Settings
 from repositories.database import SessionLocal
@@ -84,7 +84,9 @@ def ctx(
         x_api=x_api,
         agent_runner=agent,
         context_compactor=compactor,
-        tool_registry=ToolRegistry(),
+        tool_registry=build_default_tool_registry(
+            ToolHandlerDependencies(settings, SessionLocal, embedding, clock)
+        ),
         agent_firewall=FakeAgentFirewall(),
         sleep=no_sleep,
         new_uuid=uuid.uuid4,

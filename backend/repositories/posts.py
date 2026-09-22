@@ -158,6 +158,25 @@ class PostRepository:
         stmt = select(PostTrackingLink).where(PostTrackingLink.post_id == post_id)
         return (await self._session.execute(stmt)).scalar_one_or_none()
 
+    async def published_ids(self, company_id: int, post_ids: tuple[int, ...]) -> set[int]:
+        """会社に属する公開成功済みPost IDだけを返す。"""
+        if not post_ids:
+            return set()
+        stmt = (
+            select(Post.id)
+            .join(
+                ApiIdempotencyRequest,
+                ApiIdempotencyRequest.id == Post.api_idempotency_request_id,
+            )
+            .where(
+                Post.company_id == company_id,
+                Post.id.in_(post_ids),
+                ApiIdempotencyRequest.operation == ApiOperation.PUBLISH_X_POST,
+                ApiIdempotencyRequest.status == ApiIdempotencyStatus.SUCCEEDED,
+            )
+        )
+        return set((await self._session.execute(stmt)).scalars())
+
     async def list_for_campaign(
         self, company_id: int, campaign_id: int, limit: int
     ) -> list[PostRow]:

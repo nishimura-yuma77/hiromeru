@@ -47,9 +47,10 @@ def _item_entry(turn_id: int, item: AgentItem) -> AgentContextEntry:
         content=content,
         turn_id=turn_id,
         item_id=item.id,
-        item_type=item.item_type.value,
-        context_class=item.context_class.value,
-        content_source=item.content_source.value,
+        item_type=item.item_type,
+        context_class=item.context_class,
+        content_source=item.content_source,
+        context_status=item.context_status,
     )
 
 
@@ -59,16 +60,20 @@ def _checkpoint_entry(checkpoint: CheckpointBundle) -> AgentContextEntry:
         role="system",
         content={"summary": checkpoint.checkpoint.summary},
         turn_id=checkpoint.checkpoint.compacted_through_turn_id,
+        source_item_ids=checkpoint.source_item_ids,
     )
 
 
-def _summary_entry(summary: str, through_turn_id: int) -> AgentContextEntry:
+def _summary_entry(
+    summary: str, through_turn_id: int, source_item_ids: tuple[int, ...]
+) -> AgentContextEntry:
     """未保存の要約を、圧縮後Contextの事前検証に使う。"""
     return AgentContextEntry(
         kind="checkpoint",
         role="system",
         content={"summary": summary},
         turn_id=through_turn_id,
+        source_item_ids=source_item_ids,
     )
 
 
@@ -128,8 +133,12 @@ class AgentContextBuilder:
             summary = await self._ctx.context_compactor.compact(compact_entries)
             boundary = max((turn for turn, _item in compactable), key=lambda turn: turn.turn_number)
             recent_rows = [row for row in rows if row[0].turn_number > boundary.turn_number]
+            previous_ids = () if checkpoint is None else checkpoint.source_item_ids
+            source_ids = tuple(
+                dict.fromkeys((*previous_ids, *(item.id for _, item in compactable)))
+            )
             candidate = self._entries_from_summary(
-                summary, boundary.id, recent_rows, current, notices
+                summary, boundary.id, source_ids, recent_rows, current, notices
             )
             candidate_estimate = estimate_context_utf8_bytes(candidate)
             if candidate_estimate > hard_limit:
@@ -176,6 +185,7 @@ class AgentContextBuilder:
     def _entries_from_summary(
         summary: str,
         through_turn_id: int,
+        source_item_ids: tuple[int, ...],
         rows: list[tuple[AgentTurn, AgentItem]],
         current: AgentItem,
         notices: list[SecurityEvent],
@@ -184,7 +194,7 @@ class AgentContextBuilder:
         notice_count = sum(entry.kind == "security_notice" for entry in entries)
         return (
             *entries[:notice_count],
-            _summary_entry(summary, through_turn_id),
+            _summary_entry(summary, through_turn_id, source_item_ids),
             *entries[notice_count:],
         )
 

@@ -1,7 +1,7 @@
 """Agent ToolのSDK・DB非依存な型と登録Registry。"""
 
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from enum import StrEnum
 from typing import Any, Protocol
@@ -68,6 +68,30 @@ class ToolError(StrictToolModel):
 
     code: str
     message: str
+    retryable: bool
+
+
+@dataclass(frozen=True)
+class ToolErrorSpec:
+    """Tool定義が公開を許可する固定Error。"""
+
+    message: str
+    retryable: bool = False
+    blocked: bool = False
+
+
+class ToolDomainError(Exception):
+    """HandlerからExecutorへ詳細を漏らさず伝える宣言済み業務Error。"""
+
+    def __init__(
+        self, code: str, message: str, *, retryable: bool = False, blocked: bool = False
+    ) -> None:
+        """固定code・文言・再試行可否を保持する。"""
+        super().__init__(code)
+        self.code = code
+        self.message = message
+        self.retryable = retryable
+        self.blocked = blocked
 
 
 class ToolResult(StrictToolModel):
@@ -97,6 +121,7 @@ class TrustedToolContext(StrictToolModel):
     agent_type: AgentType
     turn_status: AgentTurnStatus
     turn_started_at: datetime
+    provenance: tuple[ToolProvenanceRef, ...] = ()
 
 
 class ToolHandler(Protocol):
@@ -122,6 +147,7 @@ class ToolDefinition:
     allowed_agents: frozenset[AgentType]
     result_source: AgentContentSource
     result_context_class: AgentContextClass
+    errors: Mapping[str, ToolErrorSpec] = field(default_factory=dict)
 
 
 class ToolRegistryError(ValueError):

@@ -1,15 +1,19 @@
 import asyncio
 from typing import Any
 
+import pytest
 from pydantic import BaseModel
 from sqlalchemy import select
 
 from agent_runtime.executor import ToolExecutor
 from agent_runtime.firewall import FakeAgentFirewall, FirewallDecision
+from agent_runtime.runner import AgentContext, AgentContextEntry
 from agent_runtime.tools import (
     StrictToolModel,
     ToolCall,
     ToolDefinition,
+    ToolProvenance,
+    ToolProvenanceRef,
     TransientToolError,
     TrustedToolContext,
 )
@@ -17,6 +21,7 @@ from api.sse import NullReporter
 from domain.enums import (
     AgentContentSource,
     AgentContextClass,
+    AgentItemContextStatus,
     AgentItemType,
     AgentTurnStatus,
     AgentType,
@@ -73,6 +78,7 @@ async def _executor(
     *,
     source: AgentContentSource = AgentContentSource.DATABASE,
     context_class: AgentContextClass = AgentContextClass.CONVERSATION,
+    agent_context: AgentContext | None = None,
 ) -> tuple[ToolExecutor, int, RecordingHandler]:
     session_id = await account.create_session()
     async with ctx.session_factory() as session, session.begin():
@@ -101,6 +107,7 @@ async def _executor(
             session_id=session_id,
             turn_id=turn.id,
             reporter=NullReporter(),
+            agent_context=agent_context,
         ),
         turn.id,
         selected,
@@ -387,3 +394,66 @@ async def test_Turn終端との遅延write競合ではResult_Event_Executionを�
     assert execution.status == ToolExecutionStatus.CANCELLED
     assert execution.completed_at == ctx.clock.now()
     assert events == []
+
+
+def _user_context(item_id: int, *, quarantined: bool = False) -> AgentContext:
+    entry = AgentContextEntry(
+        kind="item",
+        role="user",
+        content={"text": "remember"},
+        turn_id=1,
+        item_id=item_id,
+        item_type=AgentItemType.USER_MESSAGE,
+        context_class=AgentContextClass.CONVERSATION,
+        content_source=AgentContentSource.USER_INPUT,
+        context_status=(
+            AgentItemContextStatus.QUARANTINED if quarantined else AgentItemContextStatus.ACTIVE
+        ),
+    )
+    return AgentContext((entry,), 1)
+
+
+@pytest.mark.parametrize("quarantined", [False, True])
+async def test_provenanceはContext外と隔離済みUser入力を拒否する(
+    account: Account, ctx: ServiceContext, *, quarantined: bool
+) -> None:
+    reference = (ToolProvenanceRef(source=ToolProvenance.USER_INPUT, item_id=123),)
+    agent_context = _user_context(123, quarantined=True) if quarantined else None
+    executor, _, handler = await _executor(account, ctx, agent_context=agent_context)
+    result = await executor.invoke(
+        ToolCall(
+            name="sample_tool",
+            stable_key="outside",
+            arguments={"text": "x"},
+            provenance=reference,
+        )
+    )
+    assert result.error is not None and result.error.code == "TOOL_AUTHORIZATION_DENIED"
+    assert handler.calls == 0
+
+
+async def test_検証済みprovenanceを保存し同じstable_keyでの変更を競合にする(
+    account: Account, ctx: ServiceContext
+) -> None:
+    executor, turn_id, handler = await _executor(account, ctx, agent_context=_user_context(42))
+    first = await executor.invoke(
+        ToolCall(
+            name="sample_tool",
+            stable_key="provenance-conflict",
+            arguments={"text": "x"},
+            provenance=(ToolProvenanceRef(source=ToolProvenance.USER_INPUT, item_id=42),),
+        )
+    )
+    changed = await executor.invoke(
+        ToolCall(
+            name="sample_tool",
+            stable_key="provenance-conflict",
+            arguments={"text": "x"},
+            provenance=(ToolProvenanceRef(source=ToolProvenance.SYSTEM),),
+        )
+    )
+    items, _, _ = await _rows(ctx, turn_id)
+    assert first.success is True
+    assert changed.error is not None and changed.error.code == "TOOL_CALL_CONFLICT"
+    assert items[0].content["provenance"] == [{"source": "user_input", "item_id": 42}]
+    assert handler.calls == 1

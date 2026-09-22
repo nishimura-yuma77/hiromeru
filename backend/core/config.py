@@ -75,6 +75,11 @@ class Settings(BaseSettings):
     tool_max_attempts: int = 3
     tool_retry_backoff_seconds: float = 0.25
     tool_attempt_timeout_seconds: float = 30.0
+    tool_search_limit: int = 20
+    tool_session_item_limit: int = 20
+    tool_session_output_max_bytes: int = 64_000
+    tool_memory_content_max_length: int = 4_000
+    tool_memory_relation_limit: int = 20
     # Context量は決定論的にserializeしたJSONのUTF-8 byte数で測る。
     agent_context_compaction_threshold_bytes: int = 64_000
     agent_context_hard_limit_bytes: int = 128_000
@@ -160,8 +165,7 @@ class Settings(BaseSettings):
             raise ValueError("REQUEST_TIMEOUT_SECONDS は0秒より大きく300秒以下にしてください")
         if not 0 < self.turn_time_limit_seconds < self.request_timeout_seconds:
             raise ValueError(
-                "TURN_TIME_LIMIT_SECONDS は0秒より大きく"
-                "REQUEST_TIMEOUT_SECONDS未満にしてください"
+                "TURN_TIME_LIMIT_SECONDS は0秒より大きくREQUEST_TIMEOUT_SECONDS未満にしてください"
             )
         if self.stale_turn_seconds <= self.turn_time_limit_seconds:
             raise ValueError("STALE_TURN_SECONDS はTURN_TIME_LIMIT_SECONDSより大きくしてください")
@@ -183,6 +187,18 @@ class Settings(BaseSettings):
                 "AGENT_CONTEXT_COMPACTION_THRESHOLD_BYTES は"
                 " AGENT_CONTEXT_HARD_LIMIT_BYTES 未満にしてください"
             )
+        integer_limits = {
+            "TOOL_SEARCH_LIMIT": (self.tool_search_limit, 100),
+            "TOOL_SESSION_ITEM_LIMIT": (self.tool_session_item_limit, 100),
+            "TOOL_SESSION_OUTPUT_MAX_BYTES": (self.tool_session_output_max_bytes, 1_000_000),
+            "TOOL_MEMORY_CONTENT_MAX_LENGTH": (self.tool_memory_content_max_length, 20_000),
+            "TOOL_MEMORY_RELATION_LIMIT": (self.tool_memory_relation_limit, 100),
+        }
+        invalid = [
+            name for name, (value, maximum) in integer_limits.items() if not 0 < value <= maximum
+        ]
+        if invalid:
+            raise ValueError(f"Tool上限は正数かつ合理的な範囲にしてください: {', '.join(invalid)}")
 
     def auth_secret(self) -> str:
         """認証Tokenの署名境界でだけ署名鍵を平文として返す。"""

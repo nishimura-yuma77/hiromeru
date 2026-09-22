@@ -144,6 +144,7 @@ class TurnService:
                         session_id=prepared.session_id,
                         turn_id=prepared.turn_id,
                         reporter=reporter,
+                        agent_context=context,
                     ),
                 )
                 output = await self._ctx.agent_runner.run(run_input, reporter)

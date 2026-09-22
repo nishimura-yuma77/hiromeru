@@ -5,10 +5,10 @@ import uuid
 
 from fastapi import Request
 
+from agent_runtime.business_tools import ToolHandlerDependencies, build_default_tool_registry
 from agent_runtime.compactor import StubContextCompactor
 from agent_runtime.firewall import DenyAllAgentFirewall
 from agent_runtime.runner import StubAgentRunner
-from agent_runtime.tools import ToolRegistry
 from clients.embedding import OrcaRouterEmbeddingClient
 from clients.fakes import FakeEmbeddingClient, FakeXApiClient
 from clients.x_api import HttpXApiClient
@@ -40,15 +40,19 @@ def build_default_context(settings: Settings | None = None) -> ServiceContext:
             access_token_secret=resolved.x_access_token_secret.get_secret_value(),
             timeout_seconds=resolved.x_api_timeout_seconds,
         )
+    clock = SystemClock()
+    registry = build_default_tool_registry(
+        ToolHandlerDependencies(resolved, SessionLocal, embedding, clock)
+    )
     return ServiceContext(
         settings=resolved,
         session_factory=SessionLocal,
-        clock=SystemClock(),
+        clock=clock,
         embedding=embedding,
         x_api=x_api,
         agent_runner=StubAgentRunner(),
         context_compactor=StubContextCompactor(),
-        tool_registry=ToolRegistry(),
+        tool_registry=registry,
         agent_firewall=DenyAllAgentFirewall(),
         sleep=asyncio.sleep,
         new_uuid=uuid.uuid4,

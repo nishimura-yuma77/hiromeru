@@ -56,6 +56,27 @@ class MemoryRepository:
         )
         return (await self._session.execute(stmt)).first() is not None
 
+    async def insert(
+        self,
+        company_id: int,
+        content: str,
+        embedding: list[float],
+        campaign_ids: tuple[int, ...],
+        post_ids: tuple[int, ...],
+    ) -> AgentMemory:
+        """記憶本体と関連行を呼出元Transactionへ追加する。"""
+        memory = AgentMemory(company_id=company_id, content=content, embedding=embedding)
+        self._session.add(memory)
+        await self._session.flush()
+        self._session.add_all(
+            [
+                *(MemoryCampaign(memory_id=memory.id, campaign_id=value) for value in campaign_ids),
+                *(MemoryPost(memory_id=memory.id, post_id=value) for value in post_ids),
+            ]
+        )
+        await self._session.flush()
+        return memory
+
     async def list_recent(
         self,
         company_id: int,

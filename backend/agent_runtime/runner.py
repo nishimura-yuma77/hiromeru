@@ -8,6 +8,12 @@ from dataclasses import dataclass
 from typing import Any, Literal, Protocol
 
 from agent_runtime.tools import ToolInvoker
+from domain.enums import (
+    AgentContentSource,
+    AgentContextClass,
+    AgentItemContextStatus,
+    AgentItemType,
+)
 
 STUB_REPLY = "（スタブ応答）Agentの実行は未実装です。メッセージは履歴へ保存されました。"
 
@@ -26,9 +32,11 @@ class AgentContextEntry:
     content: dict[str, Any]
     turn_id: int | None = None
     item_id: int | None = None
-    item_type: str | None = None
-    context_class: str | None = None
-    content_source: str | None = None
+    item_type: AgentItemType | None = None
+    context_class: AgentContextClass | None = None
+    content_source: AgentContentSource | None = None
+    context_status: AgentItemContextStatus | None = None
+    source_item_ids: tuple[int, ...] = ()
 
 
 @dataclass(frozen=True)

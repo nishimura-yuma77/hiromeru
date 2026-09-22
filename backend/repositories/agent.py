@@ -402,6 +402,52 @@ class TurnRepository:
         )
         return (await self._session.execute(stmt)).scalar_one_or_none()
 
+    async def trusted_user_item(self, session_id: int, item_id: int) -> AgentItem | None:
+        """同じ親Sessionのactive user inputをDB正本から取得する。"""
+        stmt = (
+            select(AgentItem)
+            .join(AgentTurn, AgentTurn.id == AgentItem.agent_turn_id)
+            .join(AgentSession, AgentSession.id == AgentTurn.session_id)
+            .where(
+                AgentItem.id == item_id,
+                AgentTurn.session_id == session_id,
+                AgentSession.agent == AgentType.PARENT,
+                AgentSession.parent_session_id.is_(None),
+                AgentItem.item_type == AgentItemType.USER_MESSAGE,
+                AgentItem.content_source == AgentContentSource.USER_INPUT,
+                AgentItem.context_status == AgentItemContextStatus.ACTIVE,
+            )
+        )
+        return (await self._session.execute(stmt)).scalar_one_or_none()
+
+    async def checkpoint_source_items(
+        self, session_id: int, current_turn_id: int, item_ids: list[int]
+    ) -> list[tuple[AgentTurn, AgentItem]] | None:
+        """最新Checkpointに含まれる同じ親Sessionの完了Itemを全件取得する。"""
+        current = await self.get_turn(session_id, current_turn_id)
+        if current is None:
+            return None
+        checkpoint = await self.latest_checkpoint(
+            session_id, before_turn_number=current.turn_number
+        )
+        if checkpoint is None or not set(item_ids).issubset(checkpoint.source_item_ids):
+            return None
+        stmt = (
+            select(AgentTurn, AgentItem)
+            .join(AgentItem, AgentItem.agent_turn_id == AgentTurn.id)
+            .join(AgentSession, AgentSession.id == AgentTurn.session_id)
+            .where(
+                AgentItem.id.in_(item_ids),
+                AgentTurn.session_id == session_id,
+                AgentTurn.status == AgentTurnStatus.COMPLETED,
+                AgentSession.agent == AgentType.PARENT,
+                AgentSession.parent_session_id.is_(None),
+            )
+            .order_by(AgentTurn.turn_number, AgentItem.item_number)
+        )
+        rows = list((await self._session.execute(stmt)).tuples())
+        return rows if len(rows) == len(item_ids) else None
+
     async def recent_security_events(
         self, session_id: int, *, before_turn_number: int, turn_limit: int = 5
     ) -> list[SecurityEvent]:
@@ -630,13 +676,19 @@ class ToolExecutionRepository:
 
     @staticmethod
     def _require_matching_call(
-        tool_call: AgentItem, *, name: str, arguments: dict[str, Any]
+        tool_call: AgentItem,
+        *,
+        name: str,
+        arguments: dict[str, Any],
+        provenance: list[dict[str, Any]],
     ) -> None:
-        expected = {
+        expected: dict[str, Any] = {
             "name": name,
             "call_key": tool_call.idempotency_key.removeprefix("tool:"),
             "arguments": arguments,
         }
+        if provenance:
+            expected["provenance"] = provenance
         if tool_call.content != expected:
             raise ToolCallConflictError
 
@@ -684,6 +736,7 @@ class ToolExecutionRepository:
         stable_key: str,
         name: str,
         arguments: dict[str, Any],
+        provenance: list[dict[str, Any]],
         now: datetime,
     ) -> PreparedToolExecution | None:
         """Running Turnだけにtool_callとpending executionをget-or-createする。"""
@@ -714,7 +767,12 @@ class ToolExecutionRepository:
                 context_class=AgentContextClass.CONVERSATION,
                 content_source=AgentContentSource.AGENT_OUTPUT,
                 context_status=AgentItemContextStatus.ACTIVE,
-                content={"name": name, "call_key": stable_key, "arguments": arguments},
+                content={
+                    "name": name,
+                    "call_key": stable_key,
+                    "arguments": arguments,
+                    **({"provenance": provenance} if provenance else {}),
+                },
                 created_at=now,
             )
             turn.next_item_number += 1
@@ -723,7 +781,9 @@ class ToolExecutionRepository:
         elif tool_call.item_type != AgentItemType.TOOL_CALL:
             return None
         else:
-            self._require_matching_call(tool_call, name=name, arguments=arguments)
+            self._require_matching_call(
+                tool_call, name=name, arguments=arguments, provenance=provenance
+            )
         execution = (
             await self._session.execute(
                 select(ToolExecution).where(ToolExecution.tool_call_item_id == tool_call.id)
@@ -809,6 +869,7 @@ class ToolExecutionRepository:
         *,
         name: str,
         arguments: dict[str, Any],
+        provenance: list[dict[str, Any]],
     ) -> AgentItem | None:
         """論理Call keyに対応する保存済みterminal resultを返す。"""
         tool_call = (
@@ -822,7 +883,9 @@ class ToolExecutionRepository:
         ).scalar_one_or_none()
         if tool_call is None:
             return None
-        self._require_matching_call(tool_call, name=name, arguments=arguments)
+        self._require_matching_call(
+            tool_call, name=name, arguments=arguments, provenance=provenance
+        )
         return await self.terminal_result(turn_id, tool_call.id)
 
     async def finish(
@@ -864,13 +927,15 @@ class ToolExecutionRepository:
             return None
         execution_status = (
             await self._session.execute(
-                select(ToolExecution.status).where(
+                select(ToolExecution.status)
+                .where(
                     ToolExecution.id == execution_id,
                     ToolExecution.tool_call_item_id == tool_call_item_id,
                     ToolExecution.status.in_(
                         [ToolExecutionStatus.PENDING, ToolExecutionStatus.RUNNING]
                     ),
-                ).with_for_update()
+                )
+                .with_for_update()
             )
         ).scalar_one_or_none()
         if execution_status is None:
