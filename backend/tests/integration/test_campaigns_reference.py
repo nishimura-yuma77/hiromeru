@@ -168,6 +168,7 @@ async def test_編集_expected_updated_atがないとき400(account: Account) ->
 
     assert response.status_code == 400
     assert response.json()["error"]["code"] == "INVALID_ARGUMENT"
+    assert response.json()["error"]["field_errors"][0]["field"] == "expected_updated_at"
 
 
 async def test_編集_業務条件違反のとき422_INVALID_CAMPAIGN(account: Account) -> None:
@@ -182,6 +183,7 @@ async def test_編集_業務条件違反のとき422_INVALID_CAMPAIGN(account: A
 
     assert response.status_code == 422
     assert response.json()["error"]["code"] == "INVALID_CAMPAIGN"
+    assert response.json()["error"]["field_errors"][0]["field"] == "title"
 
 
 async def test_編集_CSRFトークンがないとき403(account: Account) -> None:

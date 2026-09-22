@@ -116,6 +116,9 @@ async def test_メッセージ検証_空のとき400でTurnを作らない(accou
     response = await _send(account, session_id, "   ")
 
     assert response.status_code == 400
+    assert response.json()["error"]["field_errors"] == [
+        {"field": "message", "code": "REQUIRED", "message": "メッセージを入力してください。"}
+    ]
     history = (await account.client.get(f"/api/v1/agent-sessions/{session_id}")).json()["data"]
     assert history["turns"] == []
 
@@ -126,6 +129,7 @@ async def test_メッセージ検証_上限を超えるとき400(account: Accoun
     response = await _send(account, session_id, "あ" * 4001)
 
     assert response.status_code == 400
+    assert response.json()["error"]["field_errors"][0]["code"] == "TOO_LONG"
 
 
 async def test_メッセージ送信_他人のSessionのとき404(

@@ -5,7 +5,7 @@
 """
 
 from datetime import datetime
-from typing import Annotated, Self
+from typing import Annotated
 
 from pydantic import (
     BaseModel,
@@ -13,11 +13,15 @@ from pydantic import (
     ConfigDict,
     Field,
     StringConstraints,
-    ValidationError,
-    model_validator,
+    ValidationInfo,
+    field_validator,
 )
 
-from domain.constants import MAX_CAMPAIGN_TEXT_LENGTH, MAX_CAMPAIGN_TITLE_LENGTH
+from domain.constants import (
+    MAX_CAMPAIGN_TEXT_LENGTH,
+    MAX_CAMPAIGN_TITLE_LENGTH,
+    MAX_LANDING_URL_LENGTH,
+)
 from domain.timefmt import parse_aware_datetime
 
 
@@ -71,16 +75,21 @@ class CampaignUpsertRequest(CampaignFields):
     """施策の登録・更新（4.1）。`id` があれば上書き、なければ新規作成。"""
 
     id: PositiveId | None = None
-    expected_updated_at: AwareDatetime | None = None
+    expected_updated_at: AwareDatetime | None = Field(default=None, validate_default=True)
 
-    @model_validator(mode="after")
-    def _check_expected_updated_at(self) -> Self:
+    @field_validator("expected_updated_at")
+    @classmethod
+    def _check_expected_updated_at(
+        cls, value: datetime | None, info: ValidationInfo
+    ) -> datetime | None:
         """上書きでは `expected_updated_at` が必須。新規作成では指定しない。"""
-        if self.id is not None and self.expected_updated_at is None:
+        del cls
+        campaign_id = info.data.get("id")
+        if campaign_id is not None and value is None:
             raise ValueError("上書きには expected_updated_at が必要です")
-        if self.id is None and self.expected_updated_at is not None:
+        if campaign_id is None and value is not None:
             raise ValueError("新規作成では expected_updated_at を指定できません")
-        return self
+        return value
 
 
 class XPostRequest(StrictModel):
@@ -88,16 +97,13 @@ class XPostRequest(StrictModel):
 
     campaign_id: PositiveId
     body: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
-    landing_url: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
+    landing_url: Annotated[
+        str,
+        StringConstraints(strip_whitespace=True, min_length=1, max_length=MAX_LANDING_URL_LENGTH),
+    ]
 
 
 class MessageRequest(StrictModel):
     """メッセージ送信（5.3）。上限の文字数は設定値のため、サービスで検証する。"""
 
     message: str
-
-
-def first_error_field(error: ValidationError) -> str:
-    """最初の検証エラーのフィールド名を返す（利用者向けの説明用）。値は含めない。"""
-    location = error.errors()[0]["loc"]
-    return ".".join(str(part) for part in location) or "body"

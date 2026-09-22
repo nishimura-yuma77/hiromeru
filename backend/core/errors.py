@@ -1,6 +1,19 @@
 """業務エラー。エラーコードは API_DESIGN 10章に登録されたものだけを使う（BE_STD 8章）。"""
 
-from typing import Final
+from typing import Final, Literal, TypedDict
+
+type FieldErrorCode = Literal[
+    "REQUIRED", "TOO_LONG", "INVALID_FORMAT", "INVALID_URL", "X_LENGTH_EXCEEDED"
+]
+
+
+class FieldError(TypedDict):
+    """入力Fieldへ対応付けられる、Frontend向けの安定したError。"""
+
+    field: str | None
+    code: FieldErrorCode
+    message: str
+
 
 # code -> (HTTP Status, 再試行可否)。API_DESIGN 10章の一覧と1対1に対応させる。
 ERROR_SPECS: Final[dict[str, tuple[int, bool]]] = {
@@ -94,6 +107,7 @@ class AppError(Exception):
         agent_turn_id: int | None = None,
         retryable: bool | None = None,
         retry_after_seconds: int | None = None,
+        field_errors: list[FieldError] | None = None,
     ) -> None:
         """エラーを作る。
 
@@ -103,6 +117,7 @@ class AppError(Exception):
             agent_turn_id: 履歴へ保存したTurnのID。保存しないエラーでは None。
             retryable: 再試行可否。省略時はコードの既定値を使う（X_POST_FAILED のみ上書きする）。
             retry_after_seconds: `Retry-After` ヘッダーに設定する秒数。
+            field_errors: 入力FieldごとのError。入力以外のErrorでは空配列。
 
         Raises:
             ValueError: 未登録のエラーコードが指定された場合。
@@ -118,6 +133,17 @@ class AppError(Exception):
         self.retryable = default_retryable if retryable is None else retryable
         self.agent_turn_id = agent_turn_id
         self.retry_after_seconds = retry_after_seconds
+        self.field_errors = list(field_errors or [])
+
+    def serialize(self) -> dict[str, object]:
+        """APIの共通Error Objectへ変換する。"""
+        return {
+            "code": self.code,
+            "message": self.message,
+            "retryable": self.retryable,
+            "agent_turn_id": self.agent_turn_id,
+            "field_errors": self.field_errors,
+        }
 
 
 class LeaseLostError(Exception):

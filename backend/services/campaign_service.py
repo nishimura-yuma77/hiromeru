@@ -7,7 +7,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from clients.errors import EmbeddingError
 from core.errors import AppError
 from core.logging import get_logger, safe_error_text
-from domain.campaign_rules import CampaignContent, find_campaign_violation
+from domain.campaign_rules import CampaignContent, campaign_field_errors
 from domain.constants import CAMPAIGN_DETAIL_MEMORIES_LIMIT, CAMPAIGN_DETAIL_POSTS_LIMIT
 from domain.cursor import encode_cursor
 from domain.metrics import EMPTY_SUMMARY
@@ -208,9 +208,9 @@ class CampaignService:
             existing = await repository.get(auth.company_id, campaign_id)
             if existing is None:
                 raise AppError("CAMPAIGN_NOT_FOUND")
-            violation = find_campaign_violation(content)
-            if violation is not None:
-                raise AppError("INVALID_CAMPAIGN", violation)
+            field_errors = campaign_field_errors(content)
+            if field_errors:
+                raise AppError("INVALID_CAMPAIGN", field_errors=field_errors)
             # Embedding生成の前に競合を検出する。timestamptz の値として比較する。
             if existing.updated_at != request.expected_updated_at:
                 raise AppError("CAMPAIGN_CONFLICT")

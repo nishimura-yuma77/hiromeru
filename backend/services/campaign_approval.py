@@ -8,7 +8,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from clients.errors import EmbeddingError
 from core.errors import AppError, LeaseLostError
 from core.logging import get_logger, safe_error_text
-from domain.campaign_rules import CampaignContent, find_campaign_violation
+from domain.campaign_rules import CampaignContent, campaign_field_errors
 from domain.constants import IN_PROGRESS_RETRY_AFTER_SECONDS
 from domain.enums import ApiIdempotencyStatus, ApiOperation
 from domain.requests import CampaignUpsertRequest
@@ -96,9 +96,9 @@ class CampaignApprovalService:
             request.objective,
             request.plan,
         )
-        violation = find_campaign_violation(content)
-        if violation is not None:
-            raise AppError("INVALID_CAMPAIGN", violation)
+        field_errors = campaign_field_errors(content)
+        if field_errors:
+            raise AppError("INVALID_CAMPAIGN", field_errors=field_errors)
         stored_hash: str | None = None
         if request.id is not None:
             async with self._ctx.session_factory() as session:
@@ -178,7 +178,11 @@ class CampaignApprovalService:
     async def _fail(self, ctx: ExecutionContext, error: AppError) -> ApprovalOutcome:
         """マスク済みエラー・Turn完了・`failed` の確定を、同一Transactionで保存する。"""
         failed = AppError(
-            error.code, error.message, agent_turn_id=ctx.turn_id, retryable=error.retryable
+            error.code,
+            error.message,
+            agent_turn_id=ctx.turn_id,
+            retryable=error.retryable,
+            field_errors=error.field_errors,
         )
         body = error_body(failed)
         now = self._ctx.clock.now()

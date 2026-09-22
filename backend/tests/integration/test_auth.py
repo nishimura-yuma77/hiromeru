@@ -79,7 +79,9 @@ async def test_me_Cookieがないとき401でCookieを削除する(anonymous: As
     response = await anonymous.get("/api/v1/auth/me")
 
     assert response.status_code == 401
-    assert response.json()["error"]["code"] == "UNAUTHENTICATED"
+    error = response.json()["error"]
+    assert error["code"] == "UNAUTHENTICATED"
+    assert error["field_errors"] == []
     deleted = response.headers.get_list("set-cookie")
     assert any("hiromeru_session=" in c and "Max-Age=0" in c for c in deleted)
     assert any("csrf_token=" in c and "Max-Age=0" in c for c in deleted)

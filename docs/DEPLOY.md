@@ -11,7 +11,8 @@
 
 - backendのエントリポイントは`backend/main.py`です。アプリケーション本体は`backend/`直下（`api/`、`services/`など）にあり、`main.py`が`backend/`をimportパスへ追加して`app`を公開します（Vercelがimportパスを文書化していないため）。
 - backendの`maxDuration`は、`vercel.json`の`services.backend.functions`で300秒（Hobbyの上限）に明示しています。プランを変更する場合は、この値と冪等性のLease（`API_DESIGN.md`の2.3）を見直してください。
-- Preview Deploymentで、`/api/health`と`/api/health/db`が応答すること、およびbackendの依存関係（`requirements.txt`）が読み込まれていることを確認してください。
+- backendの依存関係は`pyproject.toml`で宣言し、`uv.lock`で固定します。Vercelは`uv.lock`を検出して`uv`で依存関係を復元します。
+- Preview Deploymentで、`/api/health`と`/api/health/db`が応答することを確認してください。
 
 Git連携後はPull RequestごとにPreview Deploymentが作成され、`main`へのmergeでProduction Deploymentが自動実行されます。
 
