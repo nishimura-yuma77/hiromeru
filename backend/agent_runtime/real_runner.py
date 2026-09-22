@@ -292,7 +292,10 @@ class RealAgentRunner:
             return None
         recovered.add(target)
         async with self._ctx.session_factory() as session, session.begin():
-            quarantined = await TurnRepository(session).quarantine_item(
+            turns = TurnRepository(session)
+            if not await turns.is_running(turn_id, lock=True):
+                raise AgentRunError("TURN_INTERRUPTED")
+            quarantined = await turns.quarantine_item(
                 target,
                 reason="prompt_injection",
                 context_override={"security_notice": "Untrusted content was quarantined."},
@@ -320,6 +323,8 @@ class RealAgentRunner:
         self, turn_id: int, llm_call_id: int | None, item_id: int | None
     ) -> None:
         async with self._ctx.session_factory() as session, session.begin():
+            if not await TurnRepository(session).is_running(turn_id, lock=True):
+                raise AgentRunError("TURN_INTERRUPTED")
             session.add(
                 SecurityEvent(
                     agent_turn_id=turn_id,

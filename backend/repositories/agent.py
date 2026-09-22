@@ -81,6 +81,10 @@ class ToolCallConflictError(ValueError):
     """同じstable keyが異なるTool Call内容へ再利用された。"""
 
 
+class TurnNotRunningError(RuntimeError):
+    """runningではないTurnへの追記を拒否した。"""
+
+
 class SessionRepository:
     """親セッションのDBアクセス。すべてマーケターの条件を含める。"""
 
@@ -171,14 +175,36 @@ class TurnRepository:
         対象は、pending・running のまま復旧判定時間を超えた、API実行Turnではない Turn。
         `status` を条件とする条件付きUPDATEのため、何度呼んでも結果は変わらない。
         """
+        return await self._recover_stale(
+            session_id=session_id, threshold=threshold, now=now, message=message
+        )
+
+    async def recover_all_stale(
+        self, *, threshold: datetime, now: datetime, message: str
+    ) -> list[int]:
+        """未訪問の親・子Sessionを含む全中断Turnを定期処理用に復旧する。"""
+        return await self._recover_stale(
+            session_id=None, threshold=threshold, now=now, message=message
+        )
+
+    async def _recover_stale(
+        self,
+        *,
+        session_id: int | None,
+        threshold: datetime,
+        now: datetime,
+        message: str,
+    ) -> list[int]:
+        conditions = [
+            AgentTurn.status.in_([AgentTurnStatus.PENDING, AgentTurnStatus.RUNNING]),
+            func.coalesce(AgentTurn.started_at, AgentTurn.created_at) < threshold,
+            ~self._is_api_turn(AgentTurn.id),
+        ]
+        if session_id is not None:
+            conditions.append(AgentTurn.session_id == session_id)
         stmt = (
             update(AgentTurn)
-            .where(
-                AgentTurn.session_id == session_id,
-                AgentTurn.status.in_([AgentTurnStatus.PENDING, AgentTurnStatus.RUNNING]),
-                func.coalesce(AgentTurn.started_at, AgentTurn.created_at) < threshold,
-                ~self._is_api_turn(AgentTurn.id),
-            )
+            .where(*conditions)
             .values(
                 status=AgentTurnStatus.FAILED,
                 error_code="TURN_INTERRUPTED",
@@ -204,6 +230,15 @@ class TurnRepository:
             )
             await self._session.execute(cancel)
         return recovered
+
+    async def is_running(self, turn_id: int, *, lock: bool = False) -> bool:
+        """Turnがrunningか確認し、必要なら復旧処理との順序を行Lockで確定する。"""
+        stmt = select(AgentTurn.id).where(
+            AgentTurn.id == turn_id, AgentTurn.status == AgentTurnStatus.RUNNING
+        )
+        if lock:
+            stmt = stmt.with_for_update()
+        return (await self._session.execute(stmt)).scalar_one_or_none() is not None
 
     async def has_active_chat_turn(self, session_id: int) -> bool:
         """pending・running のAgent Turn（API実行Turnを除く）があるか。"""
@@ -252,8 +287,12 @@ class TurnRepository:
         """アイテムを追記する。同じ `key` が保存済みなら、それを返す（二重保存を防ぐ）。"""
         existing = (
             await self._session.execute(
-                select(AgentItem).where(
-                    AgentItem.agent_turn_id == turn_id, AgentItem.idempotency_key == key
+                select(AgentItem)
+                .join(AgentTurn, AgentTurn.id == AgentItem.agent_turn_id)
+                .where(
+                    AgentItem.agent_turn_id == turn_id,
+                    AgentItem.idempotency_key == key,
+                    AgentTurn.status == AgentTurnStatus.RUNNING,
                 )
             )
         ).scalar_one_or_none()
@@ -263,11 +302,16 @@ class TurnRepository:
         number = (
             await self._session.execute(
                 update(AgentTurn)
-                .where(AgentTurn.id == turn_id)
+                .where(
+                    AgentTurn.id == turn_id,
+                    AgentTurn.status == AgentTurnStatus.RUNNING,
+                )
                 .values(next_item_number=AgentTurn.next_item_number + 1)
                 .returning(AgentTurn.next_item_number - 1)
             )
-        ).scalar_one()
+        ).scalar_one_or_none()
+        if number is None:
+            raise TurnNotRunningError
         item = AgentItem(
             agent_turn_id=turn_id,
             item_number=number,
