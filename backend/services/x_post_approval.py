@@ -38,7 +38,7 @@ from services.approval import (
     success_body,
 )
 from services.context import AuthContext, ServiceContext
-from services.validation import validate_model
+from services.validation import BodyLoader, validate_model
 
 _log = get_logger(__name__)
 
@@ -62,7 +62,7 @@ class XPostApprovalService:
         self._executor = ApprovalExecutor(ctx)
 
     async def publish(
-        self, auth: AuthContext, session_id: int, raw_body: bytes, key_header: str | None
+        self, auth: AuthContext, session_id: int, body_loader: BodyLoader, key_header: str | None
     ) -> ApprovalOutcome:
         """投稿を公開する。
 
@@ -70,7 +70,7 @@ class XPostApprovalService:
             AppError: 履歴へ保存しないエラー（親Session・Body・キー・処理中など）。
         """
         prepared = await self._executor.prepare(
-            auth, session_id, ApiOperation.PUBLISH_X_POST, raw_body, key_header
+            auth, session_id, ApiOperation.PUBLISH_X_POST, body_loader, key_header
         )
         if isinstance(prepared, ApprovalOutcome):
             return prepared
@@ -169,25 +169,35 @@ class XPostApprovalService:
             )
             if not started:
                 raise LeaseLostError
+        external_saved = False
         try:
-            result = await self._ctx.x_api.post(text)
-        except XApiRejectedError as error:
-            failure = AppError("X_POST_FAILED", retryable=error.retryable)
-            return await self._fail(ctx, failure, ApiIdempotencyStatus.FAILED)
-        except XApiOutcomeUnknownError as error:
-            _log.warning("x_post_outcome_unknown", error=safe_error_text(error))
+            try:
+                result = await self._ctx.x_api.post(text)
+            except XApiRejectedError as error:
+                failure = AppError("X_POST_FAILED", retryable=error.retryable)
+                return await self._fail(ctx, failure, ApiIdempotencyStatus.FAILED)
+            except XApiOutcomeUnknownError as error:
+                _log.warning("x_post_outcome_unknown", error=safe_error_text(error))
+                return await self._outcome_unknown(ctx)
+            published_at = self._ctx.clock.now()
+            external = {
+                "x_post_id": result.x_post_id,
+                "text": text,
+                "tracked_url": tracking.tracked_url,
+                "published_at": format_utc(published_at),
+            }
+            if not await self._save_external_result(ctx, external):
+                return await self._outcome_unknown(ctx)
+            external_saved = True
+            published = _PublishedPost(request.body, result.x_post_id, published_at, tracking)
+            return await self._save_with_retry(ctx, request.campaign_id, published, embedding)
+        except LeaseLostError:
+            raise
+        except Exception as error:  # noqa: BLE001 - 外部作用開始後は結果不明として安全側へ倒す
+            _log.error("x_post_unexpected_error", error=safe_error_text(error))
+            if external_saved:
+                return await self._save_failed(ctx)
             return await self._outcome_unknown(ctx)
-        published_at = self._ctx.clock.now()
-        external = {
-            "x_post_id": result.x_post_id,
-            "text": text,
-            "tracked_url": tracking.tracked_url,
-            "published_at": format_utc(published_at),
-        }
-        if not await self._save_external_result(ctx, external):
-            return await self._outcome_unknown(ctx)
-        published = _PublishedPost(request.body, result.x_post_id, published_at, tracking)
-        return await self._save_with_retry(ctx, request.campaign_id, published, embedding)
 
     async def _save_external_result(self, ctx: ExecutionContext, external: dict[str, Any]) -> bool:
         """X投稿の成功結果を、独立した短いTransactionで保存する。保存できなければ False。"""

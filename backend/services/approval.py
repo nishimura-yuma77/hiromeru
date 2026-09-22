@@ -30,7 +30,7 @@ from models import ApiIdempotencyRequest
 from repositories.agent import SessionRepository, TurnRepository
 from repositories.idempotency import IdempotencyRepository
 from services.context import AuthContext, ServiceContext
-from services.validation import parse_json_object
+from services.validation import BodyLoader, parse_json_object
 
 
 @dataclass(frozen=True)
@@ -178,7 +178,7 @@ class ApprovalExecutor:
         auth: AuthContext,
         session_id: int,
         operation: ApiOperation,
-        raw_body: bytes,
+        body_loader: BodyLoader,
         key_header: str | None,
     ) -> Prepared | ApprovalOutcome:
         """実行権を取得する。保存済みResponseの再返却では `ApprovalOutcome` を返す。
@@ -191,7 +191,7 @@ class ApprovalExecutor:
             if await SessionRepository(session).get_parent(auth.marketer_id, session_id) is None:
                 raise AppError("AGENT_SESSION_NOT_FOUND")
         # 2. 安全な解析とマスク。3. Idempotency-Key。
-        body = parse_json_object(raw_body)
+        body = parse_json_object(await body_loader())
         key = parse_idempotency_key(key_header)
         return await self._claim(auth, session_id, operation, key, body)
 

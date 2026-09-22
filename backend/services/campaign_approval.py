@@ -24,7 +24,7 @@ from services.approval import (
     success_body,
 )
 from services.context import AuthContext, ServiceContext
-from services.validation import validate_model
+from services.validation import BodyLoader, validate_model
 
 _log = get_logger(__name__)
 
@@ -52,7 +52,7 @@ class CampaignApprovalService:
         self._executor = ApprovalExecutor(ctx)
 
     async def upsert(
-        self, auth: AuthContext, session_id: int, raw_body: bytes, key_header: str | None
+        self, auth: AuthContext, session_id: int, body_loader: BodyLoader, key_header: str | None
     ) -> ApprovalOutcome:
         """施策を登録または更新する。
 
@@ -60,7 +60,7 @@ class CampaignApprovalService:
             AppError: 履歴へ保存しないエラー（親Session・Body・キー・処理中など）。
         """
         prepared = await self._executor.prepare(
-            auth, session_id, ApiOperation.UPSERT_CAMPAIGN, raw_body, key_header
+            auth, session_id, ApiOperation.UPSERT_CAMPAIGN, body_loader, key_header
         )
         if isinstance(prepared, ApprovalOutcome):
             return prepared

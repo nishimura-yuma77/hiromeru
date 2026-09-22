@@ -68,6 +68,7 @@ class Settings(BaseSettings):
     cron_memory_max_attempts: int = 3
 
     # Agent Turn（API_DESIGN 5.3、AGENT_DESIGN「Turnの上限」「中断されたTurnの復旧」）。
+    request_timeout_seconds: float = 300.0
     message_max_length: int = 4000
     turn_time_limit_seconds: float = 200.0
     stale_turn_seconds: float = 330.0
@@ -88,6 +89,7 @@ class Settings(BaseSettings):
         self._validate_environment(is_deployed)
         self._validate_external_clients()
         self._validate_cron_limits()
+        self._validate_runtime_limits()
         if self.embedding_dimensions != EMBEDDING_DIMENSIONS:
             # DB の列は vector(1536) に固定のため、次元数を変えるには移行が必要（BE_STD 13章）。
             raise ValueError("EMBEDDING_DIMENSIONS がDBの列の次元数と一致しません")
@@ -145,6 +147,11 @@ class Settings(BaseSettings):
             raise ValueError("CRON_MEMORY_MAX_ITEMS は BATCH_SIZE 以上にしてください")
         if self.lease_seconds <= _MAX_DURATION_SECONDS:
             raise ValueError("LEASE_SECONDS は300秒より長くしてください")
+
+    def _validate_runtime_limits(self) -> None:
+        """Request全体のTimeoutをVercelの実行上限内に保つ。"""
+        if not 0 < self.request_timeout_seconds <= _MAX_DURATION_SECONDS:
+            raise ValueError("REQUEST_TIMEOUT_SECONDS は0秒より大きく300秒以下にしてください")
 
     def auth_secret(self) -> str:
         """認証Tokenの署名境界でだけ署名鍵を平文として返す。"""

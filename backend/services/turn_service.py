@@ -17,7 +17,7 @@ from domain.requests import MessageRequest
 from repositories.agent import SessionRepository, TurnRepository
 from services.context import AuthContext, ServiceContext
 from services.turn_view import TurnViewLoader
-from services.validation import parse_json_object, validate_model
+from services.validation import BodyLoader, parse_json_object, validate_model
 from services.views import TurnView
 
 _log = get_logger(__name__)
@@ -42,7 +42,9 @@ class TurnService:
         """サービスの依存を受け取る。"""
         self._ctx = ctx
 
-    async def begin(self, auth: AuthContext, session_id: int, raw_body: bytes) -> PreparedTurn:
+    async def begin(
+        self, auth: AuthContext, session_id: int, body_loader: BodyLoader
+    ) -> PreparedTurn:
         """Turnを `running` で作成し、マスク済みの入力を保存する。
 
         Raises:
@@ -54,7 +56,7 @@ class TurnService:
         if current is None or current.archived_at is not None:
             raise AppError("AGENT_SESSION_NOT_FOUND")
         # 3. Request Bodyの検証。不正な場合はTurnを作成しない。
-        message = self._validate_message(raw_body)
+        message = self._validate_message(await body_loader())
         masked = mask_text(message)
         now = self._ctx.clock.now()
         # 4. Session行をロックし、復旧 → 実行中の確認 → Turn作成を1つの短いTransactionで行う。

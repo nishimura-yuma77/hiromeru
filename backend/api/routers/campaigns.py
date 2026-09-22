@@ -7,6 +7,7 @@ from fastapi.responses import JSONResponse
 
 from api.deps import Authenticated, Context, CsrfProtected
 from api.queries import parse_query_datetime
+from api.request_body import read_json_body
 from api.responses import ok
 from api.serializers import (
     serialize_campaign_detail,
@@ -56,5 +57,5 @@ async def edit_campaign(
     campaign_id: CampaignId, request: Request, ctx: Context, auth: CsrfProtected
 ) -> JSONResponse:
     """保存済みの施策を、フォームの内容で全項目上書きする。Agent履歴・冪等性は使わない。"""
-    body = validate_model(CampaignEditRequest, parse_json_object(await request.body()))
+    body = validate_model(CampaignEditRequest, parse_json_object(await read_json_body(request)))
     return ok(serialize_campaign_edit(await CampaignService(ctx).edit(auth, campaign_id, body)))

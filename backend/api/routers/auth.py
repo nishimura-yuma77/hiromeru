@@ -5,6 +5,7 @@ from fastapi.responses import JSONResponse
 
 from api.cookies import csrf_cookie, deletion_cookies, session_cookie
 from api.deps import Authenticated, Context, verify_origin
+from api.request_body import read_json_body
 from api.responses import ok
 from core.security import issue_csrf_token, issue_session_token
 from domain.requests import LoginRequest
@@ -20,7 +21,7 @@ async def login(request: Request, ctx: Context) -> JSONResponse:
 
     ログインは `csrf_token` Cookieをまだ持たないため、Origin検証だけを適用する。
     """
-    body = validate_model(LoginRequest, parse_json_object(await request.body()))
+    body = validate_model(LoginRequest, parse_json_object(await read_json_body(request)))
     marketer = await AuthService(ctx).login(body.email, body.password)
     now = ctx.clock.now()
     session_token, idle_expires_at = issue_session_token(

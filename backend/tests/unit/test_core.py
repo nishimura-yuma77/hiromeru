@@ -240,6 +240,8 @@ def test_設定_ProductionだけCron_Secretを必須にする() -> None:
         ({"cron_memory_max_items": 19}, "CRON_MEMORY_MAX_ITEMS"),
         ({"cron_memory_max_attempts": 0}, "CRON_MEMORY_MAX_ATTEMPTS"),
         ({"lease_seconds": 300}, "LEASE_SECONDS"),
+        ({"request_timeout_seconds": 0}, "REQUEST_TIMEOUT_SECONDS"),
+        ({"request_timeout_seconds": 300.1}, "REQUEST_TIMEOUT_SECONDS"),
     ],
 )
 def test_設定_Cron上限とLease境界を検証する(overrides: dict[str, object], message: str) -> None:
