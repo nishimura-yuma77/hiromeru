@@ -4,6 +4,7 @@ import re
 import unicodedata
 
 from core.canonical import sha256_hex
+from domain.campaign_rules import CampaignContent
 from domain.x_text import URL_PATTERN
 
 _WHITESPACE = re.compile(r"\s+")
@@ -13,16 +14,15 @@ def _normalize(text: str) -> str:
     return _WHITESPACE.sub(" ", unicodedata.normalize("NFKC", text)).strip()
 
 
-def build_campaign_search_text(
-    target_profile: str, background: str, objective: str, plan: str
-) -> str:
-    """施策の検索用テキストを作る。表示用の title は含めない。"""
+def build_campaign_search_text(content: CampaignContent) -> str:
+    """施策の5項目から検索用テキストを作る。"""
     return "\n".join(
         (
-            f"ターゲット像: {_normalize(target_profile)}",
-            f"実施背景: {_normalize(background)}",
-            f"施策目的: {_normalize(objective)}",
-            f"施策内容: {_normalize(plan)}",
+            f"施策タイトル: {_normalize(content.title)}",
+            f"ターゲット像: {_normalize(content.target_profile)}",
+            f"実施背景: {_normalize(content.background)}",
+            f"施策目的: {_normalize(content.objective)}",
+            f"施策内容: {_normalize(content.plan)}",
         )
     )
 
