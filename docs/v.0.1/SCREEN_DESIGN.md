@@ -1,4 +1,4 @@
-# 画面設計書（v0.16）
+# 画面設計書（v0.17）
 
 対象: hiromeru（AI支援型Xマーケティングシステム）MVP の画面一覧
 
@@ -18,7 +18,7 @@
 1. **チャット中心にする。** 施策と投稿の作成、Agentの提案を受けた変更、承認は、チャット画面（SC-02）で行う。SC-04からSC-09は原則として参照用とし、例外は、施策を人が直接書き換えるSC-05の編集と、不要な記憶を削除するSC-09の操作だけとする
 2. **承認は、フォームの最終承認ボタンで行う。** ボタン押下時のAPI呼び出しが最終承認になる。自由文の同意は承認として扱わない
 3. **業務画面には、確定した情報だけを表示する。** 提案中の施策と未公開の投稿案は、チャットの履歴とフォームにだけ存在する。施策一覧と投稿一覧には、承認して保存された施策と、Xへ公開済みの投稿だけを表示する
-4. **施策の直接編集は、SC-05で行える。削除の画面は作らない。** Agentに相談して変更する場合はSC-02で提案を受けて承認し、人が自分で書き換える場合はSC-05の編集フォームで保存する。前者は施策のupsert（`API_DESIGN.md`の4.1。Sessionの配下）、後者は施策編集API（同4.2。Sessionに関わらない）を使い、上書きには画面を表示した（または提案を受けた）時点の`updated_at`を使う。公開済みの投稿は、変更も削除もできない
+4. **施策の直接編集は、SC-05で行える。削除の画面は作らない。** Agentに相談して変更する場合はSC-02で提案を受けて承認し、人が自分で書き換える場合はSC-05の編集フォームで保存する。前者は施策のupsert（`API_DESIGN.md`の4.1。Sessionの配下）、後者は施策編集API（同4.2。Sessionに関わらない）を使い、上書きには画面を表示した（または提案を受けた）時点の`updated_at`を使う。Archive済み施策は参照専用とし、編集と新しい投稿の追加を行わない。公開済みの投稿は、変更も削除もできない
 5. **他の会社・他のマーケターの情報は、存在しないものとして扱う。** 該当しないIDを開いた場合は、「見つかりません」を表示する
 6. **計測の指標は2つに限る。** X投稿の初週PV数と、応募ページへの流入ユーザー数だけを表示する。いいね数、CTR、CVRなどは表示しない
 7. **未認証の場合は、ログイン画面へ移動する**
@@ -27,15 +27,15 @@
 
 | ID | 画面名 | パス | 目的 | 使用するAPI |
 | --- | --- | --- | --- | --- |
-| SC-01 | ログイン | `/login` | メールアドレスとパスワードでログインする | `POST /auth/login`、`POST /auth/logout`、`GET /auth/me` |
+| SC-01 | ログイン | `/login` | メールアドレスとパスワードでログインする | `POST /auth/login`、`POST /auth/logout`、`POST /auth/csrf`、`GET /auth/me` |
 | SC-02 | チャット | `/chat`、`/chat/new`、`/chat/{session_id}` | 会話一覧から会話を選んで再開する、または新しい会話を始める。親Agentと会話し、施策案・投稿案を編集・再相談・最終承認する | `GET /agent-sessions`、`POST /agent-sessions`、`POST /agent-sessions/{id}/turns`、`GET /agent-sessions/{id}`、`GET /agent-sessions/{id}/turns/{turn_id}`、`GET /campaigns`、`POST /agent-sessions/{id}/campaigns`、`POST /agent-sessions/{id}/x/posts` |
 | SC-03 | （欠番） | — | SC-02に統合した。旧「会話一覧」（`/sessions`） | — |
 | SC-04 | 施策一覧 | `/campaigns` | 承認して保存した施策を一覧・検索する | `GET /campaigns` |
 | SC-05 | 施策詳細 | `/campaigns/{campaign_id}` | 施策の内容と、関連する投稿・記憶、投稿ごとの初週PV数を確認する。施策を直接編集する | `GET /campaigns/{campaign_id}`、`PUT /campaigns/{campaign_id}`（施策の編集） |
 | SC-06 | 投稿一覧 | `/posts` | 公開済みの投稿を、初週PV数とあわせて一覧・検索する | `GET /posts`、`GET /campaigns`（施策の絞り込みの選択肢）、`GET /campaigns/{campaign_id}`（選択中の施策） |
 | SC-07 | 投稿詳細 | `/posts/{post_id}` | 公開済み投稿の本文、UTM付きURL、計測結果を確認する | `GET /posts/{post_id}` |
-| SC-08 | 計測結果 | `/metrics` | 初週PV数、流入ユーザー数、流入率を、全体と施策ごとに比較する | `GET /metrics` |
-| SC-09 | 記憶一覧 | `/memories` | 長期記憶を意味検索または施策で絞り込み、不要な記憶を削除する | `GET /memories`、`GET /campaigns`（施策の絞り込みの選択肢）、`GET /campaigns/{campaign_id}`（選択中の施策）、`DELETE /memories/{memory_id}` |
+| SC-08 | 計測結果 | `/metrics` | 初週PV数、流入ユーザー数、流入率を、全体と施策ごとに比較する | `GET /metrics`（施策別結果はCursor Pagination） |
+| SC-09 | 記憶一覧 | `/memories` | 長期記憶を意味検索または施策で絞り込み、不要な記憶を削除する | `GET /memories`、`GET /memories/{memory_id}/campaigns`、`GET /memories/{memory_id}/posts`、`GET /campaigns`（施策の絞り込みの選択肢）、`GET /campaigns/{campaign_id}`（選択中の施策）、`DELETE /memories/{memory_id}` |
 
 - `/`は`/chat`へ移動する
 - 会話一覧は、独立した画面にせず、SC-02の一部とする（デスクトップでは会話の横に並べ、モバイルでは`/chat`に一覧だけを表示する）。SC-03は、他の画面の番号を変えないため欠番とする
@@ -48,15 +48,15 @@
 
 | 画面 | `app/`のルート | Feature | 初期表示の読取 | Clientの操作 |
 | --- | --- | --- | --- | --- |
-| SC-01 | `app/login/` | `auth` | Server Component（`GET /auth/me`によるログイン済み判定） | ログイン |
+| SC-01 | `app/login/` | `auth` | Server Component（`GET /auth/me`によるログイン済み判定） | ログイン、CSRF Token再発行 |
 | SC-02 | `app/(authenticated)/chat/`（`layout.tsx`に会話一覧、`page.tsx`が一覧）、`app/(authenticated)/chat/new/`、`app/(authenticated)/chat/[session_id]/` | `agent` | Server Component（会話一覧の先頭20件、履歴の取得） | 会話一覧の追加読み込み（無限スクロール）、新しい会話の作成、メッセージ送信（SSEの受信）、Turnのポーリング、フォームの編集、承認 |
 | SC-04、SC-05 | `app/(authenticated)/campaigns/`、`app/(authenticated)/campaigns/[campaign_id]/` | `campaigns`（SC-05の編集フォームは`agent`） | Server Component | 検索、絞り込み（URLを更新する）、施策の編集（SC-05。`agent`Featureのフォーム） |
 | SC-06 | `app/(authenticated)/posts/` | `posts` | Server Component | 検索、絞り込み（URLを更新する） |
 | SC-07 | `app/(authenticated)/posts/[post_id]/` | `posts` | Server Component | URLのCopyと、その成功・失敗の通知 |
-| SC-08 | `app/(authenticated)/metrics/` | `metrics` | Server Component | 期間の絞り込み（URLを更新する） |
-| SC-09 | `app/(authenticated)/memories/` | `memories` | Server Component | 検索、施策による絞り込み、記憶の削除、Response不明時の同じDELETEによる結果確定 |
+| SC-08 | `app/(authenticated)/metrics/` | `metrics` | Server Component | 期間の絞り込みと施策別結果のPagination（URLを更新する） |
+| SC-09 | `app/(authenticated)/memories/` | `memories` | Server Component | 検索、施策による絞り込み、関連先の追加読込、記憶の削除、Response不明時の同じDELETEによる結果確定 |
 
-- 業務データの読取は、Server Componentで行う（規約11.1）。Clientの再取得は、Turnの進捗の受信（SSE）と切断時のTurnのポーリング、施策の選択の検索（6.11）、会話一覧の追加読み込み（6.13）、SC-09の記憶削除後の一覧更新だけとする（規約11.3。Turnは応答が最大200秒かかり、進捗を逐次表示し、応答を受け取れない場合に状態を確認する必要があるため。施策の選択は入力に応じた候補の表示、会話一覧はスクロールに応じた追加読込、記憶削除は確定結果を一覧へ反映する必要があるため）
+- 業務データの読取は、Server Componentで行う（規約11.1）。Clientの再取得は、Turnの進捗の受信（SSE）と切断時のTurnのポーリング、施策の選択の検索（6.11）、会話一覧の追加読み込み（6.13）、SC-09の関連先追加読込と記憶削除後の一覧更新だけとする（規約11.3。Turnは応答が最大200秒かかり、進捗を逐次表示し、応答を受け取れない場合に状態を確認する必要があるため。施策の選択は入力に応じた候補の表示、会話一覧と記憶の関連先は利用者操作に応じた追加読込、記憶削除は確定結果を一覧へ反映する必要があるため）
 - Feature間の直接参照は原則禁止のため（規約4.4）、複数のFeatureにまたがる画面は`app/`で組み立てる。該当する箇所は、SC-05の編集フォーム（下記）である
 - `app/`の`loading.tsx`、`error.tsx`、`not-found.tsx`で、6.8の画面状態を共通に扱う
 - 施策のフォーム（項目の入力部品と検証Schema）は、SC-02の提案フォームとSC-05の編集フォームで共通のため、まとめて`agent`Featureに置く。`campaigns`Featureには置かない（重複や`shared`への切り出しは行わない）。`app/(authenticated)/campaigns/[campaign_id]/`が、`campaigns`Featureの表示と、`agent`Featureが公開する編集フォームを組み合わせる。投稿フォームも、`agent`Featureに置く
@@ -504,15 +504,15 @@ Login Button直下に、特定のInputへ割り当てられないErrorを表示�
 - 画面上の中間編集をReducerのLocal stateだけに保持する。入力変更でAgent、API、業務DBを呼び出さない
 - Footerに「Agentと再相談」と「最終承認」を表示する。新規施策は確認Modalなし、既存施策の上書きは「既存の内容を置き換えます」の確認Modalを表示する
 - 承認中はButtonにSpinnerと「承認中」を表示し、同じ操作とForm編集を無効にする。Field Errorは各Field直下へ表示する
-- APIで定義していない最大文字数を画面だけに追加しない。必須項目とBackendの業務条件を同じSchemaで検証する
+- 必須項目とBackendの業務条件を同じSchemaで検証する。タイトルは255文字、ターゲット像、実施背景、施策目的、施策内容は各10,000文字を上限とし、APIの`field_errors`をField名で対応付ける。未知のFieldと`field = null`はForm Error summaryへ表示する
 
 **X投稿提案Form**
 
 - Headerに「X投稿案」と状態「未公開」「手書きで編集中」「過去の提案」「公開済み」のいずれかを表示する
 - 対象施策、投稿本文、遷移先URLを最初から編集可能にする。対象施策は6.11の検索付きComboboxを使用する
-- 投稿本文と遷移先URLを別Fieldとし、URLは用途に合う`type`と`inputmode`を設定する。本文とUTM付きURLを結合したX文字数規則はBackendを正とする
+- 投稿本文と遷移先URLを別Fieldとし、URLは用途に合う`type`と`inputmode`を設定する。遷移先URLは2,048文字以内とし、本文とUTM付きURLを結合したX文字数規則はBackendを正とする
 - Footerに「Agentと再相談」と「承認して公開」を表示する。公開前に「Xへ公開され、公開後は変更・削除できません」の確認Modalを必須とする
-- 公開中はButtonにSpinnerと「公開中」を表示し、同じ操作とForm編集を無効にする。`INVALID_X_POST`は該当FieldへErrorを表示する
+- 公開中はButtonにSpinnerと「公開中」を表示し、同じ操作とForm編集を無効にする。`INVALID_X_POST`の`field_errors`は該当Fieldへ表示し、`field = null`のErrorはForm Error summaryへ表示する
 - 投稿案はX公開成功まで業務データへ保存せず、会話履歴とFormだけに保持する
 
 **Agentと再相談**
@@ -525,7 +525,7 @@ Login Button直下に、特定のInputへ割り当てられないErrorを表示�
 
 - 各提案種別で、後続に同種の提案がなく、対応する承認処理が完了済みまたは未解決ではない最新の提案だけを編集・再相談・承認可能にする
 - `upsert_campaign`または`publish_x_post`の成功した`api_result`が後続にある提案はRead-onlyにする。`IDEMPOTENCY_REQUEST_IN_PROGRESS`、`X_POST_OUTCOME_UNKNOWN`、`X_POST_SAVE_FAILED`の承認処理が後続にある場合も、新しい承認を開始できないRead-onlyとし、同じKeyの結果確認または復旧だけを表示する
-- Validation Error、`CAMPAIGN_CONFLICT`、外部作用開始前の失敗で終わった承認は、Errorを表示したうえで提案をActionableのままにする。内容を修正した次の承認は新しい`Idempotency-Key`を使う
+- Validation Error、`CAMPAIGN_CONFLICT`、`X_POST_FAILED`、外部作用開始前の失敗で終わった承認は、Errorを表示したうえで提案をActionableのままにする。内容を修正した次の承認は新しい`Idempotency-Key`を使う。`CAMPAIGN_ARCHIVED`では対象施策を参照専用とし、同じ施策への承認または投稿を再実行しない
 - 同種の新しい提案がある場合、以前の提案はRead-onlyにして「過去の提案」と表示する。Read-only Formから操作Buttonを取り除く
 - Actionable判定はTurnとItemの順序、提案種別、後続のApproval typeと`api_result`から導出し、提案Tool Result自体は変更しない
 
@@ -535,6 +535,8 @@ Login Button直下に、特定のInputへ割り当てられないErrorを表示�
 - `approval_action`はUser側Bubbleへ「施策を最終承認しました」または「X投稿を承認して公開しました」と表示する
 - 承認時のRequest Snapshotはnativeの`details`と`summary`「承認内容を見る」で展開する。初期状態は閉じ、すべての項目をRead-onlyで表示する
 - `api_result`は「システム」のBubbleとし、Success、Error、Outcome unknownをIcon、Title、文言で示す。LLMの回答に見せない
+- `approval_state`は、実行中または未解決の承認状態を復元するために使う。`processing`かつ`external_succeeded = true`では、Reload後も「Xへは投稿済みです。保存処理を再開できます」と、同じ`approval_action.id`による「保存を再試行」を表示する。新しい承認Buttonは表示しない
+- `approval_state.recovery = manual_reconciliation`では結果不明の表示を維持する。手動照合後に履歴を再取得し、確定した`approval_state`と監査Turnを表示する
 - API Responseで遷移先IDを取得できる成功直後はSC-05またはSC-07へのLinkを表示する。履歴再取得後に`api_result`だけからIDを復元できない場合は、存在しないLinkを作らない
 - 承認の重大なErrorと結果不明は会話内に残し、Notification Toastだけで伝えない
 
@@ -762,7 +764,7 @@ SC-02に統合した。会話一覧の表示と操作は、SC-02の「会話一�
 - 検索中は`campaign_embeddings`による意味検索とし、タイトル、ターゲット像、実施背景、施策目的、施策内容を対象に類似度順で最大20件を表示する。`similarity`の数値は利用者へ表示しない
 - 検索結果の前に「『{query}』に近い施策」と「タイトル、ターゲット、背景、目的、施策内容をもとに表示しています」を表示する
 - 作成日はLabel「開始」「終了」のdate Inputを使い、`created_from`と`created_to`をURLへ保持する。片方だけでも適用できる
-- UIの終了日は含むものとして扱い、APIの排他的な`created_to`には、画面全体の日時表示と同じTime zoneで選択日の翌日開始日時を送る
+- UIの暦日は`Asia/Tokyo`として扱う。`created_from`には選択日のJST 00:00、排他的な`created_to`には終了日の翌日のJST 00:00をUTCのISO 8601へ変換して送る
 - 開始日が終了日より後の場合はForm内Errorを表示し、URLとAPI Requestを更新しない
 - 検索語または作成日を変更したときは`cursor`を取り除く。「条件をクリア」は`query`、`created_from`、`created_to`、`cursor`を取り除いて先頭一覧へ戻す
 - URLの値からFormを復元する。検索・絞り込みの更新中は現在の結果を残し、検索PanelにSpinnerと「更新中」を表示する
@@ -777,6 +779,7 @@ SC-02に統合した。会話一覧の表示と操作は、SC-02の「会話一�
 **一覧の情報設計**
 
 - 「施策」は`title`と`objective`を表示する。DesktopのタイトルはSC-05へのLink、Mobileではタイトルを見出しとして「詳細を見る」をLinkにする
+- `archived_at`がある施策は、タイトルの近くへ状態Badge「アーカイブ済み」を表示する。通常施策と同じ一覧・検索結果へ含め、色だけで状態を伝えない
 - 「投稿・計測」は、`post_count`を「公開済みN件」、`completed_count`、`pending_count`、`failed_count`を状態Badgeで表示する。0件の状態Badgeは省略する
 - `post_count = 0`では状態Badgeを「投稿なし」とし、計測済み・待ち・失敗のBadgeを表示しない
 - 状態Badgeは「計測済み」「待ち」「失敗」の文言と件数を含み、色だけに依存しない。`failed`を強調しすぎて施策自体の失敗に見せない
@@ -803,6 +806,7 @@ SC-02に統合した。会話一覧の表示と操作は、SC-02の「会話一�
 | 検索・絞り込み更新中 | 現在の一覧を残し、検索PanelにSpinnerと「更新中」を表示する |
 | `EMBEDDING_FAILED` | 入力した検索語を残して「検索できませんでした」＋「もう一度検索」。条件をクリアすれば通常一覧へ戻れる |
 | `INTERNAL_ERROR` | 「施策を読み込めませんでした」＋「もう一度読み込む」 |
+| `400 INVALID_ARGUMENT`かつ`cursor`あり | 検索・作成日を維持して`cursor`だけを取り除き、先頭を1回再取得する。「ページの状態を復元できなかったため、先頭を表示しました」と通知する |
 | `401 UNAUTHENTICATED` | SC-01へ移動し、ログイン後に検索条件を含む元URLへ戻す |
 
 - Skeletonは実データと同じ4列またはCardの外形とし、Loading中だけTable semanticsを持つ空要素を作らない
@@ -817,7 +821,7 @@ SC-02に統合した。会話一覧の表示と操作は、SC-02の「会話一�
 - 投稿なし、計測待ち、計測失敗、計測済みを文言と数値で判別でき、色だけに依存しない
 - 長い施策名、目的、4桁を超える件数、長い検索語でも、Link、Badge、数値、Buttonが重ならない
 - Reduced MotionではInline Panelを即時に開閉し、Loadingと更新中の文言を残す
-- 提案中の施策、Archive済み施策、未公開投稿案の数値を一覧へ含めない
+- 提案中の施策と未公開投稿案を一覧へ含めない。Archive済み施策は`archived_at`付きの保存済み施策として一覧と数値へ含める
 
 ### SC-05 施策詳細
 
@@ -886,7 +890,7 @@ SC-02に統合した。会話一覧の表示と操作は、SC-02の「会話一�
 │              │  │ [詳細を見る]        │              │                             │ │
 │              │  └──────────────────────┴──────────────┴─────────────────────────────┘ │
 │              │                                                                          │
-│              │  関連する記憶 2件                                                       │
+│              │  関連する記憶                                                          │
 │              │  ┌────────────────────────────────────────────────────────────────────┐  │
 │              │  │ 柔軟な働き方の訴求は、経験者層の反応が良かった。                  │  │
 │              │  ├────────────────────────────────────────────────────────────────────┤  │
@@ -899,6 +903,7 @@ SC-02に統合した。会話一覧の表示と操作は、SC-02の「会話一�
 - App ShellのMain contentを使用し、SC-04と同じPage最大幅、Gutter、Document scrollを使用する
 - Headerは「施策一覧へ」のBack Link、`h1`の施策タイトル、施策ID、作成日時、更新日時、主要Actionで構成する
 - 「この施策で投稿案を作る」をPrimary、「変更を相談する」をSecondaryとする。「編集」は施策内容SectionのHeaderだけに置き、Headerへ重複配置しない
+- `archived_at`がある場合はHeaderへ状態Badge「アーカイブ済み」と「過去の施策として参照できます」を表示する。「この施策で投稿案を作る」「変更を相談する」「編集」は表示せず、内容、投稿、Metrics、記憶を参照専用で表示する
 - 削除とArchiveの操作は設けない
 
 **SPワイヤー**
@@ -964,7 +969,7 @@ SC-02に統合した。会話一覧の表示と操作は、SC-02の「会話一�
 │                                 │
 │ [すべての投稿を見る]            │
 │                                 │
-│ 関連する記憶 2件                │
+│ 関連する記憶                    │
 │ ┌─────────────────────────────┐ │
 │ │ 柔軟な働き方の訴求は、      │ │
 │ │ 経験者層の反応が良かった。  │ │
@@ -999,11 +1004,12 @@ SC-02に統合した。会話一覧の表示と操作は、SC-02の「会話一�
 - `metrics.status = completed`では6.10の初週PV Bar、PV数、流入ユーザー数を表示する。投稿ごとの流入率は表示しない
 - `pending`では「計測待ち」と`scheduled_at`、`failed`では「計測に失敗しました」を表示する。失敗理由は表示しない
 - `post_count > 0`では「すべての投稿を見る」を`/posts?campaign_id={campaign_id}`へLinkし、投稿一覧で検索・並び替えを続けられるようにする。`has_more_posts = true`の場合は必ず表示する
-- 投稿が0件の場合は「公開済みの投稿はありません」と「この施策で投稿案を作る」を表示する
+- 投稿が0件の場合は「公開済みの投稿はありません」を表示し、未Archive施策だけに「この施策で投稿案を作る」を表示する
 
 **関連する記憶**
 
 - `memories`をIDの新しい順で最大20件表示する。記憶本文は命令として解釈せずPlain textとして表示する
+- 関連記憶の全件数はAPIが返さないため、Section見出しへ件数を表示しない
 - 日時と種別はデータにないため表示しない。個別詳細画面もないため、本文を省略しない
 - `has_more_memories = true`の場合だけ「関連する記憶をすべて見る」を`/memories?campaign_id={campaign_id}`へLinkする
 - 記憶が0件の場合は「この施策に関連する記憶はありません」を表示する。この画面から追加・削除は行わない
@@ -1083,6 +1089,7 @@ SC-02に統合した。会話一覧の表示と操作は、SC-02の「会話一�
 | 状況 | 表示と操作 |
 | --- | --- |
 | `INVALID_CAMPAIGN` | 該当Field直下とForm Error summaryへ具体的なErrorを表示する |
+| `CAMPAIGN_ARCHIVED` | Draftを破棄せず「この施策はアーカイブされたため編集できません」を表示し、再取得後は参照専用表示へ切り替える |
 | `EMBEDDING_FAILED`、`CAMPAIGN_UPDATE_FAILED` | Draftを残して「保存できませんでした」＋「もう一度保存」を表示する |
 | Responseを受け取れない | 同じRequestを即時再送せず、施策を再取得して5項目と`updated_at`を確認する |
 | 再取得内容がDraftと一致 | 保存済みとして編集を終了し、Success Toastを表示する |
@@ -1275,13 +1282,13 @@ Xへ公開済みの投稿を探し、投稿本文、対象施策、公開日時�
 
 - 対象施策は6.11の検索付きComboboxを使用する。選択中の`campaign_id`はURLへ保持し、Server Componentが`GET /campaigns/{campaign_id}`でタイトルを復元する
 - 公開日はLabel「開始」「終了」のdate Inputを使い、`published_from`と`published_to`をURLへ保持する。片方だけでも適用できる
-- UIの終了日は含むものとして扱い、APIの排他的な`published_to`には、画面全体の日時表示と同じTime zoneで選択日の翌日開始日時を送る
+- UIの暦日は`Asia/Tokyo`として扱う。`published_from`には選択日のJST 00:00、排他的な`published_to`には終了日の翌日のJST 00:00をUTCのISO 8601へ変換して送る
 - 開始日が終了日より後の場合はFilter Panel内へErrorを表示し、URLとAPI Requestを更新しない
 - 並び順は「公開日時の新しい順」「公開日時の古い順」「初週PVの多い順」「初週PVの少ない順」の4つとする。既定値は公開日時の新しい順で、既定の`sort=published_at&order=desc`はURLから省略できる
 - 初週PV順では、計測待ち・計測失敗を昇順・降順のどちらでも末尾に表示する
 - 条件または並び順を変更したときは`cursor`を取り除く。「条件をクリア」は`query`、`campaign_id`、期間、並び順、`cursor`を取り除く
 - 適用中の施策と公開期間をFilter Panel外へCondition Chipとして表示する。各Chipの解除はURLを更新し、Keyboardでも操作できる具体的なAccessible Nameを持つ
-- 施策未選択時のHeader Actionは「投稿案を相談する」から`/chat/new`へ移動する。施策選択時は「この施策で投稿案を作る」とし、`/chat/new?campaign_id={id}&intent=create_post`へ移動する
+- 施策未選択時のHeader Actionは「投稿案を相談する」から`/chat/new`へ移動する。未Archive施策の選択時は「この施策で投稿案を作る」とし、`/chat/new?campaign_id={id}&intent=create_post`へ移動する。Archive済み施策の選択時はBadge「アーカイブ済み」を表示し、このActionを表示しない
 
 **施策ComboboxのLoading**
 
@@ -1306,6 +1313,7 @@ Xへ公開済みの投稿を探し、投稿本文、対象施策、公開日時�
 - 「詳細を見る」のAccessible Nameは「{公開日}の投稿『{本文の先頭部分}』の詳細を見る」とし、同じLink名の繰り返しを区別する
 - 「詳細を見る」は、検証済みの現在のPathとSearch Paramsから作った相対URLを`return_to`へ設定し、`/posts/{post_id}?return_to={encoded posts URL}`としてSC-07を開く。検索語、施策、公開期間、並び順、`cursor`を含むSC-06の状態を、SC-07の「投稿一覧へ」で復元するために使う
 - 対象施策名はSC-05へのLink、公開日時は`time`要素とする。日時は`Intl.DateTimeFormat`、数値は`Intl.NumberFormat`を使用する
+- `campaign_archived_at`がある投稿は、施策名の近くへBadge「アーカイブ済み」を表示する
 - `completed`では6.10の初週PV Bar、PV数、流入ユーザー数、状態「計測済み」を表示する。投稿ごとの流入率は表示しない
 - `pending`では初週PV欄に「計測待ち」と`scheduled_at`、流入欄に「—」を表示する。`failed`では「計測に失敗しました」と「—」を表示し、失敗理由は表示しない
 - Barの100%は表示中の結果にある`completed`投稿の最大PV数とする。ページ、検索、Filterを変更すると基準も変わるため、異なる結果間でBarの長さを比較しない
@@ -1359,10 +1367,12 @@ Xへ公開済みの投稿を探し、投稿本文、対象施策、公開日時�
 | --- | --- |
 | 会社全体の公開済み投稿が0件 | 「公開済みの投稿がありません。Hiromeru AIと相談して投稿案を作り、承認するとここに表示されます」＋「投稿案を相談する」 |
 | 検索・絞り込み結果が0件 | 「条件に合う投稿がありません。検索語や施策、公開日の範囲を変更してください」＋「条件をクリア」 |
-| 選択施策の投稿が0件 | 「この施策の公開済み投稿はありません」＋「この施策で投稿案を作る」 |
+| 未Archiveの選択施策の投稿が0件 | 「この施策の公開済み投稿はありません」＋「この施策で投稿案を作る」 |
+| Archive済みの選択施策の投稿が0件 | Badge「アーカイブ済み」＋「この施策の公開済み投稿はありません」。投稿作成Actionは表示しない |
 | `EMBEDDING_FAILED` | 検索語を残して「投稿を検索できませんでした」＋「もう一度検索」 |
 | `INTERNAL_ERROR` | 「投稿一覧を読み込めませんでした」＋「もう一度読み込む」 |
 | `CAMPAIGN_NOT_FOUND` | 他社IDと存在しないIDを区別せず「施策が見つかりません」＋「施策の絞り込みを解除」 |
+| `400 INVALID_ARGUMENT`かつ`cursor`あり | 検索・施策・公開期間・並び順を維持して`cursor`だけを取り除き、先頭を1回再取得する。「ページの状態を復元できなかったため、先頭を表示しました」と通知する |
 | `401 UNAUTHENTICATED` | SC-01へ移動し、ログイン後に検索条件を含む元URLへ戻す |
 
 - 更新に失敗し、現在の結果がある場合は結果を残し、「投稿一覧を更新できませんでした。現在は前回の結果を表示しています」とInline Errorを表示する
@@ -1536,7 +1546,7 @@ Xへ公開済みの投稿を探し、投稿本文、対象施策、公開日時�
 
 - 「Xへ公開された内容」は、`post.body`の改行を維持したPlain textと、その末尾に改行を挟んだ`tracking.tracked_url`で構成し、Xへ送信した表示順を再現する。API上は別の値のままとし、結合した値を業務データとして保存し直さない
 - 本文とURLをMarkdownまたはHTMLとして解釈せず、`dangerouslySetInnerHTML`を使用しない。長いURL、ID、連続文字列は`overflow-wrap: anywhere`で折り返す
-- 対象施策名は`/campaigns/{campaign.id}`へのLink、公開日時は`time`要素とする。日時は`Intl.DateTimeFormat`、計測値は`Intl.NumberFormat`を使用する
+- 対象施策名は`/campaigns/{campaign.id}`へのLink、公開日時は`time`要素とする。`campaign.archived_at`がある場合は施策名の近くへBadge「アーカイブ済み」を表示する。日時は`Intl.DateTimeFormat`、計測値は`Intl.NumberFormat`を使用する
 - X投稿IDはMonoで表示する。ASCII数字だけの`x_post_id`から`https://x.com/i/web/status/{x_post_id}`を作り、「Xで投稿を見る」を新しいTabで開く。`rel="noopener noreferrer"`を設定し、Visible textまたはVisually hidden textで「新しいタブで開く」と伝える
 - `x_post_id`が数字ではない場合は外部URLを組み立てず、IDと「Xの投稿を開けません」を表示する。API Responseを信頼して任意のURLへ移動しない
 - X Logoを使用する場合は公式Assetを使用し、Visible labelと重複する装飾Iconは`aria-hidden="true"`とする
@@ -1848,7 +1858,7 @@ Xへ公開済みの投稿を探し、投稿本文、対象施策、公開日時�
 
 - 初期状態は全期間とし、`published_from`と`published_to`をURLから省略する。開始日と終了日は片方だけでも指定できる
 - Label「開始」「終了」のdate Inputと、「期間を適用」「全期間に戻す」で構成する。適用中の期間が全期間で、両方のFilter Draftも空の場合は「全期間に戻す」をDisabledにする
-- UIの終了日は含むものとして扱い、APIの排他的な`published_to`には、画面全体の日時表示と同じTime zoneで選択日の翌日開始日時を送る
+- UIの暦日は`Asia/Tokyo`として扱う。`published_from`には選択日のJST 00:00、排他的な`published_to`には終了日の翌日のJST 00:00をUTCのISO 8601へ変換して送る
 - 開始日が終了日より後の場合はFilter内へ「開始日は終了日以前の日付にしてください」を表示し、URLとAPI Requestを更新しない
 - 「期間を適用」は、検証済みの`published_from`と`published_to`で`router.push`する。空のFieldに対応するParamはURLから取り除く
 - 「全期間に戻す」は両方のParamsを取り除く。結果見出しは、指定なしを「集計期間: 全期間」、開始日だけを「集計期間: {開始日}以降」、終了日だけを「集計期間: {終了日}まで」、両方を「集計期間: {開始日}〜{終了日}」とする
@@ -1866,25 +1876,33 @@ Xへ公開済みの投稿を探し、投稿本文、対象施策、公開日時�
 
 **施策別の流入率Graph**
 
-- APIの`campaigns`を、返却順の初週PV降順で全件表示する。Graphだけを流入率順へ並べ替えず、下のTableまたはCardと順序を一致させる
+- APIの現在ページの`campaigns`を、返却順の初週PV降順で最大20件表示する。Graphだけを流入率順へ並べ替えず、下のTableまたはCardと順序を一致させる
 - 施策ごとの`landing_rate`を0起点の横棒で表示し、施策名、流入率、初週PV、流入ユーザー、計測済み件数をTextでも表示する。Barだけで値や順位を伝えない
-- Scaleの最大値は、表示対象にある最大の`landing_rate`を百分率へ変換して整数％へ切り上げた値とし、最低1%とする。最大値が3.53%なら、全施策で0%から4%の共通Scaleを使う
+- Scaleの最大値は、現在ページの表示対象にある最大の`landing_rate`を百分率へ変換して整数％へ切り上げた値とし、最低1%とする。最大値が3.53%なら、現在ページの全施策で0%から4%の共通Scaleを使う。PageをまたいだBarの長さは比較しない
 - `bar inline size = 表示値の百分率 ÷ Scale最大値 × 100%`とする。施策ごとに最大値を変えず、0%の基準を省略しない
 - `landing_rate = null`ではBarを表示しない。`completed_count = 0`は「計測済みの投稿がありません」、`completed_count > 0`かつ`x_pv_count = 0`は「初週PVが0のため流入率を算出できません」とする
 - GraphはSemanticなListとCSS Barで構成し、Canvas、画像、Chart libraryを使わない。Barは装飾として支援技術から隠し、List itemのTextから同じ情報を取得できるようにする
-- 全施策をDocument scroll内へ表示する。固定の高さ、内部Scroll、Carousel、横Swipe、上位件数による省略を行わない
+- 現在ページの全施策をDocument scroll内へ表示する。固定の高さ、内部Scroll、Carousel、横Swipe、上位件数による省略を行わない
 
 **施策別TableとCard**
 
 - `tablet`以上は「施策」「計測状況」「初週PV」「流入」「流入率」「投稿」の6列のnative `table`とし、Caption「施策ごとの計測結果」を設定する。各列見出しへ`scope="col"`を設定する
 - `tablet`未満は同じ情報順のCardを描画する。TableをCSSでCard化せず、Card全体をLinkにしない
 - 施策名と「施策を見る」は`/campaigns/{campaign.id}`、「この施策の投稿を見る」は`/posts?campaign_id={campaign.id}`へのLinkとする
+- `campaign.archived_at`がある場合は、施策名の近くへBadge「アーカイブ済み」を表示する。過去の投稿とMetricsへのLinkは維持する
 - 期間指定中の「この施策の投稿を見る」は、SC-08の`published_from`と`published_to`を同じUI日付のままSC-06へ引き継ぐ。SC-06がAPI用の排他的な終了日時へ変換する
 - `post_count`を「公開済みN件」とし、`completed_count`、`pending_count`、`failed_count`を状態Badgeで表示する。0件のBadgeは省略する
 - 初週PV、流入ユーザー、流入率と、算出できない場合の理由は全体Summaryと同じ規則で表示する。数値の0と未計測を同じ表示にしない
 - 行全体をClick可能な疑似Buttonにしない。PCでは施策名をSC-05へのLinkとし、投稿列へSC-06のLinkを置く。SPでは「施策を見る」と「この施策の投稿を見る」を明示する
 - PCの投稿LinkのVisible labelを短い「見る」とする場合も、Accessible Nameは「{施策名}の投稿を見る」とし、同じLink名の繰り返しを区別する
-- APIが返す全施策を表示し、Pagination、Client側の並べ替え、全件数とは異なる「上位N件」表示を設けない。期間内に公開済み投稿がある施策だけが返る
+- APIが現在ページに返す施策をすべて表示し、Client側の並べ替えと「上位N件」表示を設けない。期間内に公開済み投稿がある施策だけが返る
+
+**ページング**
+
+- 施策別結果は20件ずつ表示し、`next_cursor`がある場合だけ「次の20件」を表示する。`summary`はCursorに関係なく期間全体の集計として維持する
+- 2ページ目以降は「先頭へ」を表示する。直前のページへはBrowser backで戻り、ページ番号と全件数は表示しない
+- Paginationは期間条件を維持したLinkとし、`cursor`を利用者へ表示または解釈しない。期間を変更したときは`cursor`を取り除く
+- ページ更新中は現在のSummary、Graph、TableまたはCardを残し、ButtonへSpinnerと「次の20件を読み込み中」、Status stripへ「次の施策別結果を読み込んでいます」を表示する。完了後は結果見出しへFocusを移す
 
 **初期Loading**
 
@@ -1939,6 +1957,7 @@ Xへ公開済みの投稿を探し、投稿本文、対象施策、公開日時�
 | 投稿はあるが計測済みが0件 | Summaryと施策別詳細を表示し、Graphへ「比較できる計測結果がありません」。計測待ち・失敗の件数と、流入率を算出できない理由を表示する |
 | 計測済みの初週PVがすべて0 | Summaryと施策別詳細を表示し、Graphへ「初週PVが0のため比較できる流入率がありません」 |
 | `500 INTERNAL_ERROR`または通信Error | Filterを保持して「計測結果を読み込めませんでした」＋「もう一度読み込む」 |
+| `400 INVALID_ARGUMENT`かつ`cursor`あり | 期間を維持して`cursor`だけを取り除き、先頭を1回再取得する。「ページの状態を復元できなかったため、先頭を表示しました」と通知する |
 | `401 UNAUTHENTICATED` | SC-01へ移動し、ログイン後に期間Paramsを含む元URLへ戻す |
 
 - `post_count > 0`で計測待ちまたは失敗だけの場合は、Page全体を空状態にしない。初週PVと流入ユーザーを0、流入率を「—」として、未計測である理由を併記する
@@ -1998,10 +2017,10 @@ Hiromeru AIが次の施策や投稿を考えるときに参照する長期記憶
 │              │  ┌──────────────────────────────────────────┬────────────────────────────┐ │
 │              │  │ 記憶ID 25                               │ 関連情報                   │ │
 │              │  │                                          │                            │ │
-│              │  │ 柔軟な働き方の訴求は、経験者層の       │ 関連する施策 1件          │ │
+│              │  │ 柔軟な働き方の訴求は、経験者層の       │ 関連する施策              │ │
 │              │  │ 反応が良かった。次回の経験者採用でも   │ 経験者Webエンジニア採用 →│ │
 │              │  │ 働き方の自由度を具体的に伝える。       │                            │ │
-│              │  │                                          │ 関連する投稿 1件          │ │
+│              │  │                                          │ 関連する投稿              │ │
 │              │  │                                          │ 2026/09/21公開            │ │
 │              │  │                                          │ 投稿ID 45 →               │ │
 │              │  │                                          │                            │ │
@@ -2011,17 +2030,17 @@ Hiromeru AIが次の施策や投稿を考えるときに参照する長期記憶
 │              │  ┌──────────────────────────────────────────┬────────────────────────────┐ │
 │              │  │ 記憶ID 24                               │ 関連情報                   │ │
 │              │  │                                          │                            │ │
-│              │  │ 技術スタックだけでなく、開発体制や     │ 関連する施策 5件          │ │
+│              │  │ 技術スタックだけでなく、開発体制や     │ 関連する施策              │ │
 │              │  │ レビュー文化も伝えると反応が良い。     │ 採用広報改善 →            │ │
 │              │  │                                          │ 若手向け認知拡大 →        │ │
 │              │  │                                          │ エンジニア採用 →          │ │
-│              │  │                                          │ [他2件の施策を見る ▾]     │ │
+│              │  │                                          │ [関連施策をさらに表示]    │ │
 │              │  │                                          │                            │ │
-│              │  │                                          │ 関連する投稿 4件          │ │
+│              │  │                                          │ 関連する投稿              │ │
 │              │  │                                          │ 2026/09/20 投稿ID 44 →   │ │
 │              │  │                                          │ 2026/09/18 投稿ID 42 →   │ │
 │              │  │                                          │ 2026/09/15 投稿ID 39 →   │ │
-│              │  │                                          │ [他1件の投稿を見る ▾]     │ │
+│              │  │                                          │ [関連投稿をさらに表示]    │ │
 │              │  │                                          │                            │ │
 │              │  │                                          │ [削除する]                │ │
 │              │  └──────────────────────────────────────────┴────────────────────────────┘ │
@@ -2080,10 +2099,10 @@ Hiromeru AIが次の施策や投稿を考えるときに参照する長期記憶
 │ │ 働き方の自由度を具体的に    │ │
 │ │ 伝える。                    │ │
 │ │                             │ │
-│ │ 関連する施策 1件            │ │
+│ │ 関連する施策                │ │
 │ │ 経験者Webエンジニア採用 →  │ │
 │ │                             │ │
-│ │ 関連する投稿 1件            │ │
+│ │ 関連する投稿                │ │
 │ │ 2026/09/21公開              │ │
 │ │ 投稿ID 45 →                 │ │
 │ │                             │ │
@@ -2097,17 +2116,17 @@ Hiromeru AIが次の施策や投稿を考えるときに参照する長期記憶
 │ │ 開発体制やレビュー文化も    │ │
 │ │ 伝えると反応が良い。        │ │
 │ │                             │ │
-│ │ 関連する施策 5件            │ │
+│ │ 関連する施策                │ │
 │ │ 採用広報改善 →             │ │
 │ │ 若手向け認知拡大 →         │ │
 │ │ エンジニア採用 →           │ │
-│ │ [他2件の施策を見る ▾]      │ │
+│ │ [関連施策をさらに表示]     │ │
 │ │                             │ │
-│ │ 関連する投稿 4件            │ │
+│ │ 関連する投稿                │ │
 │ │ 2026/09/20 投稿ID 44 →    │ │
 │ │ 2026/09/18 投稿ID 42 →    │ │
 │ │ 2026/09/15 投稿ID 39 →    │ │
-│ │ [他1件の投稿を見る ▾]      │ │
+│ │ [関連投稿をさらに表示]     │ │
 │ │                             │ │
 │ │ [削除する]                  │ │
 │ └─────────────────────────────┘ │
@@ -2161,10 +2180,15 @@ Hiromeru AIが次の施策や投稿を考えるときに参照する長期記憶
 **関連する施策と投稿**
 
 - `campaigns`は施策名を`/campaigns/{id}`へのLinkにする。`posts`は「{公開日}公開の投稿（投稿ID {post_id}）」を`/posts/{post_id}`へのLinkにする
+- 関連施策の`archived_at`がある場合は、Linkの近くへBadge「アーカイブ済み」を表示する
 - 投稿日時は`time`要素と`Intl.DateTimeFormat`を使用する。投稿本文はAPIにないため推測または追加取得しない
 - 関連する施策と投稿がともに0件の場合は「関連する施策・投稿はありません」と表示する
-- 各種類3件までは直接表示する。4件以上ではAPI Responseの先頭3件を表示し、残りをnativeの`details`へ入れる。`summary`は「他N件の施策を見る」「他N件の投稿を見る」とする
-- API Responseの順序を維持し、Frontendで日付順、タイトル順、ID順へ並べ替えない。展開時にFocusとScrollを移動しない
+- `GET /memories`が返す各種類の先頭3件を直接表示する。`campaigns_next_cursor`または`posts_next_cursor`がある場合だけ、それぞれ「関連する施策をさらに表示」「関連する投稿をさらに表示」を表示する。全件数と「他N件」は表示しない
+- 「さらに表示」は、対応する`GET /memories/{memory_id}/campaigns`または`GET /memories/{memory_id}/posts`を現在のCursorで呼び、20件ずつ既存List末尾へ追加する。Responseの`next_cursor`が`null`になるまで同じButtonで続けられる
+- 読み込み中は操作したButtonへSpinnerと「関連する施策を読み込み中」または「関連する投稿を読み込み中」を表示し、他のCardとPage全体をLoadingへ戻さない
+- 読み込みErrorでは取得済み項目を残し、該当List内へ「関連する施策を読み込めませんでした」または「関連する投稿を読み込めませんでした」と「もう一度読み込む」を表示する
+- 関連先APIが`400 INVALID_ARGUMENT`かつCursorありを返した場合は、その種類の取得済み追加項目を先頭3件へ戻し、Cursorを除去して先頭から1回再取得する。再取得も失敗した場合は通常Errorにする
+- API Responseの順序を維持し、Frontendで日付順、タイトル順、ID順へ並べ替えない。追加読込時にFocusとScrollを移動しない
 
 **ページング**
 
@@ -2225,7 +2249,7 @@ Hiromeru AIが次の施策や投稿を考えるときに参照する長期記憶
 - Response不明後のModalは「キャンセル」で閉じられる。閉じた場合は結果を成功とも失敗とも通知せず、一覧を再取得する。対象Cardが残る場合、利用者は改めて削除操作を開始できる
 - 通常のDELETEが直接`404 MEMORY_NOT_FOUND`を返した場合も、すでに削除済みとして扱い、成功時と同じ一覧更新を行う。他社IDと存在しないIDを区別する文言を表示しない
 - `500 MEMORY_DELETE_FAILED`ではModalを閉じず、「記憶を削除できませんでした」と「もう一度削除する」を表示する。同じDELETEを利用者の操作で再実行できる
-- `403 CSRF_VALIDATION_FAILED`は再ログインを促す。`401 UNAUTHENTICATED`はSC-01へ移動し、ログイン後に検索条件を含む元URLへ戻す
+- `403 CSRF_VALIDATION_FAILED`は6.2のToken再発行と1回だけの再送を行い、それでも失敗した場合に再ログインを促す。`401 UNAUTHENTICATED`はSC-01へ移動し、ログイン後に検索条件を含む元URLへ戻す
 
 **初期Loading**
 
@@ -2304,7 +2328,7 @@ Hiromeru AIが次の施策や投稿を考えるときに参照する記憶です
 **AccessibilityとSecurityの受け入れ条件**
 
 - PC・SPとも1列のCard一覧となり、320px幅と200% ZoomでPage全体の横Scrollを発生させない
-- 検索、施策Combobox、Condition Chip、Pagination、関連Link、`details`、削除確認ModalをKeyboardだけで操作できる
+- 検索、施策Combobox、Condition Chip、Pagination、関連Link、関連先の追加読込、削除確認ModalをKeyboardだけで操作できる
 - 記憶ID、本文、関連施策、関連投稿、削除操作の読み上げ順を視覚順と一致させる。「削除する」のAccessible Nameは「記憶ID {id}を削除する」とする
 - Modal表示中はFocusを内部に留め、取消時は起点のButton、削除後は次の論理的な結果へFocusを移す
 - 長い本文、長い施策名、多数の関連先、長いErrorでもCard、Link、Button、Modalが重ならない
@@ -2319,7 +2343,8 @@ Hiromeru AIが次の施策や投稿を考えるときに参照する記憶です
 
 ### 6.2 認証とCSRF
 - 認証は、署名付きCookieで行う。`401 UNAUTHENTICATED`を受けた場合は、SC-01へ移動する（ログイン後は元のURLへ戻る）
-- 状態変更API（POST・PATCH・DELETE）には、`X-CSRF-Token` Headerを付ける。`403 CSRF_VALIDATION_FAILED`は、再ログインを促す
+- 状態変更API（POST・PUT・PATCH・DELETE）には、`X-CSRF-Token` Headerを付ける。`403 CSRF_VALIDATION_FAILED`では、`POST /auth/csrf`を1回だけ呼んでTokenを再発行し、元Requestを新しいTokenで1回だけ再送する。承認APIは同じ`Idempotency-Key`を維持する
+- CSRF Token再発行失敗、再送時の`401 UNAUTHENTICATED`、または2回目の`CSRF_VALIDATION_FAILED`では自動再試行を止めてSC-01へ移動する。それ以外の再送Responseは各Errorの通常処理に従う。再発行処理自体をLoopさせない
 - Server Componentの読取で`401`を受けた場合も、SC-01へ移動する（`redirect`で現在のURLを引き継ぐ）
 - ログアウトは、Cookieを削除する
 
@@ -2336,6 +2361,8 @@ Hiromeru AIが次の施策や投稿を考えるときに参照する記憶です
 | 承認の処理中 | `409 IDEMPOTENCY_REQUEST_IN_PROGRESS` | `Retry-After`の後に、同じキーで再送する |
 | 承認の入力内容が不正 | `422 INVALID_X_POST` など | 内容を修正して、新しい承認操作（新しいキー）を行う |
 | 施策の競合 | `409 CAMPAIGN_CONFLICT` | SC-02では、最新の施策を確認し、チャットで再提案を受ける。SC-05の編集では、入力を残したまま最新の内容を読み込み、再度保存できるようにする |
+| 施策がArchive済み | `409 CAMPAIGN_ARCHIVED` | 新しい承認、編集、X投稿を行わず、「この施策はアーカイブされたため変更できません」と表示して参照画面への導線を出す |
+| Xへ投稿できなかった | `502 X_POST_FAILED` | Errorを会話内に保存して表示する。自動再試行せず、内容と原因を確認した利用者が新しい承認操作と新しいKeyで再実行する |
 | X投稿の結果が不明 | `504 X_POST_OUTCOME_UNKNOWN` | 「投稿の結果を確認できません。自動では再投稿されません」と表示する。手動の照合は運用で行う（画面なし） |
 | X投稿は成功したがDB保存に失敗 | `500 X_POST_SAVE_FAILED` | 「Xへは投稿済みです」と表示し、同じキーで保存を再試行する。新しいキーでは再送しない |
 | 同じ内容の投稿が未解決 | `409 X_POST_UNRESOLVED` | 未解決の投稿があるため、新しい投稿を受け付けないことを表示する |
@@ -2364,17 +2391,18 @@ Hiromeru AIが次の施策や投稿を考えるときに参照する記憶です
 | SC-05 | `/campaigns/{campaign_id}` | なし | |
 | SC-06 | `/posts` | `query`、`campaign_id`、`published_from`、`published_to`、`sort`、`order`、`cursor` | |
 | SC-07 | `/posts/{post_id}` | `return_to` | SC-06から渡す検証済みの相対URL。投稿一覧の検索・絞り込み・並び順・Pageを復元する。無効または未指定なら`/posts`へ戻す |
-| SC-08 | `/metrics` | `published_from`、`published_to` | 初期状態は全期間。画面の終了日は含むものとして保持し、API Requestでは翌日開始の排他的な`published_to`へ変換する |
+| SC-08 | `/metrics` | `published_from`、`published_to`、`cursor` | 初期状態は全期間。画面の終了日は含むものとして保持し、API Requestでは翌日開始の排他的な`published_to`へ変換する。`cursor`は施策別集計のPage |
 | SC-09 | `/memories` | `query`、`campaign_id`、`cursor` | `campaign_id`はSC-05から関連する記憶を開くときに使う |
 
 - Path ParamsとSearch Paramsは、使用する前に検証する。不正な値は、無視して既定の値（絞り込みなし、先頭のページ）に戻し、APIへ送らない（`400 INVALID_ARGUMENT`を画面に出さない）。Path Paramsの`session_id`、`campaign_id`、`post_id`などが正の整数でない場合は、`404`の画面とする
 - SC-02の引継ぎでは、`campaign_id`と`intent=create_post|revise_campaign`、または`post_id`と`intent=discuss_post`の組だけを許可する。値の不足、組の不一致、2種類のIDの併存は、すべての引継ぎParamsを無視する
 - SC-07の`return_to`は、同一Originの相対URLでPathが正確に`/posts`となり、SC-06で許可されたSearch Paramsだけを有効な形式で含む場合に限り使用する。不正な値はAPIへ送らず、戻り先を`/posts`とする
-- SC-02の会話一覧を除く一覧のページングは、`cursor`をURLに持つ「次のページ」リンクにする。`cursor`は前へ戻れない（`API_DESIGN.md`の5.5）ため、ブラウザの戻る操作と「先頭へ」で戻る。意味検索（`query`あり）は、上位の件だけを返し、ページングしない
+- SC-02の会話一覧を除く一覧のページングは、`cursor`をURLに持つ「次のページ」リンクにする。`cursor`は前へ戻れない（`API_DESIGN.md`の6.1）ため、ブラウザの戻る操作と「先頭へ」で戻る。意味検索（`query`あり）は、上位の件だけを返し、ページングしない
 - 検索・絞り込みの確定は、`router.push`でURLを更新する。`cursor`は、条件を変えたときに取り除く
 - SC-06の並び替えは、`sort`（`published_at`または`x_pv_count`）と`order`（`asc`または`desc`）をURLに持つ。並び替えを変えたときは、`cursor`を取り除く。`query`があるときは、`sort`と`order`を取り除く
-- SC-08は`published_from`と`published_to`をUI上の`YYYY-MM-DD`としてURLに持つ。終了日は含むものとして表示し、API Requestを作るときだけ画面と同じTime zoneの翌日開始日時へ変換する。両方を省略した場合は全期間とする
-- SC-09の`cursor`が現在の`campaign_id`に対して発行されたものかはFrontendで検証できない。形式上有効なCursorを送って`400 INVALID_ARGUMENT`となった場合は、`query`と`campaign_id`を維持して`cursor`だけを取り除き、先頭から復旧する
+- SC-04、SC-06、SC-08の日付はUI上の`YYYY-MM-DD`としてURLに持つ。API Requestでは`Asia/Tokyo`の開始日00:00と終了日翌日00:00をUTCのISO 8601へ変換する。DBとAPIの日時はUTCとし、画面の日時表示は`Intl.DateTimeFormat`へ`timeZone: "Asia/Tokyo"`を指定する
+- SC-08は両方の日付を省略した場合に全期間とする。期間を変更したときは`cursor`を取り除く
+- 不透明Cursorと現在の条件の組はFrontendで検証できない。SC-04、SC-06、SC-08、SC-09で、Cursor付きRequestが`400 INVALID_ARGUMENT`になった場合は、他の条件を維持して`cursor`だけを取り除き、先頭を1回再取得する。再取得も失敗した場合は条件Errorを表示し、自動再実行しない
 - SC-02の過去の履歴（`before_turn_number`）は、URLに保持しない（Clientの状態とする）
 
 ### 6.8 画面の状態（Frontend規約18章）
@@ -2429,8 +2457,9 @@ SC-05（施策詳細）とSC-06（投稿一覧）の投稿の行に表示する�
 ### 6.11 施策の選択（検索付き）
 SC-06とSC-09の施策の絞り込み、およびSC-02の投稿フォームの対象施策で使う。
 
-- 最初は`GET /campaigns?limit=20`で、直近20件を選択肢に出す。入力があれば、`GET /campaigns?query=...&limit=20`（意味検索。`API_DESIGN.md`の6.2）の結果に切り替える。入力が止まってから300ミリ秒後に取得し、前の取得が終わっていなければ破棄する
-- 選べるのは、アーカイブされていない施策だけとする（`GET /campaigns`は`archived_at`がNULLの施策だけを返す。6.2）
+- SC-06とSC-09は、最初に`GET /campaigns?limit=20`でArchive済みを含む直近20件を選択肢に出す。入力があれば`GET /campaigns?query=...&limit=20`（意味検索。`API_DESIGN.md`の6.2）の結果へ切り替える。Archive済み候補にはBadge「アーカイブ済み」を表示し、過去データのFilterとして選択できる
+- SC-02の投稿フォームは`archived=false`を付け、未Archive施策だけを投稿先候補にする。Archive済みの`campaign_id`が既存Draftまたは不正な状態から設定された場合は選択を無効にし、公開操作を許可しない
+- 入力が止まってから300ミリ秒後に取得し、前の取得が終わっていなければ破棄する
 - 入力に応じた候補の取得は、Clientの再取得とする（規約11.3の例外。入力のたびにURLを更新してサーバーで再描画すると、候補の表示が遅れるため）。選択の確定は、SC-06とSC-09ではURLの`campaign_id`を更新し、投稿フォームでは`campaign_id`をフォームの値に設定する
 - SC-06とSC-09で選択中の施策のタイトルは、Server Componentが`GET /campaigns/{campaign_id}`で取得して表示する（直近20件にない施策でも表示できるようにする）
 - 検索に失敗した場合（`500 EMBEDDING_FAILED`）は、直近20件の選択肢に戻し、「もう一度検索」を出す。候補が0件の場合は、「該当する施策がありません」を表示する
@@ -2772,7 +2801,7 @@ type DrawerMenuProps = {
 | --- | --- |
 | 保存や更新の完了 | Fieldの入力Error。該当FieldとError summaryへ表示する |
 | 一覧の追加読込、再取得、補助操作の結果 | `401`のログイン遷移、`404`のNot found |
-| 同じ操作を安全に再試行できる失敗 | `X_POST_OUTCOME_UNKNOWN`、`X_POST_SAVE_FAILED`など、画面内に残す必要がある結果 |
+| Cursor Errorから先頭へ復旧した通知 | `X_POST_OUTCOME_UNKNOWN`、`X_POST_SAVE_FAILED`など、画面内に残す必要がある結果 |
 | 操作を続けられる軽微な注意 | 確認、承認、破壊的操作の代替 |
 
 - `error` Variantは、現在の画面を維持しながら利用者へ知らせる必要がある重要な失敗に限定する。追加読込、再取得、Background更新、補助操作のAPI通信失敗が該当する
@@ -3033,8 +3062,10 @@ shared/components/
 | `GET /campaigns/{campaign_id}` | SC-05、SC-06、SC-09 | 施策の内容、紐づく投稿・記憶、計測の集計。SC-06とSC-09では、選択中の施策名の復元に使用する | 6.3 |
 | `GET /posts` | SC-06 | 公開済み投稿の一覧、キーワードによる意味検索、施策・公開日時による絞り込み、公開日時・初週PV数による並び替え。計測の状態と値を含む | 6.4 |
 | `GET /posts/{post_id}` | SC-07 | 公開済み投稿の内容、対象施策、UTM、計測結果 | 6.5 |
-| `GET /metrics` | SC-08 | 全体のサマリーと施策ごとの集計（公開日時による期間の絞り込み） | 6.6 |
-| `GET /memories` | SC-09 | 記憶の一覧、キーワードによる意味検索、施策による絞り込み、関連する施策・投稿 | 6.7 |
+| `GET /metrics` | SC-08 | 全体のサマリーと、Cursorでページングする施策ごとの集計（公開日時による期間の絞り込み） | 6.6 |
+| `GET /memories` | SC-09 | 記憶の一覧、キーワードによる意味検索、施策による絞り込み、関連する施策・投稿の先頭3件 | 6.7 |
+| `GET /memories/{memory_id}/campaigns` | SC-09 | 記憶に関連する施策の続きをCursorで取得する | 6.8 |
+| `GET /memories/{memory_id}/posts` | SC-09 | 記憶に関連する投稿の続きをCursorで取得する | 6.9 |
 | `DELETE /memories/{memory_id}` | SC-09 | 記憶の削除（Sessionに関わらない。`Idempotency-Key`不要） | 7.1 |
 | `PUT /campaigns/{campaign_id}` | SC-05 | 施策の直接編集（上書き。`expected_updated_at`必須。Sessionに関わらない。`Idempotency-Key`不要） | 4.2 |
 
@@ -3042,7 +3073,7 @@ shared/components/
 - 認証は、署名付きCookieで行う。他社のIDと存在しないIDは、いずれも`404`とする
 - 一覧は、`query`を省略すると新しい順（`cursor`で20件ずつ）、指定すると意味検索（類似度の高い上位の件だけ。ページングなし）になる。意味検索のEmbedding生成に失敗した場合は`500 EMBEDDING_FAILED`となるため、UIは検索の再実行を促す
 - 公開済み投稿は、成功した`publish_x_post`のRequestに紐づくPostだけを返す（`REQUIREMENTS.md`の3.2）
-- 記憶の削除と、SC-05の施策の編集は、状態変更APIとして、CSRF対策と確認ダイアログを必須とする。`Idempotency-Key`は使わない。Responseを受け取れなかった場合は、再取得して結果を確認する（成功したRequestの再送は、施策の編集で`409 CAMPAIGN_CONFLICT`、記憶の削除で`404 MEMORY_NOT_FOUND`になる）
+- 記憶の削除と、SC-05の施策の編集は、状態変更APIとして、CSRF対策と確認ダイアログを必須とする。`PUT`もCSRF対象とする。`Idempotency-Key`は使わない。Responseを受け取れなかった場合は、再取得して結果を確認する（成功したRequestの再送は、施策の編集で`409 CAMPAIGN_CONFLICT`、記憶の削除で`404 MEMORY_NOT_FOUND`になる）
 
 ## 8. MVPで作らない画面
 
@@ -3050,7 +3081,7 @@ shared/components/
 | --- | --- |
 | コスト、実行履歴、セキュリティイベントの一覧画面 | 専用の画面は必須ではない。完全な履歴は、DBとログで確認する（`API_DESIGN.md`の5.1）。将来の拡張とする。セキュリティイベントは、チャットの通知で伝える（SC-02） |
 | ユーザー登録、パスワード再設定、ユーザー管理 | マーケターは事前登録する（`API_DESIGN.md`の2.9） |
-| 施策の削除・アーカイブ、投稿の編集・削除・アーカイブの操作 | 施策の編集は、SC-05で行える。削除はMVPの対象外で、公開済みの投稿は変更も削除もできない（`REQUIREMENTS.md`のスコープ外） |
+| 施策の削除・アーカイブ、投稿の編集・削除・アーカイブの操作 | 未Archive施策の編集はSC-05で行える。Archive済み施策はBadge付きの参照専用で表示する。Archive状態を変更する操作と削除はMVPの対象外で、公開済みの投稿は変更も削除もできない（`REQUIREMENTS.md`のスコープ外） |
 | 未公開の投稿案の一覧 | 未公開案は、履歴とフォームにだけ存在する |
 | 投稿の予約、スケジュール投稿 | 対象外。投稿は、明示的な承認操作でだけ実行する |
 | X投稿の結果不明の手動照合 | 運用の作業とし、画面は設けない |
