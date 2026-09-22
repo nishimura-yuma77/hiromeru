@@ -85,8 +85,48 @@ async def test_Body検証_expected_updated_atがidなしで指定されたとき
     )
 
     assert response.status_code == 400
-    assert response.json()["error"]["code"] == "INVALID_ARGUMENT"
-    assert response.json()["error"]["agent_turn_id"] is not None
+    error = response.json()["error"]
+    assert error["code"] == "INVALID_ARGUMENT"
+    assert error["agent_turn_id"] is not None
+    assert error["field_errors"][0]["field"] == "expected_updated_at"
+
+
+async def test_Body検証_複数Fieldが不正なとき全field_errorsを保存して再返却する(
+    account: Account,
+) -> None:
+    session_id = await account.create_session()
+    key = str(uuid.uuid4())
+    body = campaign_body(target_profile="   ", background="あ" * 10_001)
+    del body["title"]
+
+    first = await account.upsert_campaign(session_id, body, key)
+    replay = await account.upsert_campaign(session_id, body, key)
+
+    assert first.status_code == 400
+    assert first.json()["error"]["field_errors"] == [
+        {"field": "title", "code": "REQUIRED", "message": "タイトルを入力してください。"},
+        {
+            "field": "target_profile",
+            "code": "REQUIRED",
+            "message": "ターゲット像を入力してください。",
+        },
+        {
+            "field": "background",
+            "code": "TOO_LONG",
+            "message": "実施背景は10,000文字以内で入力してください。",
+        },
+    ]
+    assert replay.json() == first.json()
+
+
+async def test_本文上限_10000文字のとき施策を作成できる(account: Account) -> None:
+    session_id = await account.create_session()
+
+    response = await account.upsert_campaign(
+        session_id, campaign_body(target_profile="あ" * 10_000)
+    )
+
+    assert response.status_code == 201
 
 
 async def test_業務条件違反_タイトルに改行があるとき422_INVALID_CAMPAIGN(
@@ -97,7 +137,15 @@ async def test_業務条件違反_タイトルに改行があるとき422_INVALI
     response = await account.upsert_campaign(session_id, campaign_body(title="a\nb"))
 
     assert response.status_code == 422
-    assert response.json()["error"]["code"] == "INVALID_CAMPAIGN"
+    error = response.json()["error"]
+    assert error["code"] == "INVALID_CAMPAIGN"
+    assert error["field_errors"] == [
+        {
+            "field": "title",
+            "code": "INVALID_FORMAT",
+            "message": "施策タイトルに改行を含めることはできません。",
+        }
+    ]
 
 
 async def test_Embedding失敗_生成できないとき500_EMBEDDING_FAILEDで施策を保存しない(

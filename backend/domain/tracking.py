@@ -26,8 +26,17 @@ def is_valid_landing_url(url: str) -> bool:
     """http/https で、ホストを持つ、長さ上限内のURLか。"""
     if not url or len(url) > MAX_LANDING_URL_LENGTH or any(char.isspace() for char in url):
         return False
-    parts = urlsplit(url)
-    return parts.scheme in ("http", "https") and bool(parts.hostname)
+    try:
+        parts = urlsplit(url)
+        _ = parts.port  # Port表記と範囲を検証する。
+        return (
+            parts.scheme.lower() in ("http", "https")
+            and bool(parts.hostname)
+            and parts.username is None
+            and parts.password is None
+        )
+    except ValueError:
+        return False
 
 
 def build_tracking_url(landing_url: str, campaign_id: int, idempotency_key: str) -> TrackingUrl:

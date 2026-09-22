@@ -12,12 +12,13 @@ from typing import Any
 from sqlalchemy.exc import SQLAlchemyError
 
 from clients.errors import EmbeddingError, XApiOutcomeUnknownError, XApiRejectedError
-from core.errors import AppError, LeaseLostError
+from core.errors import AppError, FieldError, LeaseLostError
 from core.logging import get_logger, safe_error_text
 from domain.constants import (
     DB_SAVE_BACKOFF_BASE_SECONDS,
     DB_SAVE_MAX_ATTEMPTS,
     IN_PROGRESS_RETRY_AFTER_SECONDS,
+    MAX_LANDING_URL_LENGTH,
 )
 from domain.enums import ApiIdempotencyStatus, ApiOperation
 from domain.requests import XPostRequest
@@ -86,8 +87,9 @@ class XPostApprovalService:
             return await self._resume(ctx, body, ctx.external_result)
         try:
             request = validate_model(XPostRequest, body)
+            self._validate_fields(request)
             tracking = build_tracking_url(request.landing_url, request.campaign_id, str(ctx.key))
-            self._validate_post(request, tracking)
+            self._validate_post_length(request, tracking)
             await self._require_campaign(ctx, request.campaign_id)
             embedding = await self._embed(request.body)
         except AppError as error:
@@ -95,14 +97,50 @@ class XPostApprovalService:
         return await self._post_to_x(ctx, request, tracking, embedding)
 
     @staticmethod
-    def _validate_post(request: XPostRequest, tracking: TrackingUrl) -> None:
-        """本文・遷移先URL・結合後の文字数を検証する（INVALID_X_POST）。"""
+    def _validate_fields(request: XPostRequest) -> None:
+        """本文と遷移先URLを検証し、FieldごとのErrorをまとめて返す。"""
+        field_errors: list[FieldError] = []
         if contains_url(request.body):
-            raise AppError("INVALID_X_POST", "投稿本文にURLを含めることはできません。")
+            field_errors.append(
+                {
+                    "field": "body",
+                    "code": "INVALID_FORMAT",
+                    "message": "投稿本文にURLを含めることはできません。",
+                }
+            )
         if not is_valid_landing_url(request.landing_url):
-            raise AppError("INVALID_X_POST", "遷移先URLが正しくありません。")
+            field_errors.append(
+                {
+                    "field": "landing_url",
+                    "code": "INVALID_URL",
+                    "message": "遷移先URLが正しくありません。",
+                }
+            )
+        if field_errors:
+            raise AppError("INVALID_X_POST", field_errors=field_errors)
+
+    @staticmethod
+    def _validate_post_length(request: XPostRequest, tracking: TrackingUrl) -> None:
+        """UTM追加後のURLと、Xへ送る最終本文の文字数を検証する。"""
+        field_errors: list[FieldError] = []
+        if len(tracking.tracked_url) > MAX_LANDING_URL_LENGTH:
+            field_errors.append(
+                {
+                    "field": "landing_url",
+                    "code": "TOO_LONG",
+                    "message": "UTM追加後の遷移先URLは2,048文字以内にしてください。",
+                }
+            )
         if not is_within_x_limit(f"{request.body}\n{tracking.tracked_url}"):
-            raise AppError("INVALID_X_POST", "投稿本文が文字数上限を超えています。")
+            field_errors.append(
+                {
+                    "field": None,
+                    "code": "X_LENGTH_EXCEEDED",
+                    "message": "投稿本文と遷移先URLの合計がXの文字数上限を超えています。",
+                }
+            )
+        if field_errors:
+            raise AppError("INVALID_X_POST", field_errors=field_errors)
 
     async def _require_campaign(self, ctx: ExecutionContext, campaign_id: int) -> None:
         async with self._ctx.session_factory() as session:
@@ -278,7 +316,11 @@ class XPostApprovalService:
     ) -> ApprovalOutcome:
         """マスク済みエラー・Turn完了・`failed`（結果不明は `outcome_unknown`）を保存する。"""
         failed = AppError(
-            error.code, error.message, agent_turn_id=ctx.turn_id, retryable=error.retryable
+            error.code,
+            error.message,
+            agent_turn_id=ctx.turn_id,
+            retryable=error.retryable,
+            field_errors=error.field_errors,
         )
         body = error_body(failed)
         now = self._ctx.clock.now()

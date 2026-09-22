@@ -23,12 +23,7 @@ def error_response(error: AppError) -> JSONResponse:
         {
             "success": False,
             "data": None,
-            "error": {
-                "code": error.code,
-                "message": error.message,
-                "retryable": error.retryable,
-                "agent_turn_id": error.agent_turn_id,
-            },
+            "error": error.serialize(),
         },
         status_code=error.status_code,
         headers=headers,

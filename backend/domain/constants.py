@@ -4,9 +4,8 @@
 EMBEDDING_DIMENSIONS = 1536
 
 # 施策の入力上限。title は campaigns.title（varchar(255)）に合わせる。
-# 本文系の上限は設計書に定めがないため暫定値とする。
 MAX_CAMPAIGN_TITLE_LENGTH = 255
-MAX_CAMPAIGN_TEXT_LENGTH = 4000
+MAX_CAMPAIGN_TEXT_LENGTH = 10_000
 
 # API_DESIGN 3.1: Xの現行文字数規則。URLは長さに関わらず23とし、上限は280。
 X_MAX_WEIGHTED_LENGTH = 280

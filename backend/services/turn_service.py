@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 
 from agent_runtime.runner import AgentRunError, AgentRunInput, ProgressReporter
-from core.errors import DEFAULT_MESSAGES, ERROR_SPECS, AppError
+from core.errors import DEFAULT_MESSAGES, ERROR_SPECS, AppError, FieldError
 from core.logging import get_logger, safe_error_text
 from core.masking import mask_text
 from domain.constants import SESSION_TITLE_LENGTH
@@ -92,8 +92,24 @@ class TurnService:
     def _validate_message(self, raw_body: bytes) -> str:
         request = validate_model(MessageRequest, parse_json_object(raw_body))
         message = request.message.strip()
-        if not message or len(message) > self._ctx.settings.message_max_length:
-            raise AppError("INVALID_ARGUMENT", "message の文字数が正しくありません。")
+        field_error: FieldError | None = None
+        if not message:
+            field_error = {
+                "field": "message",
+                "code": "REQUIRED",
+                "message": "メッセージを入力してください。",
+            }
+        elif len(message) > self._ctx.settings.message_max_length:
+            field_error = {
+                "field": "message",
+                "code": "TOO_LONG",
+                "message": (
+                    f"メッセージは{self._ctx.settings.message_max_length:,}文字以内で"
+                    "入力してください。"
+                ),
+            }
+        if field_error is not None:
+            raise AppError("INVALID_ARGUMENT", field_errors=[field_error])
         return message
 
     async def execute(self, prepared: PreparedTurn, reporter: ProgressReporter) -> TurnView:

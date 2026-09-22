@@ -75,12 +75,7 @@ def error_body(error: AppError) -> dict[str, Any]:
     return {
         "success": False,
         "data": None,
-        "error": {
-            "code": error.code,
-            "message": error.message,
-            "retryable": error.retryable,
-            "agent_turn_id": error.agent_turn_id,
-        },
+        "error": error.serialize(),
     }
 
 
@@ -153,7 +148,12 @@ class ApprovalStore:
             "success": success,
             "error": None
             if error is None
-            else {"code": error.code, "message": error.message, "retryable": error.retryable},
+            else {
+                "code": error.code,
+                "message": error.message,
+                "retryable": error.retryable,
+                "field_errors": error.field_errors,
+            },
         }
         await self._turns.append_item(
             turn_id,

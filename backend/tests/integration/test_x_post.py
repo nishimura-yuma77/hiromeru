@@ -86,7 +86,45 @@ async def test_文字数超過_URL込みで280を超えるとき422でXを呼ば
     response = await account.publish_post(session_id, post_body(campaign_id, body="あ" * 130))
 
     assert response.status_code == 422
+    assert response.json()["error"]["field_errors"] == [
+        {
+            "field": None,
+            "code": "X_LENGTH_EXCEEDED",
+            "message": "投稿本文と遷移先URLの合計がXの文字数上限を超えています。",
+        }
+    ]
     assert x_api.calls == []
+
+
+async def test_遷移先URL上限_UTM追加後に2048文字を超えるときlanding_urlのErrorを返す(
+    account: Account,
+) -> None:
+    session_id = await account.create_session()
+    campaign_id = await account.create_campaign(session_id)
+    landing_url = "https://example.com/?q=" + "a" * 1_950
+
+    response = await account.publish_post(
+        session_id, post_body(campaign_id, landing_url=landing_url)
+    )
+
+    assert response.status_code == 422
+    assert response.json()["error"]["field_errors"][0] == {
+        "field": "landing_url",
+        "code": "TOO_LONG",
+        "message": "UTM追加後の遷移先URLは2,048文字以内にしてください。",
+    }
+
+
+async def test_Body検証_投稿本文が空のときbodyのFieldErrorを返す(account: Account) -> None:
+    session_id = await account.create_session()
+    campaign_id = await account.create_campaign(session_id)
+
+    response = await account.publish_post(session_id, post_body(campaign_id, body="   "))
+
+    assert response.status_code == 400
+    assert response.json()["error"]["field_errors"] == [
+        {"field": "body", "code": "REQUIRED", "message": "投稿本文を入力してください。"}
+    ]
 
 
 async def test_遷移先URL不正_httpでもhttpsでもないとき422(account: Account) -> None:
@@ -98,7 +136,40 @@ async def test_遷移先URL不正_httpでもhttpsでもないとき422(account: 
     )
 
     assert response.status_code == 422
-    assert response.json()["error"]["code"] == "INVALID_X_POST"
+    error = response.json()["error"]
+    assert error["code"] == "INVALID_X_POST"
+    assert error["field_errors"][0]["code"] == "INVALID_URL"
+
+
+async def test_投稿内容検証_本文とURLが不正なとき複数field_errorsを保存して再返却する(
+    account: Account,
+) -> None:
+    session_id = await account.create_session()
+    campaign_id = await account.create_campaign(session_id)
+    key = str(uuid.uuid4())
+    body = post_body(
+        campaign_id,
+        body="詳細はhttps://example.comです",
+        landing_url="https://user:password@example.com",
+    )
+
+    first = await account.publish_post(session_id, body, key)
+    replay = await account.publish_post(session_id, body, key)
+
+    assert first.status_code == 422
+    assert first.json()["error"]["field_errors"] == [
+        {
+            "field": "body",
+            "code": "INVALID_FORMAT",
+            "message": "投稿本文にURLを含めることはできません。",
+        },
+        {
+            "field": "landing_url",
+            "code": "INVALID_URL",
+            "message": "遷移先URLが正しくありません。",
+        },
+    ]
+    assert replay.json() == first.json()
 
 
 async def test_他社の施策_campaign_idが他社のとき404_CAMPAIGN_NOT_FOUNDでXを呼ばない(

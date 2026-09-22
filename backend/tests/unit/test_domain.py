@@ -2,7 +2,7 @@ from datetime import UTC, datetime, timedelta, timezone
 
 import pytest
 
-from domain.campaign_rules import CampaignContent, find_campaign_violation
+from domain.campaign_rules import CampaignContent, campaign_field_errors
 from domain.cursor import CursorError, decode_cursor, encode_cursor
 from domain.metrics import EMPTY_SUMMARY, MetricsSummary
 from domain.search_text import build_campaign_search_text, build_post_search_text, content_hash
@@ -60,6 +60,8 @@ def test_UTM付与_既存のutmは置き換えて他のクエリは残す() -> N
         ("ftp://example.com", False),
         ("https://", False),
         ("https://exa mple.com", False),
+        ("https://example.com:bad/path", False),
+        ("https://example.com:99999/path", False),
         ("", False),
     ],
 )
@@ -127,6 +129,9 @@ def test_内容ハッシュ_同じ内容は同じで異なる内容は異なる(
 def test_施策の業務条件_タイトルの改行と制御文字を拒否し本文の改行は許可する() -> None:
     ok = CampaignContent("題", "対象\n改行可", "背景", "目的", "計画")
 
-    assert find_campaign_violation(ok) is None
-    assert find_campaign_violation(CampaignContent("a\nb", "x", "x", "x", "x")) is not None
-    assert find_campaign_violation(CampaignContent("題", "x\x00", "x", "x", "x")) is not None
+    assert campaign_field_errors(ok) == []
+    assert campaign_field_errors(CampaignContent("a\nb", "x", "x", "x", "x"))[0]["field"] == "title"
+    assert (
+        campaign_field_errors(CampaignContent("題", "x\x00", "x", "x", "x"))[0]["field"]
+        == "target_profile"
+    )

@@ -10,6 +10,7 @@ from api.responses import error_response
 from clients.errors import EmbeddingError
 from core.errors import AppError
 from core.logging import get_logger, safe_error_text
+from services.validation import validation_field_errors
 
 _log = get_logger(__name__)
 
@@ -32,8 +33,11 @@ async def _handle_app_error(request: Request, exc: Exception) -> JSONResponse:
 
 async def _handle_validation_error(request: Request, exc: Exception) -> JSONResponse:
     """Path・Queryの検証エラー。入力値は返さない。"""
-    del exc
-    return _respond(request, AppError("INVALID_ARGUMENT"))
+    assert isinstance(exc, RequestValidationError)  # noqa: S101
+    return _respond(
+        request,
+        AppError("INVALID_ARGUMENT", field_errors=validation_field_errors(exc.errors())),
+    )
 
 
 async def _handle_embedding_error(request: Request, exc: Exception) -> JSONResponse:
