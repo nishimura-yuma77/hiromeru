@@ -192,13 +192,15 @@ class IdempotencyRepository:
         )
         return (await self._session.execute(stmt)).first() is not None
 
-    async def expire_lease(self, request_id: int, token: uuid.UUID, now: datetime) -> None:
-        """Leaseを即時失効させる（X_POST_SAVE_FAILED。同じキーの再送でDB保存だけを再開する）。"""
-        await self._session.execute(
+    async def expire_lease(self, request_id: int, token: uuid.UUID, now: datetime) -> bool:
+        """有効なLeaseを即時失効させる。実行権を失っていれば False。"""
+        stmt = (
             update(ApiIdempotencyRequest)
-            .where(self._held(request_id, token, now, require_lease=False))
+            .where(self._held(request_id, token, now, require_lease=True))
             .values(lease_expires_at=now, updated_at=now)
+            .returning(ApiIdempotencyRequest.id)
         )
+        return (await self._session.execute(stmt)).first() is not None
 
     async def recover_unknown(
         self,
@@ -219,6 +221,7 @@ class IdempotencyRepository:
                 ApiIdempotencyRequest.status == ApiIdempotencyStatus.PROCESSING,
                 ApiIdempotencyRequest.operation == ApiOperation.PUBLISH_X_POST,
                 ApiIdempotencyRequest.execution_token == row.execution_token,
+                ApiIdempotencyRequest.lease_expires_at == row.lease_expires_at,
                 ApiIdempotencyRequest.lease_expires_at <= now,
                 ApiIdempotencyRequest.external_effect_started_at.is_not(None),
                 ApiIdempotencyRequest.external_result.is_(None),

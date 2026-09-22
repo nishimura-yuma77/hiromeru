@@ -7,8 +7,9 @@ X投稿の成功結果は、DB保存より先に `external_result` へ独立し�
 
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any
+from typing import Annotated, Any
 
+from pydantic import BeforeValidator, StringConstraints, ValidationError
 from sqlalchemy.exc import SQLAlchemyError
 
 from clients.errors import (
@@ -22,11 +23,10 @@ from core.logging import get_logger, safe_error_text
 from domain.constants import (
     DB_SAVE_BACKOFF_BASE_SECONDS,
     DB_SAVE_MAX_ATTEMPTS,
-    IN_PROGRESS_RETRY_AFTER_SECONDS,
     MAX_LANDING_URL_LENGTH,
 )
 from domain.enums import ApiIdempotencyStatus, ApiOperation
-from domain.requests import XPostRequest
+from domain.requests import StrictModel, XPostRequest
 from domain.search_text import build_post_search_text, content_hash
 from domain.timefmt import format_utc, parse_aware_datetime
 from domain.tracking import TrackingUrl, build_tracking_url, is_valid_landing_url
@@ -46,6 +46,21 @@ from services.context import AuthContext, ServiceContext
 from services.validation import BodyLoader, validate_model
 
 _log = get_logger(__name__)
+
+
+def _parse_published_at(value: object) -> datetime:
+    if not isinstance(value, str):
+        raise ValueError("published_at must be an ISO 8601 string")
+    return parse_aware_datetime(value)
+
+
+class _ExternalResult(StrictModel):
+    """DB-only再開に使う、永続化済みX成功結果。"""
+
+    x_post_id: Annotated[str, StringConstraints(min_length=1, max_length=255)]
+    text: Annotated[str, StringConstraints(min_length=1)]
+    tracked_url: Annotated[str, StringConstraints(min_length=1, max_length=MAX_LANDING_URL_LENGTH)]
+    published_at: Annotated[datetime, BeforeValidator(_parse_published_at)]
 
 
 @dataclass(frozen=True)
@@ -82,10 +97,7 @@ class XPostApprovalService:
         try:
             return await self._run(prepared.execution, prepared.body)
         except LeaseLostError:
-            raise AppError(
-                "IDEMPOTENCY_REQUEST_IN_PROGRESS",
-                retry_after_seconds=IN_PROGRESS_RETRY_AFTER_SECONDS,
-            ) from None
+            return await self._executor.replay_after_lease_lost(prepared.execution)
 
     async def _run(self, ctx: ExecutionContext, body: dict[str, Any]) -> ApprovalOutcome:
         if ctx.external_result is not None:
@@ -225,14 +237,25 @@ class XPostApprovalService:
     ) -> ApprovalOutcome:
         """X投稿は成功済み。X APIを呼ばず、保存済みの結果でDB保存だけを再実行する。"""
         request = validate_model(XPostRequest, body)
-        tracked_url = str(external["tracked_url"])
-        text = str(external["text"])
+        try:
+            stored = _ExternalResult.model_validate(external)
+        except ValidationError as error:
+            _log.error("invalid_external_result", error=safe_error_text(error))
+            return await self._save_failed(ctx)
+        tracked_url = stored.tracked_url
+        text = stored.text
+        if not text.endswith(f"\n{tracked_url}"):
+            _log.error("invalid_external_result", error="text does not end with tracked_url")
+            return await self._save_failed(ctx)
         post_body = text.removesuffix(f"\n{tracked_url}")
         tracking = build_tracking_url(request.landing_url, request.campaign_id, str(ctx.key))
+        if post_body != request.body or tracked_url != tracking.tracked_url:
+            _log.error("invalid_external_result", error="stored X payload does not match request")
+            return await self._save_failed(ctx)
         published = _PublishedPost(
             post_body,
-            str(external["x_post_id"]),
-            parse_aware_datetime(str(external["published_at"])),
+            stored.x_post_id,
+            stored.published_at,
             TrackingUrl(
                 request.landing_url,
                 tracking.utm_source,
@@ -321,9 +344,11 @@ class XPostApprovalService:
         確定Responseではないため、冪等性レコードには保存しない。API実行Turnも終端にしない。
         """
         async with self._ctx.session_factory() as session, session.begin():
-            await IdempotencyRepository(session).expire_lease(
+            expired = await IdempotencyRepository(session).expire_lease(
                 ctx.request_id, ctx.token, self._ctx.clock.now()
             )
+            if not expired:
+                raise LeaseLostError
         error = AppError("X_POST_SAVE_FAILED", agent_turn_id=ctx.turn_id)
         return ApprovalOutcome(error.status_code, error_body(error))
 
@@ -351,7 +376,5 @@ class XPostApprovalService:
                 http_status=failed.status_code,
                 body=body,
                 error=failed,
-                # X APIの結果が不明なときは、Leaseが切れていても確定できるようにする。
-                require_lease=status != ApiIdempotencyStatus.OUTCOME_UNKNOWN,
             )
         return ApprovalOutcome(failed.status_code, body)

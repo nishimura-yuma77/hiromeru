@@ -309,17 +309,19 @@ async def test_Lease失効後の再取得_処理が止まったRequestの実行�
 ) -> None:
     session_id = await account.create_session()
     key = str(uuid.uuid4())
-    embedding.block_next = asyncio.Event()
+    gate = asyncio.Event()
+    embedding.block_next = gate
     stalled = asyncio.create_task(account.upsert_campaign(session_id, campaign_body(), key))
     await asyncio.wait_for(embedding.blocked.wait(), 5)
     clock.advance(331)
 
     retried = await account.upsert_campaign(session_id, campaign_body(), key)
-    embedding.blocked.clear()
-    stalled.cancel()
-    await asyncio.gather(stalled, return_exceptions=True)
+    gate.set()
+    stale = await stalled
 
     assert retried.status_code == 201
+    assert stale.status_code == 201
+    assert stale.json() == retried.json()
     replay = await account.upsert_campaign(session_id, campaign_body(), key)
     assert replay.json() == retried.json()
     async with SessionLocal() as session:

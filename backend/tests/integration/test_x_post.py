@@ -3,13 +3,15 @@ import uuid
 from typing import Any
 
 import pytest
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.exc import OperationalError
 
+from domain.enums import AgentTurnStatus, ApiIdempotencyStatus, ApiOperation
 from domain.tracking import build_tracking_url
-from models import Post, PostMetric, PostTrackingLink
+from models import AgentItem, AgentTurn, ApiIdempotencyRequest, Post, PostMetric, PostTrackingLink
 from repositories.database import SessionLocal
 from repositories.posts import PostRepository
+from services.x_post_approval import XPostApprovalService
 from tests.conftest import AccountFactory
 from tests.support.client import Account, post_body
 from tests.support.db import archive_campaign
@@ -518,10 +520,12 @@ async def test_Lease失効後の復旧_X送信後に結果を保存できない�
 
     recovered = await account.publish_post(session_id, post_body(campaign_id), key)
     x_api.gate.set()
-    await running
+    stale = await running
 
     assert recovered.status_code == 504
     assert recovered.json()["error"]["code"] == "X_POST_OUTCOME_UNKNOWN"
+    assert stale.status_code == 504
+    assert stale.json() == recovered.json()
     replay = await account.publish_post(session_id, post_body(campaign_id), key)
     assert replay.status_code == 504
     assert len(x_api.calls) == 1
@@ -550,3 +554,140 @@ async def test_DB保存失敗からの再開_X投稿成功後の保存が失敗�
     assert resumed.status_code == 201
     assert len(x_api.calls) == 1
     assert await _post_count(campaign_id) == 1
+
+
+async def test_external_result保存直後のLease切れ_新Ownerだけが保存し旧Workerも確定Responseを返す(
+    account: Account,
+    x_api: FakeXApi,
+    clock: FixedClock,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    session_id = await account.create_session()
+    campaign_id = await account.create_campaign(session_id)
+    key = str(uuid.uuid4())
+    body = post_body(campaign_id)
+    reached_save = asyncio.Event()
+    release_stale = asyncio.Event()
+    original = XPostApprovalService._save_with_retry
+    call_count = 0
+
+    async def pause_first_save(self: XPostApprovalService, *args: Any, **kwargs: Any) -> Any:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            reached_save.set()
+            await release_stale.wait()
+        return await original(self, *args, **kwargs)
+
+    monkeypatch.setattr(XPostApprovalService, "_save_with_retry", pause_first_save)
+    stale_task = asyncio.create_task(account.publish_post(session_id, body, key))
+    await asyncio.wait_for(reached_save.wait(), 5)
+    clock.advance(331)
+
+    replacement = await account.publish_post(session_id, body, key)
+    release_stale.set()
+    stale = await stale_task
+
+    assert replacement.status_code == 201
+    assert stale.status_code == 201
+    assert stale.json() == replacement.json()
+    assert len(x_api.calls) == 1
+    assert await _post_count(campaign_id) == 1
+
+
+async def test_external_result不正_DB再開を確定せず元Turnとprocessingを保持する(
+    account: Account, x_api: FakeXApi, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    session_id = await account.create_session()
+    campaign_id = await account.create_campaign(session_id)
+    key = str(uuid.uuid4())
+    body = post_body(campaign_id)
+    original = PostRepository.insert_published
+
+    async def failing(self: PostRepository, *args: Any, **kwargs: Any) -> Any:
+        raise OperationalError("INSERT", {}, Exception("db down"))
+
+    monkeypatch.setattr(PostRepository, "insert_published", failing)
+    first = await account.publish_post(session_id, body, key)
+    monkeypatch.setattr(PostRepository, "insert_published", original)
+
+    async with SessionLocal() as session, session.begin():
+        row = (
+            await session.execute(
+                select(ApiIdempotencyRequest).where(
+                    ApiIdempotencyRequest.marketer_id == account.marketer_id,
+                    ApiIdempotencyRequest.operation == ApiOperation.PUBLISH_X_POST,
+                    ApiIdempotencyRequest.idempotency_key == uuid.UUID(key),
+                )
+            )
+        ).scalar_one()
+        turn_id = row.agent_turn_id
+        await session.execute(
+            update(ApiIdempotencyRequest)
+            .where(ApiIdempotencyRequest.id == row.id)
+            .values(external_result={"x_post_id": 123, "text": [], "published_at": None})
+        )
+
+    resumed = await account.publish_post(session_id, body, key)
+
+    assert first.status_code == resumed.status_code == 500
+    assert resumed.json()["error"]["code"] == "X_POST_SAVE_FAILED"
+    assert resumed.json()["error"]["agent_turn_id"] == turn_id
+    assert len(x_api.calls) == 1
+    assert await _post_count(campaign_id) == 0
+    async with SessionLocal() as session:
+        row = (
+            await session.execute(
+                select(ApiIdempotencyRequest).where(
+                    ApiIdempotencyRequest.idempotency_key == uuid.UUID(key)
+                )
+            )
+        ).scalar_one()
+        turn = await session.get(AgentTurn, turn_id)
+        item_count = await session.scalar(
+            select(func.count()).select_from(AgentItem).where(AgentItem.agent_turn_id == turn_id)
+        )
+    assert row.status == ApiIdempotencyStatus.PROCESSING
+    assert row.http_status is None
+    assert row.response_body is None
+    assert row.completed_at is None
+    assert turn is not None and turn.status == AgentTurnStatus.RUNNING
+    assert item_count == 1
+
+
+async def test_external_result改ざん_Requestと一致しない保存値ではDB再開しない(
+    account: Account, x_api: FakeXApi, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    session_id = await account.create_session()
+    campaign_id = await account.create_campaign(session_id)
+    key = str(uuid.uuid4())
+    body = post_body(campaign_id)
+
+    async def failing(self: PostRepository, *args: Any, **kwargs: Any) -> Any:
+        raise OperationalError("INSERT", {}, Exception("db down"))
+
+    monkeypatch.setattr(PostRepository, "insert_published", failing)
+    first = await account.publish_post(session_id, body, key)
+
+    async with SessionLocal() as session, session.begin():
+        row = (
+            await session.execute(
+                select(ApiIdempotencyRequest).where(
+                    ApiIdempotencyRequest.idempotency_key == uuid.UUID(key)
+                )
+            )
+        ).scalar_one()
+        external = dict(row.external_result or {})
+        external["text"] = f"改ざん済み本文\n{external['tracked_url']}"
+        await session.execute(
+            update(ApiIdempotencyRequest)
+            .where(ApiIdempotencyRequest.id == row.id)
+            .values(external_result=external)
+        )
+
+    resumed = await account.publish_post(session_id, body, key)
+
+    assert first.status_code == resumed.status_code == 500
+    assert resumed.json()["error"]["code"] == "X_POST_SAVE_FAILED"
+    assert len(x_api.calls) == 1
+    assert await _post_count(campaign_id) == 0
