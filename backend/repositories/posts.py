@@ -171,7 +171,7 @@ class PostRepository:
         return [PostRow(r[0], r[1], r[2], r[3]) for r in await self._session.execute(stmt)]
 
     async def list_posts(
-        self, company_id: int, flt: PostFilter, page: PostPage, limit: int
+        self, company_id: int, flt: PostFilter, page: PostPage, limit: int | None = None
     ) -> list[PostRow]:
         """並び替えとカーソルに従って公開済み投稿を返す（API_DESIGN 6.4）。"""
         stmt = _apply_filter(_published_stmt(company_id), flt)
@@ -186,7 +186,8 @@ class PostRepository:
             stmt = stmt.order_by(*(c.desc() if descending else c.asc() for c in columns))
         else:
             stmt = self._order_by_pv(stmt, descending, cursor)
-        stmt = stmt.limit(limit)
+        if limit is not None:
+            stmt = stmt.limit(limit)
         return [PostRow(r[0], r[1], r[2], r[3]) for r in await self._session.execute(stmt)]
 
     @staticmethod
@@ -194,7 +195,10 @@ class PostRepository:
         stmt: Select[Any], descending: bool, cursor: dict[str, Any] | None
     ) -> Select[Any]:
         """`x_pv_count` の並び替え。値がない投稿（pending・failed）は常に末尾へ置く。"""
-        pv = PostMetric.x_pv_count
+        pv = case(
+            (PostMetric.status == PostMetricStatus.COMPLETED, PostMetric.x_pv_count),
+            else_=None,
+        )
         if cursor is not None:
             if not cursor["is_null"]:
                 key, after = tuple_(pv, Post.id), tuple_(cursor["x_pv_count"], cursor["id"])
