@@ -46,7 +46,7 @@ Agentは`propose_campaign`と`propose_x_post`で編集可能な内容を提案�
 | 16 | `GET` | `/api/v1/posts` | 投稿一覧取得 | 公開済み投稿を、絞り込み・意味検索・並び替え付きで返す（計測の状態と値を含む） | SC-06 | 6.4 |
 | 17 | `GET` | `/api/v1/posts/{post_id}` | 投稿詳細取得 | 公開済み投稿の内容、対象施策、UTM、計測結果を返す | SC-07 | 6.5 |
 | 18 | `GET` | `/api/v1/metrics` | 計測結果集計取得 | 全体のサマリーと施策ごとの計測結果を集計して返す（流入率を含む） | SC-08 | 6.6 |
-| 19 | `GET` | `/api/v1/memories` | 記憶一覧取得 | 長期記憶を新しい順、または意味検索で返す（関連する施策・投稿を含む） | SC-09 | 6.7 |
+| 19 | `GET` | `/api/v1/memories` | 記憶一覧取得 | 長期記憶を新しい順、または意味検索で返す。施策による絞り込みに対応する（関連する施策・投稿を含む） | SC-09 | 6.7 |
 | 20 | `DELETE` | `/api/v1/memories/{memory_id}` | 記憶削除 | 長期記憶の内容とEmbeddingを削除する。Sessionに関わらず、Agent履歴と`Idempotency-Key`は使用しない | SC-09 | 7.1 |
 
 ## 2. 共通仕様
@@ -1446,13 +1446,14 @@ Response: `200 OK`
 - 期間の指定が不正な場合は、`400 INVALID_ARGUMENT`とする
 
 ### 6.7 記憶一覧取得
-`GET /api/v1/memories?query=...&limit=20&cursor=...`
+`GET /api/v1/memories?query=...&campaign_id=12&limit=20&cursor=...`
 
 会社の長期記憶を、関連する施策と投稿とあわせて返す。`agent_memories`には作成日時がないため、並び順は`id`の降順（採番の新しい順）とする（`cursor`は、最後の行の`id`から作る）。日付や種別による絞り込みは設けない。
 
 | Query | Type | 必須 | 説明 |
 | --- | --- | :---: | --- |
 | `query` `limit` `cursor` | | | 6.1の「一覧の検索とページング」 |
+| `campaign_id` | integer | | この施策に関連付けられた記憶だけを返す |
 
 Response: `200 OK`
 
@@ -1480,9 +1481,16 @@ Response: `200 OK`
 ```
 
 - 意味検索の対象は`agent_memories`のEmbeddingとする
+- `campaign_id`は一覧と意味検索の両方へ適用し、`memory_campaigns`で指定施策に関連付けられた記憶だけを返す。同じ記憶が同じ施策へ重複して関連付くことはない
+- `campaign_id`の施策が存在しない、または別会社に属する場合は、空の一覧ではなく`404 CAMPAIGN_NOT_FOUND`とする
+- `cursor`は`campaign_id`を含む検索条件に対して発行する。異なる`campaign_id`で再利用した場合は`400 INVALID_ARGUMENT`とする
 - `campaigns`と`posts`は、`memory_campaigns`と`memory_posts`で関連付けられたものとする。関連がない記憶では空の配列とする
 - 記憶の内容は、Agentが保存した文章であり、UIは命令ではなく表示用の文字列として扱う
 - 記憶の削除は、記憶の忘却API（7.1）で行う
+
+| HTTP Status | Code | 条件 | 再試行 |
+| --- | --- | --- | :---: |
+| `404` | `CAMPAIGN_NOT_FOUND` | `campaign_id`の施策が存在しない、または別会社に属する | × |
 
 ## 7. 記憶の忘却API
 画面（SC-09）から、ユーザーが不要な長期記憶を削除する。Agent Toolの`delete_long_term_memory`（`AGENT_DESIGN.md`）と同じく、記憶の内容とEmbeddingを完全に削除する。API呼び出し自体を、ユーザーの最終承認として扱う（2.1）。
