@@ -11,6 +11,7 @@ from typing import Annotated, Any
 
 from pydantic import BeforeValidator, StringConstraints, ValidationError
 from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from clients.errors import (
     EmbeddingError,
@@ -54,7 +55,7 @@ def _parse_published_at(value: object) -> datetime:
     return parse_aware_datetime(value)
 
 
-class _ExternalResult(StrictModel):
+class ExternalResult(StrictModel):
     """DB-only再開に使う、永続化済みX成功結果。"""
 
     x_post_id: Annotated[str, StringConstraints(min_length=1, max_length=255)]
@@ -64,13 +65,91 @@ class _ExternalResult(StrictModel):
 
 
 @dataclass(frozen=True)
-class _PublishedPost:
+class PublishedPost:
     """X投稿に成功した投稿の、保存する内容。"""
 
     body: str
     x_post_id: str
     published_at: datetime
     tracking: TrackingUrl
+
+
+async def insert_published_post(
+    session: AsyncSession,
+    ctx: ExecutionContext,
+    campaign_id: int,
+    published: PublishedPost,
+    embedding: list[float],
+    *,
+    response_turn_id: int,
+) -> dict[str, Any]:
+    """通常承認と運用復旧で共有するPost関連データの保存処理。"""
+    tracking = published.tracking
+    post = await PostRepository(session).insert_published(
+        NewPost(
+            company_id=ctx.auth.company_id,
+            marketer_id=ctx.auth.marketer_id,
+            campaign_id=campaign_id,
+            api_idempotency_request_id=ctx.request_id,
+            body=published.body,
+            x_post_id=published.x_post_id,
+            published_at=published.published_at,
+            landing_url=tracking.landing_url,
+            utm_source=tracking.utm_source,
+            utm_medium=tracking.utm_medium,
+            utm_campaign=tracking.utm_campaign,
+            utm_content=tracking.utm_content,
+            tracked_url=tracking.tracked_url,
+            embedding=embedding,
+            content_hash=content_hash(build_post_search_text(published.body)),
+        )
+    )
+    return success_body(
+        {
+            "post_id": post.id,
+            "agent_turn_id": response_turn_id,
+            "campaign_id": campaign_id,
+            "x_post_id": published.x_post_id,
+            "body": published.body,
+            "tracked_url": tracking.tracked_url,
+            "published_at": format_utc(published.published_at),
+        }
+    )
+
+
+def published_from_external_result(
+    request: XPostRequest, key: str, external: dict[str, Any]
+) -> PublishedPost:
+    """保存済みX結果を再検証し、DB保存用の値へ変換する。
+
+    Raises:
+        ValueError: Schemaまたは元Requestとの対応が不正な場合。
+    """
+    try:
+        stored = ExternalResult.model_validate(external)
+    except ValidationError:
+        raise ValueError("invalid external result schema") from None
+    tracked_url = stored.tracked_url
+    text = stored.text
+    if not text.endswith(f"\n{tracked_url}"):
+        raise ValueError("external text and tracked URL do not match")
+    post_body = text.removesuffix(f"\n{tracked_url}")
+    tracking = build_tracking_url(request.landing_url, request.campaign_id, key)
+    if post_body != request.body or tracked_url != tracking.tracked_url:
+        raise ValueError("external result does not match original request")
+    return PublishedPost(
+        post_body,
+        stored.x_post_id,
+        stored.published_at,
+        TrackingUrl(
+            request.landing_url,
+            tracking.utm_source,
+            tracking.utm_medium,
+            tracking.utm_campaign,
+            tracking.utm_content,
+            tracked_url,
+        ),
+    )
 
 
 class XPostApprovalService:
@@ -98,6 +177,12 @@ class XPostApprovalService:
             return await self._run(prepared.execution, prepared.body)
         except LeaseLostError:
             return await self._executor.replay_after_lease_lost(prepared.execution)
+
+    async def resume_persistence(
+        self, ctx: ExecutionContext, body: dict[str, Any], external: dict[str, Any]
+    ) -> ApprovalOutcome:
+        """運用復旧から、Xを呼ばずに保存済み外部結果のDB保存だけを再開する。"""
+        return await self._resume(ctx, body, external)
 
     async def _run(self, ctx: ExecutionContext, body: dict[str, Any]) -> ApprovalOutcome:
         if ctx.external_result is not None:
@@ -211,7 +296,7 @@ class XPostApprovalService:
             if not await self._save_external_result(ctx, external):
                 return await self._outcome_unknown(ctx)
             external_saved = True
-            published = _PublishedPost(request.body, result.x_post_id, published_at, tracking)
+            published = PublishedPost(request.body, result.x_post_id, published_at, tracking)
             return await self._save_with_retry(ctx, request.campaign_id, published, embedding)
         except LeaseLostError:
             raise
@@ -229,7 +314,7 @@ class XPostApprovalService:
                     ctx.request_id, ctx.token, external, self._ctx.clock.now()
                 )
         except SQLAlchemyError as error:
-            _log.error("external_result_save_failed", error=safe_error_text(error))
+            _log.error("external_result_save_failed", error_type=type(error).__name__)
             return False
 
     async def _resume(
@@ -238,35 +323,13 @@ class XPostApprovalService:
         """X投稿は成功済み。X APIを呼ばず、保存済みの結果でDB保存だけを再実行する。"""
         request = validate_model(XPostRequest, body)
         try:
-            stored = _ExternalResult.model_validate(external)
-        except ValidationError as error:
-            _log.error("invalid_external_result", error=safe_error_text(error))
+            published = published_from_external_result(request, str(ctx.key), external)
+        except ValueError:
+            # ValidationErrorは入力値を含み得るため、保存済み本文などをログへ渡さない。
+            _log.error("invalid_external_result")
             return await self._save_failed(ctx)
-        tracked_url = stored.tracked_url
-        text = stored.text
-        if not text.endswith(f"\n{tracked_url}"):
-            _log.error("invalid_external_result", error="text does not end with tracked_url")
-            return await self._save_failed(ctx)
-        post_body = text.removesuffix(f"\n{tracked_url}")
-        tracking = build_tracking_url(request.landing_url, request.campaign_id, str(ctx.key))
-        if post_body != request.body or tracked_url != tracking.tracked_url:
-            _log.error("invalid_external_result", error="stored X payload does not match request")
-            return await self._save_failed(ctx)
-        published = _PublishedPost(
-            post_body,
-            stored.x_post_id,
-            stored.published_at,
-            TrackingUrl(
-                request.landing_url,
-                tracking.utm_source,
-                tracking.utm_medium,
-                tracking.utm_campaign,
-                tracking.utm_content,
-                tracked_url,
-            ),
-        )
         try:
-            embedding = await self._embed(post_body)
+            embedding = await self._embed(published.body)
         except AppError:
             return await self._save_failed(ctx)
         return await self._save_with_retry(ctx, request.campaign_id, published, embedding)
@@ -275,7 +338,7 @@ class XPostApprovalService:
         self,
         ctx: ExecutionContext,
         campaign_id: int,
-        published: _PublishedPost,
+        published: PublishedPost,
         embedding: list[float],
     ) -> ApprovalOutcome:
         """DB保存を最大3回、指数バックオフで再試行する。失敗が続けばLeaseを即時失効させる。"""
@@ -283,7 +346,7 @@ class XPostApprovalService:
             try:
                 return await self._save(ctx, campaign_id, published, embedding)
             except SQLAlchemyError as error:
-                _log.error("post_save_failed", attempt=attempt, error=safe_error_text(error))
+                _log.error("post_save_failed", attempt=attempt, error_type=type(error).__name__)
                 if attempt < DB_SAVE_MAX_ATTEMPTS:
                     await self._ctx.sleep(DB_SAVE_BACKOFF_BASE_SECONDS * 2 ** (attempt - 1))
         return await self._save_failed(ctx)
@@ -292,42 +355,19 @@ class XPostApprovalService:
         self,
         ctx: ExecutionContext,
         campaign_id: int,
-        published: _PublishedPost,
+        published: PublishedPost,
         embedding: list[float],
     ) -> ApprovalOutcome:
         """投稿・Embedding・UTM・計測予定・成功の確定を同一Transactionで保存する。"""
         now = self._ctx.clock.now()
-        tracking = published.tracking
         async with self._ctx.session_factory() as session, session.begin():
-            post = await PostRepository(session).insert_published(
-                NewPost(
-                    company_id=ctx.auth.company_id,
-                    marketer_id=ctx.auth.marketer_id,
-                    campaign_id=campaign_id,
-                    api_idempotency_request_id=ctx.request_id,
-                    body=published.body,
-                    x_post_id=published.x_post_id,
-                    published_at=published.published_at,
-                    landing_url=tracking.landing_url,
-                    utm_source=tracking.utm_source,
-                    utm_medium=tracking.utm_medium,
-                    utm_campaign=tracking.utm_campaign,
-                    utm_content=tracking.utm_content,
-                    tracked_url=tracking.tracked_url,
-                    embedding=embedding,
-                    content_hash=content_hash(build_post_search_text(published.body)),
-                )
-            )
-            body = success_body(
-                {
-                    "post_id": post.id,
-                    "agent_turn_id": ctx.turn_id,
-                    "campaign_id": campaign_id,
-                    "x_post_id": published.x_post_id,
-                    "body": published.body,
-                    "tracked_url": tracking.tracked_url,
-                    "published_at": format_utc(published.published_at),
-                }
+            body = await insert_published_post(
+                session,
+                ctx,
+                campaign_id,
+                published,
+                embedding,
+                response_turn_id=ctx.turn_id,
             )
             await ApprovalStore(session, now).complete(
                 ctx,

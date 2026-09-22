@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import and_, select, text, update
+from sqlalchemy import and_, or_, select, text, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -50,6 +50,42 @@ class IdempotencyRepository:
     async def get(self, request_id: int) -> ApiIdempotencyRequest | None:
         """IDで取得する。"""
         return await self._session.get(ApiIdempotencyRequest, request_id)
+
+    async def get_for_update(self, request_id: int) -> ApiIdempotencyRequest | None:
+        """IDで行をロックして取得する。"""
+        stmt = (
+            select(ApiIdempotencyRequest)
+            .where(ApiIdempotencyRequest.id == request_id)
+            .with_for_update()
+        )
+        return (await self._session.execute(stmt)).scalar_one_or_none()
+
+    async def list_x_recovery_candidates(
+        self, *, now: datetime, limit: int, company_id: int | None = None
+    ) -> list[ApiIdempotencyRequest]:
+        """結果不明と、X成功後に保存待ちの期限切れRequestを列挙する。"""
+        from models import Marketer  # noqa: PLC0415 - 循環を避け、運用Queryだけで使う
+
+        stmt = (
+            select(ApiIdempotencyRequest)
+            .join(Marketer, Marketer.id == ApiIdempotencyRequest.marketer_id)
+            .where(
+                ApiIdempotencyRequest.operation == ApiOperation.PUBLISH_X_POST,
+                or_(
+                    ApiIdempotencyRequest.status == ApiIdempotencyStatus.OUTCOME_UNKNOWN,
+                    and_(
+                        ApiIdempotencyRequest.status == ApiIdempotencyStatus.PROCESSING,
+                        ApiIdempotencyRequest.lease_expires_at <= now,
+                        ApiIdempotencyRequest.external_result.is_not(None),
+                    ),
+                ),
+            )
+            .order_by(ApiIdempotencyRequest.updated_at, ApiIdempotencyRequest.id)
+            .limit(limit)
+        )
+        if company_id is not None:
+            stmt = stmt.where(Marketer.company_id == company_id)
+        return list((await self._session.execute(stmt)).scalars())
 
     async def reserve(
         self,
@@ -228,6 +264,34 @@ class IdempotencyRepository:
             )
             .values(
                 status=ApiIdempotencyStatus.OUTCOME_UNKNOWN,
+                http_status=http_status,
+                response_body=response_body,
+                completed_at=now,
+                updated_at=now,
+            )
+            .returning(ApiIdempotencyRequest.id)
+        )
+        return (await self._session.execute(stmt)).first() is not None
+
+    async def resolve_unknown(
+        self,
+        request_id: int,
+        *,
+        status: ApiIdempotencyStatus,
+        http_status: int,
+        response_body: dict[str, Any],
+        now: datetime,
+    ) -> bool:
+        """`outcome_unknown`を確定結果へ一度だけCompare-and-setする。"""
+        stmt = (
+            update(ApiIdempotencyRequest)
+            .where(
+                ApiIdempotencyRequest.id == request_id,
+                ApiIdempotencyRequest.operation == ApiOperation.PUBLISH_X_POST,
+                ApiIdempotencyRequest.status == ApiIdempotencyStatus.OUTCOME_UNKNOWN,
+            )
+            .values(
+                status=status,
                 http_status=http_status,
                 response_body=response_body,
                 completed_at=now,

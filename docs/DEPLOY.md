@@ -81,6 +81,42 @@ python scripts/backfill_campaign_embeddings.py --execute
 
 Cron設定はProduction Deploymentだけで有効にし、PreviewからProductionの計測処理を起動しないでください。
 
+## X Post Operational Recovery
+
+X投稿結果が不明なRequestと、X成功後にDB保存待ちでLeaseが切れたRequestは、公開HTTP APIではなく`backend/`の運用Commandで復旧します。まず安全なMetadataだけを確認します。
+
+```bash
+python scripts/reconcile_x_posts.py list --company-id 123
+python scripts/reconcile_x_posts.py inspect --request-id 456
+```
+
+`manual_reconciliation`はX管理画面で投稿有無を確認してから、次のどちらか一方を一度だけ実行します。公開日時はX上の実日時をTimezone付きISO 8601で指定します。
+
+```bash
+python scripts/reconcile_x_posts.py resolve-posted \
+  --request-id 456 --x-post-id 1234567890 \
+  --published-at 2026-09-23T09:30:00Z --execute
+python scripts/reconcile_x_posts.py resolve-not-posted --request-id 456 --execute
+```
+
+`resume_persistence`はXへ再投稿せず、保存済みの外部結果を再検証してDB保存だけを再開します。
+
+```bash
+python scripts/reconcile_x_posts.py resume --request-id 789 --execute
+```
+
+`resolve-posted`と`resume`は本番Embeddingを作るため`EXTERNAL_CLIENT_MODE=real`およびOrcaRouter設定が必要です。Command出力へCredential、Request Body、X本文、Tracked URL、Provider Body、Lease Tokenは含まれません。`resolve-*`はPost関連データ、確定Replay Response、冪等状態、新しい完了済み監査Turnを1つのTransactionで保存します。競合時は一方だけが成功します。実行前に接続先の`DATABASE_URL`を確認し、まず`inspect`したRequest IDだけを対象にしてください。
+
+元Requestの本文またはURLが履歴保存時の機密情報マスク対象だった場合、自動復元は安全側で拒否されます。その場合だけ、元のJSON Object（`campaign_id`、`body`、`landing_url`）を標準入力から渡します。内容は保存済みRequest Hashと一致しなければ拒否され、出力・ログ・監査Turnには記録されません。Shell引数には本文を指定しないでください。
+
+```bash
+python scripts/reconcile_x_posts.py resolve-posted \
+  --request-id 456 --x-post-id 1234567890 \
+  --published-at 2026-09-23T09:30:00Z --request-stdin --execute < original-request.json
+python scripts/reconcile_x_posts.py resume \
+  --request-id 789 --request-stdin --execute < original-request.json
+```
+
 ## Application Secrets
 
 PreviewとProductionには、接続先を環境ごとに分離して次を設定します。
