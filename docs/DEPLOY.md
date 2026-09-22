@@ -12,6 +12,7 @@
 - backendのエントリポイントは`backend/main.py`です。アプリケーション本体は`backend/`直下（`api/`、`services/`など）にあり、`main.py`が`backend/`をimportパスへ追加して`app`を公開します（Vercelがimportパスを文書化していないため）。
 - backendの`maxDuration`は、`vercel.json`の`services.backend.functions`で300秒（Hobbyの上限）に明示しています。プランを変更する場合は、この値と冪等性のLease（`API_DESIGN.md`の2.3）を見直してください。
 - backendの依存関係は`pyproject.toml`で宣言し、`uv.lock`で固定します。Vercelは`uv.lock`を検出して`uv`で依存関係を復元します。
+- PreviewとProductionでは`EXTERNAL_CLIENT_MODE=real`と`COOKIE_SECURE=true`を設定します。`fake`はローカル開発とテスト専用です。
 - Preview Deploymentで、`/api/health`と`/api/health/db`が応答することを確認してください。
 
 Git連携後はPull RequestごとにPreview Deploymentが作成され、`main`へのmergeでProduction Deploymentが自動実行されます。
@@ -36,6 +37,7 @@ DB migrationはVercelの自動デプロイでは実行しません。複数のDe
 3. Actionsの`Production Migration`を`main`ブランチから実行します。
 
 必要に応じて`production` Environmentへ承認ルールを設定してください。
+Alembicは`DATABASE_URL_UNPOOLED`がない場合に起動を中止し、`DATABASE_URL`へFallbackしません。
 
 ## Vercel Cron
 
@@ -61,6 +63,9 @@ PreviewとProductionには、接続先を環境ごとに分離して次を設定
 | --- | --- |
 | `AUTH_COOKIE_SECRET` | 認証CookieとCSRF Tokenの署名鍵。環境ごとに異なる十分に長いランダム値 |
 | `ALLOWED_ORIGINS` | CSRF検証で許可するカスタムOrigin。ワイルドカードは使用しない |
+| `EXTERNAL_CLIENT_MODE` | Preview・Productionは`real`。ローカル開発・テストは`fake` |
+| `ORCAROUTER_BASE_URL` | OrcaRouter APIのBase URL |
+| `ORCAROUTER_API_KEY` | OrcaRouter APIの認証鍵 |
 | `X_API_KEY` | X APIのConsumer Key |
 | `X_API_KEY_SECRET` | X APIのConsumer Secret |
 | `X_ACCESS_TOKEN` | 環境固定XアカウントのUser Access Token |
@@ -68,7 +73,9 @@ PreviewとProductionには、接続先を環境ごとに分離して次を設定
 | `GA4_PROPERTY_ID` | 環境固定GA4 PropertyのID |
 | `GA4_SERVICE_ACCOUNT_JSON` | GA4 Data API用Service Account認証情報 |
 
-Productionは起動時にこれらの必須設定を検証します。FakeまたはMockの外部API Clientを明示的に使う開発・テスト環境だけは、XとGA4の実Credentialを省略できます。Secret値をBuild log、Runtime log、Response、Frontend環境変数へ出力しないでください。
+PreviewとProductionは起動時にこれらの必須設定を検証し、Productionでは`CRON_SECRET`も必須です。FakeまたはMockの外部API Clientを明示的に使う開発・テスト環境だけは、OrcaRouter、X、GA4の実Credentialを省略できます。Secret値をBuild log、Runtime log、Response、Frontend環境変数へ出力しないでください。
+
+XのOAuth 1.0a Client、GA4 Client、実Agent Runnerの実装は、それぞれIssue #18、#33、#31で行います。本節の設定は先に起動時検証とClient切替の契約を固定するものです。
 
 ## CI
 

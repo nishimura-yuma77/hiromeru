@@ -8,6 +8,7 @@ from typing import Any
 import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
+from pydantic import SecretStr
 
 from api.main import create_app
 from core.config import Settings
@@ -44,7 +45,7 @@ def agent() -> FakeAgentRunner:
 @pytest.fixture
 def settings() -> Settings:
     return Settings(
-        session_secret="test-secret-test-secret-test-secret-0123456789",
+        auth_cookie_secret=SecretStr("test-secret-test-secret-test-secret-0123456789"),
         cookie_secure=False,
         allowed_origins=ORIGIN,
         log_json=False,

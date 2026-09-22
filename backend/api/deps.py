@@ -40,14 +40,15 @@ async def authenticated(request: Request, ctx: Context) -> AuthContext:
     """
     token = request.cookies.get(SESSION_COOKIE_NAME)
     now = ctx.clock.now()
-    session = read_session_token(ctx.settings.session_secret, token, now) if token else None
+    secret = ctx.settings.auth_secret()
+    session = read_session_token(secret, token, now) if token else None
     if session is None:
         raise AppError("UNAUTHENTICATED")
     auth = await AuthService(ctx).authenticate(session.marketer_id)
     if auth is None:
         raise AppError("UNAUTHENTICATED")
     new_token, idle_expires_at = issue_session_token(
-        ctx.settings.session_secret, auth.marketer_id, session.issued_at, now
+        secret, auth.marketer_id, session.issued_at, now
     )
     request.scope[REISSUE_COOKIE_KEY] = session_cookie(
         ctx.settings, new_token, idle_expires_at, now
@@ -64,7 +65,7 @@ def csrf_protected(request: Request, ctx: Context, auth: Authenticated) -> AuthC
     cookie_value = request.cookies.get(CSRF_COOKIE_NAME, "")
     header_value = request.headers.get(CSRF_HEADER_NAME, "")
     if not csrf_token_matches(
-        ctx.settings.session_secret, auth.marketer_id, cookie_value, header_value
+        ctx.settings.auth_secret(), auth.marketer_id, cookie_value, header_value
     ):
         raise AppError("CSRF_VALIDATION_FAILED")
     return auth

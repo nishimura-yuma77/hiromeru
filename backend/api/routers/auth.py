@@ -24,9 +24,9 @@ async def login(request: Request, ctx: Context) -> JSONResponse:
     marketer = await AuthService(ctx).login(body.email, body.password)
     now = ctx.clock.now()
     session_token, idle_expires_at = issue_session_token(
-        ctx.settings.session_secret, marketer.marketer_id, now, now
+        ctx.settings.auth_secret(), marketer.marketer_id, now, now
     )
-    csrf_token = issue_csrf_token(ctx.settings.session_secret, marketer.marketer_id)
+    csrf_token = issue_csrf_token(ctx.settings.auth_secret(), marketer.marketer_id)
     response = ok(
         {"marketer_id": marketer.marketer_id, "email": marketer.email, "csrf_token": csrf_token}
     )
@@ -56,7 +56,7 @@ async def me(auth: Authenticated) -> JSONResponse:
 async def reissue_csrf(request: Request, ctx: Context, auth: Authenticated) -> JSONResponse:
     """認証とOriginを検証し、現在のマーケター用CSRF Tokenを再発行する。"""
     verify_origin(request, ctx)
-    token = issue_csrf_token(ctx.settings.session_secret, auth.marketer_id)
+    token = issue_csrf_token(ctx.settings.auth_secret(), auth.marketer_id)
     response = ok({"csrf_token": token})
     response.headers["Cache-Control"] = "no-store"
     response.headers.append("set-cookie", csrf_cookie(ctx.settings, token))

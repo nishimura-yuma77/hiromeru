@@ -1,11 +1,16 @@
 import httpx
 import pytest
+from pydantic import SecretStr
 
+from api.container import build_default_context
 from clients.embedding import OrcaRouterEmbeddingClient
 from clients.errors import EmbeddingError, XApiOutcomeUnknownError, XApiRejectedError
+from clients.fakes import FakeEmbeddingClient, FakeXApiClient
 from clients.x_api import HttpXApiClient
+from core.config import Settings
 
 DIMENSIONS = 4
+SECRET = "unit-test-secret-unit-test-secret-0123456789"
 
 
 def _embedding_client(
@@ -180,3 +185,26 @@ async def test_X投稿_アクセストークンがないとき送信せず拒否
 
     with pytest.raises(XApiRejectedError):
         await _x_client(httpx.MockTransport(handler), token="").post("本文")
+
+
+def test_Client_Mode_fakeとrealで実行Clientを切り替える() -> None:
+    fake = build_default_context(Settings(auth_cookie_secret=SecretStr(SECRET)))
+    real = build_default_context(
+        Settings(
+            auth_cookie_secret=SecretStr(SECRET),
+            external_client_mode="real",
+            orcarouter_base_url="https://router.example.com/v1",
+            orcarouter_api_key=SecretStr("router-key"),
+            x_api_key=SecretStr("x-key"),
+            x_api_key_secret=SecretStr("x-key-secret"),
+            x_access_token=SecretStr("x-token"),
+            x_access_token_secret=SecretStr("x-token-secret"),
+            ga4_property_id="123456",
+            ga4_service_account_json=SecretStr('{"type":"service_account"}'),
+        )
+    )
+
+    assert isinstance(fake.embedding, FakeEmbeddingClient)
+    assert isinstance(fake.x_api, FakeXApiClient)
+    assert isinstance(real.embedding, OrcaRouterEmbeddingClient)
+    assert isinstance(real.x_api, HttpXApiClient)
