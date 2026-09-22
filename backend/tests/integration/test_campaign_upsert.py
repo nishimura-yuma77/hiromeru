@@ -24,10 +24,11 @@ async def test_新規作成_idなしのとき201でidとagent_turn_idを返す(a
 
 
 async def test_上書き_expected_updated_atが一致するとき200で内容が更新される(
-    account: Account,
+    account: Account, embedding: FakeEmbedding
 ) -> None:
     session_id = await account.create_session()
     created = (await account.upsert_campaign(session_id, campaign_body())).json()["data"]
+    embedding.calls.clear()
 
     response = await account.upsert_campaign(
         session_id,
@@ -38,8 +39,26 @@ async def test_上書き_expected_updated_atが一致するとき200で内容が
 
     assert response.status_code == 200
     assert response.json()["data"]["title"] == "更新後タイトル"
+    assert len(embedding.calls) == 1
+    assert embedding.calls[0].startswith("施策タイトル: 更新後タイトル\n")
     detail = await account.client.get(f"/api/v1/campaigns/{created['id']}")
     assert detail.json()["data"]["campaign"]["title"] == "更新後タイトル"
+
+
+async def test_上書き_検索対象の5項目が同じなら再Embeddingしない(
+    account: Account, embedding: FakeEmbedding
+) -> None:
+    session_id = await account.create_session()
+    created = (await account.upsert_campaign(session_id, campaign_body())).json()["data"]
+    embedding.calls.clear()
+
+    response = await account.upsert_campaign(
+        session_id,
+        campaign_body(id=created["id"], expected_updated_at=created["created_at"]),
+    )
+
+    assert response.status_code == 200
+    assert embedding.calls == []
 
 
 async def test_上書きの競合_expected_updated_atが古いとき409_CAMPAIGN_CONFLICT(

@@ -1,5 +1,6 @@
 """施策とEmbeddingのRepository。"""
 
+from dataclasses import dataclass
 from datetime import datetime
 
 from sqlalchemy import literal, select, tuple_, update
@@ -11,6 +12,16 @@ from models import Campaign, CampaignEmbedding
 from repositories.vector import cosine_distance
 
 
+@dataclass(frozen=True)
+class CampaignEmbeddingCandidate:
+    """検索Embeddingを再生成する候補。"""
+
+    campaign_id: int
+    company_id: int
+    content: CampaignContent
+    content_hash: str | None
+
+
 class CampaignRepository:
     """施策のDBアクセス。すべて会社の条件を含める。"""
 
@@ -18,9 +29,13 @@ class CampaignRepository:
         """セッションを受け取る。"""
         self._session = session
 
-    async def get(self, company_id: int, campaign_id: int) -> Campaign | None:
+    async def get(
+        self, company_id: int, campaign_id: int, *, lock: bool = False
+    ) -> Campaign | None:
         """会社単位で施策を取得する。別会社の施策は None。"""
         stmt = select(Campaign).where(Campaign.id == campaign_id, Campaign.company_id == company_id)
+        if lock:
+            stmt = stmt.with_for_update()
         return (await self._session.execute(stmt)).scalar_one_or_none()
 
     async def titles(self, company_id: int, campaign_ids: list[int]) -> dict[int, str]:
@@ -103,6 +118,38 @@ class CampaignRepository:
             set_={"embedding": vector, "content_hash": content_hash, "updated_at": now},
         )
         await self._session.execute(stmt)
+
+    async def list_embedding_candidates(
+        self,
+        *,
+        after_id: int,
+        limit: int,
+        company_id: int | None = None,
+    ) -> list[CampaignEmbeddingCandidate]:
+        """検索EmbeddingのBackfill候補をID昇順で返す。"""
+        stmt = (
+            select(Campaign, CampaignEmbedding.content_hash)
+            .outerjoin(CampaignEmbedding, CampaignEmbedding.campaign_id == Campaign.id)
+            .where(Campaign.id > after_id)
+        )
+        if company_id is not None:
+            stmt = stmt.where(Campaign.company_id == company_id)
+        rows = await self._session.execute(stmt.order_by(Campaign.id).limit(limit))
+        return [
+            CampaignEmbeddingCandidate(
+                campaign_id=campaign.id,
+                company_id=campaign.company_id,
+                content=CampaignContent(
+                    campaign.title,
+                    campaign.target_profile,
+                    campaign.background,
+                    campaign.objective,
+                    campaign.plan,
+                ),
+                content_hash=stored_hash,
+            )
+            for campaign, stored_hash in rows
+        ]
 
     async def list_by_created(
         self,

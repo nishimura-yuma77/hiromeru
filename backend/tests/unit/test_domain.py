@@ -108,10 +108,26 @@ def test_流入率_PVが0のときNoneでそれ以外は割り算のまま丸め
     assert MetricsSummary(1, 1, 0, 0, 3, 1).landing_rate == 1 / 3
 
 
-def test_検索テキスト_施策はタイトルを含めず空白を正規化する() -> None:
-    text = build_campaign_search_text("20代  会社員", "背景", "目的", "計画")
+def test_検索テキスト_施策の5項目を固定順で含め空白を正規化する() -> None:
+    content = CampaignContent(" 春の　採用 ", "20代  会社員", "背景", "目的", "計画")
+    text = build_campaign_search_text(content)
 
-    assert text == "ターゲット像: 20代 会社員\n実施背景: 背景\n施策目的: 目的\n施策内容: 計画"
+    assert text == (
+        "施策タイトル: 春の 採用\n"
+        "ターゲット像: 20代 会社員\n"
+        "実施背景: 背景\n"
+        "施策目的: 目的\n"
+        "施策内容: 計画"
+    )
+
+
+def test_検索テキスト_タイトルだけが変わると内容ハッシュも変わる() -> None:
+    before = CampaignContent("変更前", "対象", "背景", "目的", "計画")
+    after = CampaignContent("変更後", "対象", "背景", "目的", "計画")
+
+    assert content_hash(build_campaign_search_text(before)) != content_hash(
+        build_campaign_search_text(after)
+    )
 
 
 def test_検索テキスト_投稿はURLを除去する() -> None:

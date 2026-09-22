@@ -110,22 +110,16 @@ class CampaignApprovalService:
                 if existing.updated_at != request.expected_updated_at:
                     raise AppError("CAMPAIGN_CONFLICT")
                 stored_hash = await repository.get_embedding_hash(request.id)
-        digest = content_hash(
-            build_campaign_search_text(
-                content.target_profile, content.background, content.objective, content.plan
-            )
-        )
+        search_text = build_campaign_search_text(content)
+        digest = content_hash(search_text)
         embedding: list[float] | None = None
         if stored_hash != digest:
-            embedding = await self._embed(content)
+            embedding = await self._embed(search_text)
         return _Plan(request, content, digest, embedding)
 
-    async def _embed(self, content: CampaignContent) -> list[float]:
-        text = build_campaign_search_text(
-            content.target_profile, content.background, content.objective, content.plan
-        )
+    async def _embed(self, search_text: str) -> list[float]:
         try:
-            return await self._ctx.embedding.embed(text)
+            return await self._ctx.embedding.embed(search_text)
         except EmbeddingError as error:
             _log.warning("campaign_embedding_failed", error=safe_error_text(error))
             raise AppError("EMBEDDING_FAILED") from None

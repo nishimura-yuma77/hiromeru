@@ -1,12 +1,15 @@
 from urllib.parse import quote
 
+import pytest
 from httpx import AsyncClient
 
+from domain.campaign_rules import CampaignContent
+from domain.constants import EMBEDDING_DIMENSIONS
 from domain.search_text import build_campaign_search_text
 from tests.conftest import AccountFactory
 from tests.support.client import Account, campaign_body, post_body
 from tests.support.db import complete_metrics, insert_memory
-from tests.support.fakes import FixedClock
+from tests.support.fakes import FakeEmbedding, FixedClock
 
 
 async def test_一覧_作成順の降順で返し他社の施策を含めない(
@@ -60,7 +63,13 @@ async def test_意味検索_queryがあるとき類似度の高い順でsimilari
     target_id = await account.create_campaign(session_id, **target)
     await account.create_campaign(session_id, **other)
     query = build_campaign_search_text(
-        target["target_profile"], target["background"], target["objective"], target["plan"]
+        CampaignContent(
+            target["title"],
+            target["target_profile"],
+            target["background"],
+            target["objective"],
+            target["plan"],
+        )
     )
 
     response = await account.client.get(f"/api/v1/campaigns?query={quote(query)}")
@@ -70,6 +79,28 @@ async def test_意味検索_queryがあるとき類似度の高い順でsimilari
     assert campaigns[0]["id"] == target_id
     assert campaigns[0]["similarity"] > 0.99
     assert campaigns[0]["similarity"] >= campaigns[1]["similarity"]
+
+
+async def test_意味検索_タイトルだけの検索で対象施策を取得できる(
+    account: Account, embedding: FakeEmbedding, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    marker = "タイトルだけで見つかる採用施策"
+
+    async def semantic_embedding(text: str) -> list[float]:
+        embedding.calls.append(text)
+        vector = [0.0] * EMBEDDING_DIMENSIONS
+        vector[0 if marker in text else 1] = 1.0
+        return vector
+
+    monkeypatch.setattr(embedding, "embed", semantic_embedding)
+    session_id = await account.create_session()
+    target_id = await account.create_campaign(session_id, title=marker)
+    await account.create_campaign(session_id, title="別の施策")
+
+    response = await account.client.get(f"/api/v1/campaigns?query={quote(marker)}")
+
+    assert response.status_code == 200
+    assert response.json()["data"]["campaigns"][0]["id"] == target_id
 
 
 async def test_日付範囲の指定不正_タイムゾーンがないとき400(account: Account) -> None:
@@ -119,7 +150,7 @@ async def test_詳細_idが0のとき400(account: Account) -> None:
 
 
 async def test_編集_expected_updated_atが一致するとき200で更新されEmbeddingが更新される(
-    account: Account,
+    account: Account, embedding: FakeEmbedding
 ) -> None:
     campaign_id = await account.create_campaign()
     detail = (await account.client.get(f"/api/v1/campaigns/{campaign_id}")).json()["data"]
@@ -128,6 +159,7 @@ async def test_編集_expected_updated_atが一致するとき200で更新され
         "title": "編集後",
         "expected_updated_at": detail["campaign"]["updated_at"],
     }
+    embedding.calls.clear()
 
     response = await account.client.put(f"/api/v1/campaigns/{campaign_id}", json=body)
 
@@ -136,6 +168,25 @@ async def test_編集_expected_updated_atが一致するとき200で更新され
     assert data["id"] == campaign_id
     assert data["title"] == "編集後"
     assert "agent_turn_id" not in data
+    assert len(embedding.calls) == 1
+    assert embedding.calls[0].startswith("施策タイトル: 編集後\n")
+
+
+async def test_編集_検索対象の5項目が同じなら再Embeddingしない(
+    account: Account, embedding: FakeEmbedding
+) -> None:
+    campaign_id = await account.create_campaign()
+    detail = (await account.client.get(f"/api/v1/campaigns/{campaign_id}")).json()["data"]
+    body = {
+        **campaign_body(),
+        "expected_updated_at": detail["campaign"]["updated_at"],
+    }
+    embedding.calls.clear()
+
+    response = await account.client.put(f"/api/v1/campaigns/{campaign_id}", json=body)
+
+    assert response.status_code == 200
+    assert embedding.calls == []
 
 
 async def test_編集の競合_古いexpected_updated_atのとき409_CAMPAIGN_CONFLICT(

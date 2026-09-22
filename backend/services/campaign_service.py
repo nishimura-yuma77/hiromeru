@@ -215,9 +215,7 @@ class CampaignService:
             if existing.updated_at != request.expected_updated_at:
                 raise AppError("CAMPAIGN_CONFLICT")
             stored_hash = await repository.get_embedding_hash(campaign_id)
-        search_text = build_campaign_search_text(
-            content.target_profile, content.background, content.objective, content.plan
-        )
+        search_text = build_campaign_search_text(content)
         digest = content_hash(search_text)
         embedding = None
         if stored_hash != digest:

@@ -55,6 +55,16 @@ DB migrationはVercelの自動デプロイでは実行しません。複数のDe
 必要に応じて`production` Environmentへ承認ルールを設定してください。
 Alembicは`DATABASE_URL_UNPOOLED`がない場合に起動を中止し、`DATABASE_URL`へFallbackしません。
 
+## Campaign Embedding Backfill
+
+検索Projectionを変更した場合は、対応コードをProductionへデプロイした後、`backend/`から次のCommandを手動実行します。
+
+```bash
+python scripts/backfill_campaign_embeddings.py --execute
+```
+
+`DATABASE_URL`、`EXTERNAL_CLIENT_MODE=real`、OrcaRouter設定が必要です。`--batch-size`、`--max-items`、`--company-id`で対象を制限でき、出力された`last_id`を`--after-id`へ渡すと途中から再開できます。失敗または実行中の編集との競合が残った場合は終了Code 1になり、同じCommandを再実行するとHashが一致する更新済みデータはスキップされます。
+
 ## Vercel Cron
 
 施策評価は、ProductionでUTC 00:00に1日1回実行します。Endpoint、認証、冪等性、再試行の正本は`docs/v.0.1/CRON.md`です。
