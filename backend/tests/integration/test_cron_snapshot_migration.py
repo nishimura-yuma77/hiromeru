@@ -5,6 +5,7 @@ import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
+from typing import LiteralString, cast
 
 import psycopg
 import pytest
@@ -165,6 +166,12 @@ def test_catalog_has_expected_constraints_indexes_and_fk_actions(seeded_database
                 "('post_metrics', 'api_list_snapshots', 'api_list_snapshot_items')"
             ).fetchall()
         }
+        counters = connection.execute(
+            "SELECT column_name, is_nullable, column_default "
+            "FROM information_schema.columns "
+            "WHERE table_schema = 'public' AND table_name = 'post_metrics' "
+            "AND column_name IN ('attempt_count', 'memory_attempt_count')"
+        ).fetchall()
 
     assert (
         "(status, next_attempt_at, scheduled_at)"
@@ -180,9 +187,17 @@ def test_catalog_has_expected_constraints_indexes_and_fk_actions(seeded_database
     )
     assert "(expires_at)" in indexes["ix_api_list_snapshots_expiry"]
     assert "attempt_count >= 0" in constraints["ck_post_metrics_attempts_non_negative"][0]
+    assert "resource" in constraints["ck_api_list_snapshots_resource"][0]
+    position_check = constraints["ck_api_list_snapshot_items_position"][0].replace('"', "")
+    assert "position >= 0" in position_check
+    item_primary_key = constraints["api_list_snapshot_items_pkey"][0]
+    assert item_primary_key.startswith("PRIMARY KEY")
+    assert "snapshot_id" in item_primary_key and "position" in item_primary_key
     assert constraints["post_metrics_post_id_fkey"][1] == "r"
     assert constraints["api_list_snapshots_marketer_id_fkey"][1] == "c"
     assert constraints["api_list_snapshot_items_snapshot_id_fkey"][1] == "c"
+    assert {row[0] for row in counters} == {"attempt_count", "memory_attempt_count"}
+    assert all(nullable == "NO" and default.startswith("0") for _, nullable, default in counters)
 
 
 def test_snapshot_delete_cascades_items(seeded_database: str) -> None:
@@ -211,6 +226,7 @@ def test_snapshot_delete_cascades_items(seeded_database: str) -> None:
     ("statement", "parameters"),
     [
         ("UPDATE post_metrics SET x_pv_count = -1 WHERE post_id = 101", None),
+        ("UPDATE post_metrics SET landing_user_count = -1 WHERE post_id = 101", None),
         ("UPDATE post_metrics SET attempt_count = -1 WHERE post_id = 101", None),
         ("UPDATE post_metrics SET memory_attempt_count = -1 WHERE post_id = 101", None),
         (
@@ -218,6 +234,15 @@ def test_snapshot_delete_cascades_items(seeded_database: str) -> None:
             "(id, marketer_id, resource, filter_hash, expires_at) "
             "VALUES (%s, 101, 'campaigns', %s, now())",
             (uuid.uuid4(), "e" * 64),
+        ),
+        (
+            "WITH snapshot AS ("
+            "INSERT INTO api_list_snapshots "
+            "(id, marketer_id, resource, filter_hash, expires_at) "
+            "VALUES (%s, 101, 'posts', %s, now()) RETURNING id"
+            ") INSERT INTO api_list_snapshot_items (snapshot_id, position, item) "
+            "SELECT id, -1, '{}'::jsonb FROM snapshot",
+            (uuid.uuid4(), "f" * 64),
         ),
     ],
 )
@@ -228,7 +253,11 @@ def test_catalog_constraints_reject_invalid_values(
         psycopg.connect(_psycopg_url(seeded_database)) as connection,
         pytest.raises(errors.CheckViolation),
     ):
-        connection.execute(statement, parameters)
+        connection.execute(sql.SQL(cast(LiteralString, statement)), parameters)
+
+
+def test_alembic_has_no_schema_drift(empty_database: str) -> None:
+    _alembic(empty_database, "check")
 
 
 def test_downgrade_preserves_core_metrics_and_drops_additive_state() -> None:
