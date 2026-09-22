@@ -47,9 +47,14 @@ class MetricsService:
             summaries = await PostRepository(session).summarize(
                 auth.company_id, published_from=published_from, published_to=published_to
             )
-            titles = await CampaignRepository(session).titles(auth.company_id, list(summaries))
+            references = await CampaignRepository(session).references(
+                auth.company_id, list(summaries)
+            )
         campaigns = sorted(
-            (CampaignMetricsView(cid, titles.get(cid, ""), s) for cid, s in summaries.items()),
+            (
+                CampaignMetricsView(cid, *references.get(cid, ("", None)), summary)
+                for cid, summary in summaries.items()
+            ),
             key=lambda view: (view.summary.x_pv_count, view.id),
             reverse=True,
         )

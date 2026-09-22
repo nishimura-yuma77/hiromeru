@@ -24,7 +24,7 @@ class MemoryRow:
 class MemoryRelations:
     """記憶に関連付けられた施策と投稿。"""
 
-    campaigns: dict[int, list[tuple[int, str]]]
+    campaigns: dict[int, list[tuple[int, str, datetime | None]]]
     posts: dict[int, list[tuple[int, datetime]]]
 
 
@@ -86,18 +86,20 @@ class MemoryRepository:
 
     async def relations(self, company_id: int, memory_ids: list[int]) -> MemoryRelations:
         """記憶に関連付けられた施策と投稿を、まとめて取得する（N+1を避ける）。"""
-        campaigns: dict[int, list[tuple[int, str]]] = defaultdict(list)
+        campaigns: dict[int, list[tuple[int, str, datetime | None]]] = defaultdict(list)
         posts: dict[int, list[tuple[int, datetime]]] = defaultdict(list)
         if not memory_ids:
             return MemoryRelations(campaigns, posts)
         campaign_stmt = (
-            select(MemoryCampaign.memory_id, Campaign.id, Campaign.title)
+            select(MemoryCampaign.memory_id, Campaign.id, Campaign.title, Campaign.archived_at)
             .join(Campaign, Campaign.id == MemoryCampaign.campaign_id)
             .where(MemoryCampaign.memory_id.in_(memory_ids), Campaign.company_id == company_id)
             .order_by(Campaign.id)
         )
-        for memory_id, campaign_id, title in await self._session.execute(campaign_stmt):
-            campaigns[memory_id].append((campaign_id, title))
+        for memory_id, campaign_id, title, archived_at in await self._session.execute(
+            campaign_stmt
+        ):
+            campaigns[memory_id].append((campaign_id, title, archived_at))
         post_stmt = (
             select(MemoryPost.memory_id, Post.id, Post.published_at)
             .join(Post, Post.id == MemoryPost.post_id)

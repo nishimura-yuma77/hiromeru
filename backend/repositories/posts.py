@@ -27,6 +27,7 @@ class PostRow:
 
     post: Post
     campaign_title: str
+    campaign_archived_at: datetime | None
     metric: PostMetric
     similarity: float | None = None
 
@@ -73,7 +74,7 @@ class PostPage:
 def _published_stmt(company_id: int) -> Select[Any]:
     """公開済み投稿だけを対象とする基本のSELECT（API_DESIGN 3章「公開済みPostの取得境界」）。"""
     return (
-        select(Post, Campaign.title, PostMetric)
+        select(Post, Campaign.title, Campaign.archived_at, PostMetric)
         .join(ApiIdempotencyRequest, ApiIdempotencyRequest.id == Post.api_idempotency_request_id)
         .join(Campaign, Campaign.id == Post.campaign_id)
         .join(PostMetric, PostMetric.post_id == Post.id)
@@ -150,7 +151,7 @@ class PostRepository:
         """公開済み投稿を1件取得する。未公開・別会社は None。"""
         stmt = _published_stmt(company_id).where(Post.id == post_id)
         row = (await self._session.execute(stmt)).one_or_none()
-        return None if row is None else PostRow(row[0], row[1], row[2])
+        return None if row is None else PostRow(row[0], row[1], row[2], row[3])
 
     async def get_tracking(self, post_id: int) -> PostTrackingLink | None:
         """投稿のトラッキングURLを取得する。"""
@@ -167,7 +168,7 @@ class PostRepository:
             .order_by(Post.published_at.desc(), Post.id.desc())
             .limit(limit)
         )
-        return [PostRow(r[0], r[1], r[2]) for r in await self._session.execute(stmt)]
+        return [PostRow(r[0], r[1], r[2], r[3]) for r in await self._session.execute(stmt)]
 
     async def list_posts(
         self, company_id: int, flt: PostFilter, page: PostPage, limit: int
@@ -186,7 +187,7 @@ class PostRepository:
         else:
             stmt = self._order_by_pv(stmt, descending, cursor)
         stmt = stmt.limit(limit)
-        return [PostRow(r[0], r[1], r[2]) for r in await self._session.execute(stmt)]
+        return [PostRow(r[0], r[1], r[2], r[3]) for r in await self._session.execute(stmt)]
 
     @staticmethod
     def _order_by_pv(
@@ -235,7 +236,7 @@ class PostRepository:
             distance, Post.id.desc()
         )
         rows = await self._session.execute(stmt.limit(limit))
-        return [PostRow(r[0], r[1], r[2], float(r[3])) for r in rows]
+        return [PostRow(r[0], r[1], r[2], r[3], float(r[4])) for r in rows]
 
     async def summarize(
         self,

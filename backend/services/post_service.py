@@ -32,6 +32,7 @@ def _to_item(row: PostRow) -> PostListItemView:
         post.id,
         post.campaign_id,
         row.campaign_title,
+        row.campaign_archived_at,
         post.body,
         post.x_post_id,
         post.published_at,
@@ -148,6 +149,7 @@ class PostService:
             published_at=post.published_at,
             campaign_id=post.campaign_id,
             campaign_title=row.campaign_title,
+            campaign_archived_at=row.campaign_archived_at,
             tracking=TrackingView(
                 tracking.landing_url,
                 tracking.utm_source,

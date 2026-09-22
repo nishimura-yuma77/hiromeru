@@ -5,7 +5,7 @@ from httpx import AsyncClient
 from domain.search_text import build_post_search_text
 from tests.conftest import AccountFactory
 from tests.support.client import Account, post_body
-from tests.support.db import complete_metrics, insert_memory
+from tests.support.db import archive_campaign, complete_metrics, insert_memory
 from tests.support.fakes import FixedClock
 
 
@@ -36,6 +36,7 @@ async def test_一覧_公開日時の降順が既定で他社の投稿を含め�
     posts = response.json()["data"]["posts"]
     assert [p["post_id"] for p in posts] == [second, first]
     assert posts[0]["campaign_id"] == campaign_id
+    assert posts[0]["campaign_archived_at"] is None
     assert posts[0]["metrics"]["status"] == "pending"
     assert posts[0]["similarity"] is None
 
@@ -162,9 +163,48 @@ async def test_詳細_UTM付きURLと計測状況と施策を返す(account: Acc
     data = response.json()["data"]
     assert data["post"]["body"] == "詳細の投稿"
     assert data["campaign"]["id"] == campaign_id
+    assert data["campaign"]["archived_at"] is None
     assert data["tracking"]["landing_url"] == "https://example.com/lp"
     assert data["tracking"]["tracked_url"].startswith("https://example.com/lp?")
     assert data["metrics"]["status"] == "pending"
+
+
+async def test_Archive済み施策の投稿と計測と記憶を各参照結果に保持する(
+    account: Account, clock: FixedClock
+) -> None:
+    session_id = await account.create_session()
+    campaign_id = await account.create_campaign(session_id)
+    post_id = await _publish(account, session_id, campaign_id, "Archive前の投稿", clock)
+    await complete_metrics(post_id, x_pv_count=100, landing_user_count=20)
+    memory_id = await insert_memory(
+        account.company_id,
+        "Archive前の記憶",
+        campaign_ids=(campaign_id,),
+        post_ids=(post_id,),
+    )
+    archived_at = clock.now().isoformat().replace("+00:00", "Z")
+    await archive_campaign(campaign_id, clock.now())
+
+    post_list = (await account.client.get("/api/v1/posts")).json()["data"]["posts"]
+    post_detail = (await account.client.get(f"/api/v1/posts/{post_id}")).json()["data"]
+    metrics = (await account.client.get("/api/v1/metrics")).json()["data"]
+    memories = (await account.client.get("/api/v1/memories")).json()["data"]["memories"]
+
+    assert [post["post_id"] for post in post_list] == [post_id]
+    assert post_list[0]["campaign_archived_at"] == archived_at
+    assert post_detail["campaign"]["archived_at"] == archived_at
+    assert metrics["summary"]["post_count"] == 1
+    assert metrics["campaigns"][0]["id"] == campaign_id
+    assert metrics["campaigns"][0]["archived_at"] == archived_at
+    assert [memory["id"] for memory in memories] == [memory_id]
+    assert memories[0]["campaigns"] == [
+        {
+            "id": campaign_id,
+            "title": "春の新規フォロワー獲得",
+            "archived_at": archived_at,
+        }
+    ]
+    assert memories[0]["posts"][0]["post_id"] == post_id
 
 
 async def test_詳細_他社の投稿のとき404_POST_NOT_FOUND(
@@ -213,6 +253,7 @@ async def test_計測結果集計_期間内の完了件数とlanding_rateを施�
     assert data["summary"]["x_pv_count"] == 200
     assert data["summary"]["landing_rate"] == 0.2
     assert data["campaigns"][0]["id"] == campaign_id
+    assert data["campaigns"][0]["archived_at"] is None
 
 
 async def test_計測結果集計_投稿がないとき0件でlanding_rateはnull(account: Account) -> None:
@@ -236,6 +277,7 @@ async def test_記憶一覧_自社の記憶だけを関連付きで返す(
     memories = response.json()["data"]["memories"]
     assert [m["id"] for m in memories] == [mine]
     assert memories[0]["campaigns"][0]["id"] == campaign_id
+    assert memories[0]["campaigns"][0]["archived_at"] is None
     assert memories[0]["similarity"] is None
 
 

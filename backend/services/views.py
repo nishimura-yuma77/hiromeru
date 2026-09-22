@@ -98,6 +98,7 @@ class CampaignListItemView:
     objective: str
     created_at: datetime
     updated_at: datetime
+    archived_at: datetime | None
     similarity: float | None
     metrics_summary: MetricsSummary
 
@@ -122,6 +123,7 @@ class CampaignView:
     plan: str
     created_at: datetime
     updated_at: datetime
+    archived_at: datetime | None
 
 
 @dataclass(frozen=True)
@@ -170,6 +172,7 @@ class PostListItemView:
     post_id: int
     campaign_id: int
     campaign_title: str
+    campaign_archived_at: datetime | None
     body: str
     x_post_id: str
     published_at: datetime
@@ -207,6 +210,7 @@ class PostDetailView:
     published_at: datetime
     campaign_id: int
     campaign_title: str
+    campaign_archived_at: datetime | None
     tracking: TrackingView
     metrics: MetricsView
 
@@ -217,6 +221,7 @@ class CampaignMetricsView:
 
     id: int
     title: str
+    archived_at: datetime | None
     summary: MetricsSummary
 
 
@@ -237,7 +242,7 @@ class MemoryView:
     id: int
     content: str
     similarity: float | None
-    campaigns: list[tuple[int, str]]
+    campaigns: list[tuple[int, str, datetime | None]]
     posts: list[tuple[int, datetime]]
 
 

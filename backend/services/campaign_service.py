@@ -51,6 +51,7 @@ def _to_view(campaign: Campaign) -> CampaignView:
         campaign.plan,
         campaign.created_at,
         campaign.updated_at,
+        campaign.archived_at,
     )
 
 
@@ -66,6 +67,7 @@ class CampaignService:
         auth: AuthContext,
         *,
         query: str | None,
+        archived: bool | None,
         created_from: datetime | None,
         created_to: datetime | None,
         limit: int,
@@ -96,6 +98,7 @@ class CampaignService:
                     vector,
                     created_from=created_from,
                     created_to=created_to,
+                    archived=archived,
                     limit=limit,
                 )
                 campaigns = [campaign for campaign, _ in found]
@@ -105,6 +108,7 @@ class CampaignService:
                     auth.company_id,
                     created_from=created_from,
                     created_to=created_to,
+                    archived=archived,
                     limit=limit + 1,
                     after=after,
                 )
@@ -124,6 +128,7 @@ class CampaignService:
                 campaign.objective,
                 campaign.created_at,
                 campaign.updated_at,
+                campaign.archived_at,
                 similarities.get(campaign.id),
                 summaries.get(campaign.id, EMPTY_SUMMARY),
             )

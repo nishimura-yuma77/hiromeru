@@ -122,6 +122,7 @@ def serialize_campaign_list(view: CampaignListView) -> dict[str, Any]:
                 "objective": item.objective,
                 "created_at": _iso(item.created_at),
                 "updated_at": _iso(item.updated_at),
+                "archived_at": _iso(item.archived_at),
                 "similarity": item.similarity,
                 "metrics_summary": serialize_summary(item.metrics_summary),
             }
@@ -144,6 +145,7 @@ def serialize_campaign_detail(view: CampaignDetailView) -> dict[str, Any]:
             "plan": campaign.plan,
             "created_at": _iso(campaign.created_at),
             "updated_at": _iso(campaign.updated_at),
+            "archived_at": _iso(campaign.archived_at),
         },
         "metrics_summary": serialize_summary(view.metrics_summary),
         "posts": [
@@ -174,6 +176,7 @@ def serialize_post_list(view: PostListView) -> dict[str, Any]:
                 "post_id": item.post_id,
                 "campaign_id": item.campaign_id,
                 "campaign_title": item.campaign_title,
+                "campaign_archived_at": _iso(item.campaign_archived_at),
                 "body": item.body,
                 "x_post_id": item.x_post_id,
                 "published_at": _iso(item.published_at),
@@ -196,7 +199,11 @@ def serialize_post_detail(view: PostDetailView) -> dict[str, Any]:
             "x_post_id": view.x_post_id,
             "published_at": _iso(view.published_at),
         },
-        "campaign": {"id": view.campaign_id, "title": view.campaign_title},
+        "campaign": {
+            "id": view.campaign_id,
+            "title": view.campaign_title,
+            "archived_at": _iso(view.campaign_archived_at),
+        },
         "tracking": {
             "landing_url": tracking.landing_url,
             "utm_source": tracking.utm_source,
@@ -216,7 +223,12 @@ def serialize_metrics_report(view: MetricsReportView) -> dict[str, Any]:
         "published_to": _iso(view.published_to),
         "summary": serialize_summary(view.summary),
         "campaigns": [
-            {"id": item.id, "title": item.title, **serialize_summary(item.summary)}
+            {
+                "id": item.id,
+                "title": item.title,
+                "archived_at": _iso(item.archived_at),
+                **serialize_summary(item.summary),
+            }
             for item in view.campaigns
         ],
     }
@@ -230,7 +242,10 @@ def serialize_memory_list(view: MemoryListView) -> dict[str, Any]:
                 "id": memory.id,
                 "content": memory.content,
                 "similarity": memory.similarity,
-                "campaigns": [{"id": cid, "title": title} for cid, title in memory.campaigns],
+                "campaigns": [
+                    {"id": cid, "title": title, "archived_at": _iso(archived_at)}
+                    for cid, title, archived_at in memory.campaigns
+                ],
                 "posts": [
                     {"post_id": pid, "published_at": _iso(published_at)}
                     for pid, published_at in memory.posts

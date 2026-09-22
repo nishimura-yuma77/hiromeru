@@ -29,6 +29,7 @@ async def list_campaigns(
     ctx: Context,
     auth: Authenticated,
     query: str | None = None,
+    archived: bool | None = None,
     created_from: str | None = None,
     created_to: str | None = None,
     limit: Annotated[int, Query(ge=1, le=MAX_PAGE_LIMIT)] = DEFAULT_PAGE_LIMIT,
@@ -38,6 +39,7 @@ async def list_campaigns(
     view = await CampaignService(ctx).list(
         auth,
         query=query,
+        archived=archived,
         created_from=parse_query_datetime(created_from, "created_from"),
         created_to=parse_query_datetime(created_to, "created_to"),
         limit=limit,
