@@ -78,7 +78,9 @@ export function LandingPage() {
           <a href="#how-it-works">仕組み</a>
         </nav>
 
-        <XConsultationLink className={styles.headerCta} />
+        <a className={styles.headerCta} href="/login">
+          ログイン
+        </a>
       </header>
 
       <main id="main-content" tabIndex={-1}>
