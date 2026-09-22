@@ -208,6 +208,8 @@ class CampaignService:
             existing = await repository.get(auth.company_id, campaign_id)
             if existing is None:
                 raise AppError("CAMPAIGN_NOT_FOUND")
+            if existing.archived_at is not None:
+                raise AppError("CAMPAIGN_ARCHIVED")
             field_errors = campaign_field_errors(content)
             if field_errors:
                 raise AppError("INVALID_CAMPAIGN", field_errors=field_errors)

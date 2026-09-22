@@ -106,6 +106,8 @@ class CampaignApprovalService:
                 existing = await repository.get(ctx.auth.company_id, request.id)
                 if existing is None:
                     raise AppError("CAMPAIGN_NOT_FOUND")
+                if existing.archived_at is not None:
+                    raise AppError("CAMPAIGN_ARCHIVED")
                 # Embedding生成の前に競合を検出する。timestamptz の値として比較する。
                 if existing.updated_at != request.expected_updated_at:
                     raise AppError("CAMPAIGN_CONFLICT")

@@ -11,6 +11,7 @@ from repositories.database import SessionLocal
 from repositories.posts import PostRepository
 from tests.conftest import AccountFactory
 from tests.support.client import Account, post_body
+from tests.support.db import archive_campaign
 from tests.support.fakes import FakeEmbedding, FakeXApi, FixedClock
 
 
@@ -184,6 +185,60 @@ async def test_他社の施策_campaign_idが他社のとき404_CAMPAIGN_NOT_FOU
     assert response.status_code == 404
     assert response.json()["error"]["code"] == "CAMPAIGN_NOT_FOUND"
     assert x_api.calls == []
+
+
+async def test_Archive済みCampaignはEmbeddingとXを呼ばず409を同じキーで再返却する(
+    account: Account,
+    embedding: FakeEmbedding,
+    x_api: FakeXApi,
+    clock: FixedClock,
+) -> None:
+    session_id = await account.create_session()
+    campaign_id = await account.create_campaign(session_id)
+    await archive_campaign(campaign_id, clock.now())
+    embedding.calls.clear()
+    key = str(uuid.uuid4())
+    body = post_body(campaign_id)
+
+    first = await account.publish_post(session_id, body, key)
+    replay = await account.publish_post(session_id, body, key)
+
+    assert first.status_code == 409
+    assert first.json()["error"]["code"] == "CAMPAIGN_ARCHIVED"
+    assert first.json()["error"]["retryable"] is False
+    assert replay.json() == first.json()
+    assert embedding.calls == []
+    assert x_api.calls == []
+    assert await _post_count(campaign_id) == 0
+
+
+async def test_Embedding生成中にArchiveされたCampaignはXへ投稿しない(
+    account: Account,
+    embedding: FakeEmbedding,
+    x_api: FakeXApi,
+    clock: FixedClock,
+) -> None:
+    session_id = await account.create_session()
+    campaign_id = await account.create_campaign(session_id)
+    embedding.calls.clear()
+    gate = asyncio.Event()
+    embedding.block_next = gate
+    key = str(uuid.uuid4())
+    body = post_body(campaign_id)
+    running = asyncio.create_task(account.publish_post(session_id, body, key))
+    await asyncio.wait_for(embedding.blocked.wait(), 5)
+    await archive_campaign(campaign_id, clock.now())
+    gate.set()
+
+    response = await running
+    replay = await account.publish_post(session_id, body, key)
+
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "CAMPAIGN_ARCHIVED"
+    assert replay.json() == response.json()
+    assert len(embedding.calls) == 1
+    assert x_api.calls == []
+    assert await _post_count(campaign_id) == 0
 
 
 async def test_Embedding失敗_Xへ投稿する前に500_EMBEDDING_FAILEDで止まる(

@@ -8,7 +8,7 @@ from domain.constants import EMBEDDING_DIMENSIONS
 from domain.search_text import build_campaign_search_text
 from tests.conftest import AccountFactory
 from tests.support.client import Account, campaign_body, post_body
-from tests.support.db import complete_metrics, insert_memory
+from tests.support.db import archive_campaign, complete_metrics, insert_memory
 from tests.support.fakes import FakeEmbedding, FixedClock
 
 
@@ -200,6 +200,31 @@ async def test_編集の競合_古いexpected_updated_atのとき409_CAMPAIGN_CO
     assert response.status_code == 409
     assert response.json()["error"]["code"] == "CAMPAIGN_CONFLICT"
     assert response.json()["error"]["agent_turn_id"] is None
+
+
+async def test_編集_Archive済みCampaignはEmbeddingを生成せず409_CAMPAIGN_ARCHIVED(
+    account: Account, embedding: FakeEmbedding, clock: FixedClock
+) -> None:
+    campaign_id = await account.create_campaign()
+    detail = (await account.client.get(f"/api/v1/campaigns/{campaign_id}")).json()["data"]
+    await archive_campaign(campaign_id, clock.now())
+    embedding.calls.clear()
+
+    response = await account.client.put(
+        f"/api/v1/campaigns/{campaign_id}",
+        json={
+            **campaign_body(title="更新されない"),
+            "expected_updated_at": detail["campaign"]["updated_at"],
+        },
+    )
+    after = await account.client.get(f"/api/v1/campaigns/{campaign_id}")
+
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "CAMPAIGN_ARCHIVED"
+    assert response.json()["error"]["retryable"] is False
+    assert response.json()["error"]["agent_turn_id"] is None
+    assert embedding.calls == []
+    assert after.json()["data"]["campaign"]["title"] == campaign_body()["title"]
 
 
 async def test_編集_他社の施策のとき404(account: Account, new_account: AccountFactory) -> None:
