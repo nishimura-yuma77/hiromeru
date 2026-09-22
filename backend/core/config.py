@@ -1,10 +1,10 @@
 """アプリケーション設定。環境変数から読み込み、起動時に検証する（BE_STD 10章）。"""
 
 from functools import lru_cache
-from typing import Self
+from typing import Literal, Self
 from urllib.parse import urlsplit
 
-from pydantic import model_validator
+from pydantic import SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from domain.constants import EMBEDDING_DIMENSIONS
@@ -13,16 +13,20 @@ from domain.constants import EMBEDDING_DIMENSIONS
 _DEV_SESSION_SECRET = "dev-only-insecure-session-secret-change-me"
 _MIN_SECRET_LENGTH = 32
 _DEV_ORIGIN = "http://localhost:3000"
+_MAX_DURATION_SECONDS = 300
+_DEV_DATABASE_URL = "postgresql+psycopg://app:app@localhost:5432/app"
+
+type ExternalClientMode = Literal["real", "fake"]
 
 
 class Settings(BaseSettings):
     """環境変数から読み込む型付き設定。"""
 
-    database_url: str = "postgresql+psycopg://app:app@localhost:5432/app"
-    database_url_unpooled: str | None = None
+    database_url: SecretStr = SecretStr(_DEV_DATABASE_URL)
+    database_url_unpooled: SecretStr | None = None
 
     # 認証Cookie・CSRFトークンの署名鍵（API_DESIGN 2.8）。
-    session_secret: str = ""
+    auth_cookie_secret: SecretStr = SecretStr(_DEV_SESSION_SECRET)
     cookie_secure: bool = True
 
     # Originの許可リスト（BE_STD 17.1）。カンマ区切り。
@@ -32,17 +36,36 @@ class Settings(BaseSettings):
     vercel_branch_url: str | None = None
     vercel_project_production_url: str | None = None
 
+    # 外部API。開発・テストだけFakeを許可する。
+    external_client_mode: ExternalClientMode = "fake"
+
     # 埋め込み（BE_STD 13章）。モデル名と次元数は設定値とする。
     embedding_model: str = "openai/text-embedding-3-small"
     embedding_dimensions: int = EMBEDDING_DIMENSIONS
     orcarouter_base_url: str = ""
-    orcarouter_api_key: str = ""
+    orcarouter_api_key: SecretStr = SecretStr("")
     embedding_timeout_seconds: float = 30.0
 
-    # X API。投稿はユーザーコンテキストのアクセストークンで行う。
+    # X API。OAuth 1.0a User Context用の4 Credential。
     x_api_base_url: str = "https://api.x.com"
-    x_access_token: str = ""
+    x_api_key: SecretStr = SecretStr("")
+    x_api_key_secret: SecretStr = SecretStr("")
+    x_access_token: SecretStr = SecretStr("")
+    x_access_token_secret: SecretStr = SecretStr("")
     x_api_timeout_seconds: float = 30.0
+
+    # GA4 Data API。Client本体はIssue #33で実装する。
+    ga4_property_id: str = ""
+    ga4_service_account_json: SecretStr = SecretStr("")
+
+    # Vercel Cron。Endpoint本体はIssue #35で実装する。
+    cron_secret: SecretStr = SecretStr("")
+    cron_metric_batch_size: int = 20
+    cron_metric_max_items: int = 100
+    cron_metric_max_attempts: int = 3
+    cron_memory_batch_size: int = 20
+    cron_memory_max_items: int = 100
+    cron_memory_max_attempts: int = 3
 
     # Agent Turn（API_DESIGN 5.3、AGENT_DESIGN「Turnの上限」「中断されたTurnの復旧」）。
     message_max_length: int = 4000
@@ -54,24 +77,91 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     log_json: bool = True
 
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+    model_config = SettingsConfigDict(
+        env_file=".env", env_ignore_empty=True, extra="ignore", hide_input_in_errors=True
+    )
 
     @model_validator(mode="after")
     def _validate(self) -> Self:
-        """署名鍵と埋め込み次元数を検証する。足りなければ起動を失敗させる。"""
+        """環境別のSecret、Client Mode、実行上限を検証する。"""
         is_deployed = self.vercel_env in ("production", "preview")
-        if not self.session_secret:
-            if is_deployed:
-                raise ValueError("SESSION_SECRET が未設定です")
-            self.session_secret = _DEV_SESSION_SECRET
-        elif len(self.session_secret) < _MIN_SECRET_LENGTH:
-            raise ValueError("SESSION_SECRET は32文字以上にしてください")
-        if is_deployed and self.session_secret == _DEV_SESSION_SECRET:
-            raise ValueError("開発用の SESSION_SECRET は本番・プレビューで使用できません")
+        self._validate_environment(is_deployed)
+        self._validate_external_clients()
+        self._validate_cron_limits()
         if self.embedding_dimensions != EMBEDDING_DIMENSIONS:
             # DB の列は vector(1536) に固定のため、次元数を変えるには移行が必要（BE_STD 13章）。
             raise ValueError("EMBEDDING_DIMENSIONS がDBの列の次元数と一致しません")
         return self
+
+    def _validate_environment(self, is_deployed: bool) -> None:
+        """認証・Cookie・Deploy環境固有の必須設定を検証する。"""
+        auth_secret = self.auth_cookie_secret.get_secret_value()
+        if len(auth_secret.strip()) < _MIN_SECRET_LENGTH:
+            raise ValueError("AUTH_COOKIE_SECRET は32文字以上にしてください")
+        if is_deployed and auth_secret == _DEV_SESSION_SECRET:
+            raise ValueError("AUTH_COOKIE_SECRET を本番・プレビュー用に設定してください")
+        if is_deployed and not self.cookie_secure:
+            raise ValueError("本番・プレビューでは COOKIE_SECURE=true が必須です")
+        if is_deployed and self.external_client_mode != "real":
+            raise ValueError("本番・プレビューでは EXTERNAL_CLIENT_MODE=real が必須です")
+        if is_deployed and self.application_database_url().strip() == _DEV_DATABASE_URL:
+            raise ValueError("本番・プレビューでは DATABASE_URL が必須です")
+        if self.vercel_env == "production" and not self.cron_secret.get_secret_value().strip():
+            raise ValueError("Productionでは CRON_SECRET が必須です")
+
+    def _validate_external_clients(self) -> None:
+        """実Client Modeで必要な接続設定を検証する。"""
+        if self.external_client_mode == "real":
+            required = {
+                "ORCAROUTER_BASE_URL": self.orcarouter_base_url,
+                "ORCAROUTER_API_KEY": self.orcarouter_api_key.get_secret_value(),
+                "X_API_KEY": self.x_api_key.get_secret_value(),
+                "X_API_KEY_SECRET": self.x_api_key_secret.get_secret_value(),
+                "X_ACCESS_TOKEN": self.x_access_token.get_secret_value(),
+                "X_ACCESS_TOKEN_SECRET": self.x_access_token_secret.get_secret_value(),
+                "GA4_PROPERTY_ID": self.ga4_property_id,
+                "GA4_SERVICE_ACCOUNT_JSON": self.ga4_service_account_json.get_secret_value(),
+            }
+            missing = [name for name, value in required.items() if not value.strip()]
+            if missing:
+                raise ValueError(f"実Clientに必要な設定がありません: {', '.join(missing)}")
+
+    def _validate_cron_limits(self) -> None:
+        """Cronの件数・試行回数とLeaseの境界を検証する。"""
+        limits = {
+            "CRON_METRIC_BATCH_SIZE": self.cron_metric_batch_size,
+            "CRON_METRIC_MAX_ITEMS": self.cron_metric_max_items,
+            "CRON_METRIC_MAX_ATTEMPTS": self.cron_metric_max_attempts,
+            "CRON_MEMORY_BATCH_SIZE": self.cron_memory_batch_size,
+            "CRON_MEMORY_MAX_ITEMS": self.cron_memory_max_items,
+            "CRON_MEMORY_MAX_ATTEMPTS": self.cron_memory_max_attempts,
+        }
+        invalid = [name for name, value in limits.items() if value <= 0]
+        if invalid:
+            raise ValueError(f"正の整数を指定してください: {', '.join(invalid)}")
+        if self.cron_metric_max_items < self.cron_metric_batch_size:
+            raise ValueError("CRON_METRIC_MAX_ITEMS は BATCH_SIZE 以上にしてください")
+        if self.cron_memory_max_items < self.cron_memory_batch_size:
+            raise ValueError("CRON_MEMORY_MAX_ITEMS は BATCH_SIZE 以上にしてください")
+        if self.lease_seconds <= _MAX_DURATION_SECONDS:
+            raise ValueError("LEASE_SECONDS は300秒より長くしてください")
+
+    def auth_secret(self) -> str:
+        """認証Tokenの署名境界でだけ署名鍵を平文として返す。"""
+        return self.auth_cookie_secret.get_secret_value()
+
+    def application_database_url(self) -> str:
+        """Application用のDB接続URLを返す。"""
+        return self.database_url.get_secret_value()
+
+    def migration_database_url(self) -> str:
+        """Migration用のDirect接続URLを返す。Fallbackは許可しない。"""
+        if self.database_url_unpooled is None:
+            raise ValueError("DATABASE_URL_UNPOOLED が未設定です")
+        value = self.database_url_unpooled.get_secret_value()
+        if not value.strip():
+            raise ValueError("DATABASE_URL_UNPOOLED が未設定です")
+        return value
 
     @staticmethod
     def sqlalchemy_url(url: str) -> str:

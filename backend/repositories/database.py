@@ -12,7 +12,7 @@ settings = get_settings()
 # Neon のプール接続（PgBouncer の transaction モード）を前提に、アプリケーション側では
 # 接続をプールしない（規約17.2）。接続のプールは Neon 側に任せる。
 engine = create_async_engine(
-    settings.sqlalchemy_url(settings.database_url),
+    settings.sqlalchemy_url(settings.application_database_url()),
     poolclass=NullPool,
 )
 SessionLocal = async_sessionmaker(bind=engine, expire_on_commit=False)
