@@ -334,7 +334,7 @@ flowchart TD
     METRICS --> END_OK([施策・類似度・評価概要を返す])
 ```
 
-検索結果は類似度順に返し、`title`はEmbedding対象に含めない。主な失敗は`INVALID_ARGUMENT`、`EMBEDDING_FAILED`、`CAMPAIGN_SEARCH_FAILED`。
+検索結果は類似度順に返す。検索用Embeddingには`title`も含め、利用者が一覧に表示された施策名から検索できるようにする。主な失敗は`INVALID_ARGUMENT`、`EMBEDDING_FAILED`、`CAMPAIGN_SEARCH_FAILED`。
 
 ### `propose_campaign`
 **利用Agent:** 親エージェント
@@ -359,17 +359,19 @@ flowchart TD
     SOURCE -- いいえ --> END_SOURCE([INVALID_PROPOSAL_SOURCE])
     SOURCE -- はい --> AUTHORIZE{既存Campaignは現在の会社に属するか}
     AUTHORIZE -- いいえ --> END_NOT_FOUND([CAMPAIGN_NOT_FOUND])
-    AUTHORIZE -- はい --> VALIDATE{施策案Schemaは正常か}
+    AUTHORIZE -- はい --> ACTIVE{既存Campaignは未Archiveか}
+    ACTIVE -- いいえ --> END_ARCHIVED([CAMPAIGN_ARCHIVED])
+    ACTIVE -- はい --> VALIDATE{施策案Schemaは正常か}
     VALIDATE -- いいえ --> END_INVALID([INVALID_CAMPAIGN_PROPOSAL])
     VALIDATE -- はい --> RESULT[実際の施策内容をTool Resultへ保存]
     RESULT --> COMPLETE([親Turnを完了])
 ```
 
-新規案では`id = null`、既存施策の変更案では会社所有権を検証済みのCampaign IDを`id`へ指定する。別会社のCampaignは存在しないCampaignと区別せず`CAMPAIGN_NOT_FOUND`として扱う。
+新規案では`id = null`、既存施策の変更案では会社所有権を検証済みのCampaign IDを`id`へ指定する。別会社のCampaignは存在しないCampaignと区別せず`CAMPAIGN_NOT_FOUND`として扱い、Archive済みCampaignの変更案は`CAMPAIGN_ARCHIVED`として返す。
 
 既存施策の変更案では、所有権の検証で取得したCampaignの`updated_at`を、アプリケーションが`expected_updated_at`へ設定する。値はLLMに生成させず、新規案では`null`とする。UIはこの値をフォームに保持し、最終承認時に施策upsert APIのRequest Bodyへそのまま設定する。承認までの間に別のSessionまたは別のマーケターが施策を更新した場合、APIが`409 CAMPAIGN_CONFLICT`を返す。
 
-成功時は入力した施策内容を正規化してTool Resultへ返し、UIが編集可能なフォームとして表示して親Turnを完了する。主な失敗は`INVALID_PROPOSAL_SOURCE`、`INVALID_CAMPAIGN_PROPOSAL`、`CAMPAIGN_NOT_FOUND`。
+成功時は入力した施策内容を正規化してTool Resultへ返し、UIが編集可能なフォームとして表示して親Turnを完了する。主な失敗は`INVALID_PROPOSAL_SOURCE`、`INVALID_CAMPAIGN_PROPOSAL`、`CAMPAIGN_NOT_FOUND`、`CAMPAIGN_ARCHIVED`。
 
 ### `get_post`
 **利用Agent:** 親エージェント、施策立案エージェント、コンテンツ制作エージェント
@@ -472,13 +474,15 @@ flowchart TD
     SOURCE -- いいえ --> END_SOURCE([INVALID_PROPOSAL_SOURCE])
     SOURCE -- はい --> AUTHORIZE{Campaignは現在の会社に属するか}
     AUTHORIZE -- いいえ --> END_NOT_FOUND([CAMPAIGN_NOT_FOUND])
-    AUTHORIZE -- はい --> VALIDATE{本文と遷移先URLは正常か}
+    AUTHORIZE -- はい --> ACTIVE{Campaignは未Archiveか}
+    ACTIVE -- いいえ --> END_ARCHIVED([CAMPAIGN_ARCHIVED])
+    ACTIVE -- はい --> VALIDATE{本文と遷移先URLは正常か}
     VALIDATE -- いいえ --> END_INVALID([INVALID_POST_PROPOSAL])
     VALIDATE -- はい --> RESULT[実際の投稿内容をTool Resultへ保存]
     RESULT --> COMPLETE([親Turnを完了])
 ```
 
-成功時は入力した投稿内容を正規化してTool Resultへ返し、UIが編集可能なフォームとして表示して親Turnを完了する。X向け文字数の最終検証はUTM付きURL結合後に投稿APIでも実施する。別会社のCampaignは存在しないCampaignと区別せず`CAMPAIGN_NOT_FOUND`として扱う。主な失敗は`INVALID_PROPOSAL_SOURCE`、`CAMPAIGN_NOT_FOUND`、`INVALID_POST_PROPOSAL`。
+成功時は入力した投稿内容を正規化してTool Resultへ返し、UIが編集可能なフォームとして表示して親Turnを完了する。X向け文字数の最終検証はUTM付きURL結合後に投稿APIでも実施する。別会社のCampaignは存在しないCampaignと区別せず`CAMPAIGN_NOT_FOUND`、Archive済みCampaignは`CAMPAIGN_ARCHIVED`として扱う。主な失敗は`INVALID_PROPOSAL_SOURCE`、`CAMPAIGN_NOT_FOUND`、`CAMPAIGN_ARCHIVED`、`INVALID_POST_PROPOSAL`。
 
 ### `run_campaign_planner`
 **利用Agent:** 親エージェント
@@ -555,7 +559,7 @@ flowchart TD
 
 - Checkpoint要約にLLMを使用する場合も、親エージェントが選択するToolとはせず、Context管理処理として実行する
 - X API、GA4 API、Embedding APIなどのクライアントは内部コンポーネントとして実装し、認証情報をLLMへ渡さない。アプリケーションAPIの詳細は`API_DESIGN.md`を参照する
-- 定期処理は投稿IDを使って冪等に実行し、同じ評価指標や記憶の重複保存を防止する
+- 定期処理は投稿IDを使って冪等に実行し、同じ評価指標や記憶の重複保存を防止する。実行時刻、Claim、Lease、部分成功、再試行および評価記憶の生成は`CRON.md`を正本とする
 
 ## 過去施策の想起
 施策立案では、過去施策を検索するかどうかをLLMの任意判断にせず、`run_campaign_planner`の実行フローで類似する過去施策、評価指標、Long-term Memoryを必ず取得する。取得した過去施策を再利用、差別化または無視する判断は施策立案エージェントへ委ねる。
@@ -587,7 +591,7 @@ flowchart TD
 
 - IDによる施策取得は`get_campaign`、自然言語による類似施策検索は`search_campaigns`を使用する
 - 意味検索では実行主体が所属する会社の施策だけを対象とし、類似度上位の施策と関連する評価指標を返す
-- 検索用テキストは`target_profile`、`background`、`objective`、`plan`から構築し、表示用の`title`は含めない
+- 検索用テキストは`title`、`target_profile`、`background`、`objective`、`plan`から構築する
 - 候補案のEmbeddingは検索時だけ一時的に生成し、人間が承認するまでDBへ保存しない
 - 類似度だけで施策案を自動拒否せず、ユーザーの依頼、過去の実績、再実施の価値をLLMが考慮する
 - 施策upsert APIの新規作成ではEmbeddingを先に生成し、`campaigns`と`campaign_embeddings`を同じDBトランザクションで保存する
@@ -595,7 +599,7 @@ flowchart TD
 - Embedding生成に失敗した場合は施策upsert APIを失敗させ、施策だけが検索対象から欠落する状態を作らない
 
 ## アプリケーションAPI結果の観測
-施策upsert API（承認）とX投稿APIは、認証と親Session所有権を検証できた後の成功結果またはエラーを、指定親SessionのAPI実行Turnへ構造化`api_result`として保存する。API ResultはAgent Tool Resultではないため、アプリケーション生成の`assistant_message`を使用する。
+施策upsert API（承認）とX投稿APIは、認証と親Session所有権を検証できた後の確定した成功結果またはエラーを、指定親SessionのAPI実行Turnへ構造化`api_result`として保存する。API ResultはAgent Tool Resultではないため、アプリケーション生成の`assistant_message`を使用する。`X_POST_SAVE_FAILED`は暫定Errorであり、同じキーの再送で結果が確定するまで保存しない。
 
 ```json
 {
@@ -637,7 +641,13 @@ flowchart TD
     UI_ONLY --> RECOVER[有効な親Sessionを選択または作成]
     RECOVER --> FORWARD[マスク済みエラーをuser_messageへ保存]
     FORWARD --> LOOP
-    TRUSTED -- はい --> SAVE[api_resultを親Sessionへ保存]
+    TRUSTED -- はい --> TEMPORARY{X_POST_SAVE_FAILEDか}
+    TEMPORARY -- はい --> RETRY[api_resultを保存せずTurnを未完了に保つ]
+    RETRY --> SAME_KEY[UIが同じキーでDB保存だけを再実行]
+    SAME_KEY --> RESOLVED{結果は確定したか}
+    RESOLVED -- いいえ --> RETRY
+    RESOLVED -- はい --> SAVE[確定api_resultを親Sessionへ保存]
+    TEMPORARY -- いいえ --> SAVE
     SAVE --> COMPLETE[API実行Turnを完了]
     COMPLETE --> UI[UIへエラーを表示]
     UI --> WAIT[次のユーザー入力を待つ]

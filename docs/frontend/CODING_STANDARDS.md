@@ -430,6 +430,7 @@ controllerは業務ルールの正本にならない。入力の最終検証、�
 
 - **必須:** 更新開始、成功、失敗を明示的なReducer Eventとして扱う
 - **必須:** 状態変更Requestを暗黙に自動再試行しない
+- **必須:** Backendが`CSRF_VALIDATION_FAILED`を返した場合だけ、CSRF Token再発行後に元Requestを1回再送する。承認Requestは同じ`Idempotency-Key`を維持し、2回目のCSRF Errorでは停止する
 - **必須:** 更新中は同じ操作の重複実行を防ぐ
 - **必須:** 更新成功後は必要に応じて`router.refresh()`し、Server Componentの表示を再取得する
 - **必須:** API Errorを共通の`ApiError`へ正規化する
@@ -837,7 +838,7 @@ Idempotency-Keyの生成、保持、再利用、破棄はcontrollerとReducer Ev
 - **必須:** `dangerouslySetInnerHTML`を原則使用しない
 - **必須:** 外部Contentを安全なHTMLとして信用しない
 - **必須:** 認証・認可をFrontendだけで保証しない
-- **必須:** Cookie認証を使用する状態変更RequestではBackendのCSRF方式に従う
+- **必須:** Cookie認証を使用するPOST・PUT・PATCH・DELETEではBackendのCSRF方式に従う
 - **必須:** Token、Secret、個人情報をConsoleへ出力しない
 - **必須:** URL、localStorage、API Responseを信頼済み入力として扱わない
 

@@ -54,13 +54,13 @@
 - APIは認証、CSRF、親Session所有権、安全なJSON解析、冪等性を検証する
 - 実行権を得たRequestを、指定親Sessionの新しいTurnへ保存する
 - APIは保存後に、入力Schemaと会社所有権を検証する
-- API処理後、成功結果またはマスク済みエラーを同じTurnへ保存する
+- API処理後、確定した成功結果またはマスク済みエラーを同じTurnへ保存する。`X_POST_SAVE_FAILED`は同じキーの再送で確定するまで保存せず、Turnを未完了に保つ
 - 同じキーの再送では新しいTurnや業務データを作成せず、保存済みResponseを返す
 - 最終承認後の処理にLLMを使用しない
 
 ### 4.4 APIエラー後のAgent接続
-- 認証と親Session所有権を検証できた後のAPIエラーは、構造化した`api_result`としてAPI実行Turnへ保存する
-- APIはエラー保存後にTurnを完了し、同じエラーをUIへ返して表示する
+- 認証と親Session所有権を検証できた後の確定可能なAPIエラーは、構造化した`api_result`としてAPI実行Turnへ保存する
+- APIは確定Errorの保存後にTurnを完了し、同じErrorをUIへ返して表示する。`X_POST_SAVE_FAILED`は暫定Errorとして保存せず、同じキーの再送でDB保存結果が確定するまでTurnを完了しない
 - APIエラーだけでは親Agentを自動起動しない
 - 次のユーザー入力で親Agent Turnを開始した際、Context構築処理が`api_result`を通常の会話履歴として読み込む
 - 親Agentは失敗した操作、エラーコード、利用者向け説明、再試行可否を観測して回答や修正提案へ利用する
@@ -146,6 +146,7 @@ flowchart TD
 ### 5.2 事前条件
 - 共通前提を満たしている
 - 既存施策を変更する場合、対象施策がユーザーの会社に属する
+- 既存施策を変更する場合、対象施策がArchiveされていない
 
 ### 5.3 トリガー
 ユーザーが親Agentへ施策の新規作成または変更を依頼する。
@@ -193,6 +194,7 @@ flowchart TD
 | Campaign処理のLease切れ | 新しい実行TokenとLeaseをCAS設定し、既存のAPI実行Turnを再利用して安全に再開する |
 | キーの不正再利用 | 異なるRequestまたはSessionでは`409 IDEMPOTENCY_KEY_REUSED`を返し、施策を保存しない |
 | 上書き対象なし | 存在しない場合も別会社に属する場合も`404 CAMPAIGN_NOT_FOUND`を親Turnへ保存し、指定IDで新規作成せず次回Agentワークフローへ接続する |
+| 上書き対象がArchive済み | `409 CAMPAIGN_ARCHIVED`を親Turnへ保存し、参照専用として上書きしない。SC-05の直接編集でも同じErrorを返す |
 | 上書きの競合 | `expected_updated_at`が現在の`updated_at`と一致しない場合は`409 CAMPAIGN_CONFLICT`を親Turnへ保存し、上書きしない。次回Agentワークフローで親Agentが最新の施策を取得し、新しい提案を作成する。再実行には新しい承認操作と新しいキーを必要とする |
 | Embedding生成失敗 | Campaignを保存せず、構造化エラーを親Turnへ保存して次回Agentワークフローへ接続する |
 | DB保存失敗 | TransactionをRollbackし、構造化エラーを親Turnへ保存して次回Agentワークフローへ接続する |
@@ -233,7 +235,9 @@ flowchart TD
     VALIDATE -- いいえ --> SAVE_ERROR[構造化エラーを親Turnへ保存]
     VALIDATE -- はい --> MODE{idがあるか}
     MODE -- いいえ --> CREATE[CampaignとEmbeddingを新規作成]
-    MODE -- はい --> CONFLICT{updated_atは提案時点と一致するか}
+    MODE -- はい --> ARCHIVED{Campaignは未Archiveか}
+    ARCHIVED -- いいえ --> SAVE_ERROR
+    ARCHIVED -- はい --> CONFLICT{updated_atは提案時点と一致するか}
     CONFLICT -- いいえ --> SAVE_ERROR
     CONFLICT -- はい --> UPDATE[CampaignとEmbeddingを上書き]
     CREATE --> API_RESULT{保存結果}
@@ -256,6 +260,7 @@ flowchart TD
 - 共通前提を満たしている
 - 対象Campaignが存在し、ユーザーの会社に属する
 - 対象Campaignは施策APIで保存済みである
+- 対象CampaignはArchiveされていない
 
 ### 6.3 トリガー
 ユーザーが親Agentへ、対象Campaignに紐づくX投稿内容の作成を依頼する。
@@ -309,6 +314,7 @@ flowchart TD
 | キーの不正再利用 | 異なるRequestまたはSessionでは`409 IDEMPOTENCY_KEY_REUSED`を返し、Xへ投稿しない |
 | 別キーの同一投稿が未解決 | `409 X_POST_UNRESOLVED`を返し、処理中または結果不明の投稿が解決するまでXへ投稿しない |
 | APIによるCampaign取得失敗 | `404 CAMPAIGN_NOT_FOUND`を親Turnへ保存し、X投稿を行わず次回Agentワークフローへ接続する |
+| 対象CampaignがArchive済み | `409 CAMPAIGN_ARCHIVED`を親Turnへ保存し、Embedding生成とX投稿を行わず参照専用として表示する |
 | 投稿内容不正 | `422 INVALID_X_POST`を親Turnへ保存し、X投稿を行わず次回Agentワークフローへ接続する |
 | Embedding生成失敗 | 構造化エラーを親Turnへ保存し、X投稿を行わず次回Agentワークフローへ接続する |
 | X API明確失敗 | `502 X_POST_FAILED`を親Turnへ保存し、Postを保存せず次回Agentワークフローへ接続する |
@@ -322,7 +328,9 @@ flowchart TD
     CAMPAIGN --> EXISTS{同じ会社のCampaignか}
     EXISTS -- いいえ --> PARENT_CAMPAIGN_ERROR[親Agentが失敗Tool Resultを観測]
     PARENT_CAMPAIGN_ERROR --> AGENT_GUIDANCE([親Agentが対象の選び直しや作成を補足])
-    EXISTS -- はい --> CONTEXT[過去Post・指標・記憶を取得]
+    EXISTS -- はい --> ACTIVE{Campaignは未Archiveか}
+    ACTIVE -- いいえ --> AGENT_GUIDANCE
+    ACTIVE -- はい --> CONTEXT[過去Post・指標・記憶を取得]
     CONTEXT --> CREATOR[run_content_creator]
     CREATOR --> CONTENT_RESULT{コンテンツ制作結果}
     CONTENT_RESULT -- 情報不足 --> ASK[親Agentが追加質問]
@@ -359,7 +367,9 @@ flowchart TD
     UNRESOLVED -- はい --> SAVE_ERROR
     UNRESOLVED -- いいえ --> VALIDATE{Schema・業務条件は正常か}
     VALIDATE -- いいえ --> SAVE_ERROR[構造化エラーを親Turnへ保存]
-    VALIDATE -- はい --> PREPARE[Embedding・UTM・投稿本文を生成]
+    VALIDATE -- はい --> ACTIVE_API{Campaignは未Archiveか}
+    ACTIVE_API -- いいえ --> SAVE_ERROR
+    ACTIVE_API -- はい --> PREPARE[Embedding・UTM・投稿本文を生成]
     PREPARE --> PREPARED{生成成功か}
     PREPARED -- いいえ --> SAVE_ERROR
     PREPARED -- はい --> MARK_EXTERNAL[外部作用開始日時を保存]

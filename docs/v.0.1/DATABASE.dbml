@@ -39,6 +39,7 @@ Project hiromeru {
     - セキュリティイベントには観測または制御が必要な検出結果だけを記録し、成功したGuardrail検査とAgent Firewall検査は重複記録しない。
     - JSONB内容スキーマとツール固有の入出力スキーマは、保存前にアプリケーションで検証する。
     - 記憶を忘却する場合は、その内容と埋め込みベクトルを完全に削除する。
+    - すべてのtimestamptzはUTCとして保存し、APIもUTCで返す。Frontendの表示と日付Filterの暦日境界はAsia/Tokyoを使用する。
     - Noteに記載したCHECK制約はSQL migrationで追加する。
   '''
 }
@@ -194,7 +195,7 @@ Ref: campaigns.created_by_marketer_id > marketers.id [delete: restrict]
 
 Table campaign_embeddings {
   campaign_id bigint [pk, note: '【施策ID】']
-  embedding vector(1536) [not null, note: '【施策埋め込みベクトル】ターゲット像、実施背景、施策目的、施策内容を正規化したテキストから生成する。HNSWコサイン距離インデックス（vector_cosine_ops）をSQL migrationで追加する。']
+  embedding vector(1536) [not null, note: '【施策埋め込みベクトル】施策タイトル、ターゲット像、実施背景、施策目的、施策内容を正規化したテキストから生成する。HNSWコサイン距離インデックス（vector_cosine_ops）をSQL migrationで追加する。']
   content_hash varchar(64) [not null, note: '【埋め込み元ハッシュ】正規化した埋め込み元テキストのSHA-256。内容が変わっていない場合の再生成を防ぐ。']
   created_at timestamptz [not null, default: `now()`, note: '【作成日時】']
   updated_at timestamptz [not null, default: `now()`, note: '【更新日時】']
@@ -203,7 +204,7 @@ Table campaign_embeddings {
     content_hash
   }
 
-  Note: '施策の意味検索に使用する1対1の検索Projection。施策のタイトルは埋め込み元に含めない。埋め込みを生成してからDBトランザクションを開始し、施策と本レコードを同じトランザクションで保存・更新する。'
+  Note: '施策の意味検索に使用する1対1の検索Projection。施策のタイトルを含む検索用テキストから埋め込みを生成してからDBトランザクションを開始し、施策と本レコードを同じトランザクションで保存・更新する。'
 }
 
 Ref: campaign_embeddings.campaign_id > campaigns.id [delete: cascade]
@@ -275,15 +276,59 @@ Table post_metrics {
   x_pv_count bigint [note: '【X投稿PV数】初週の表示回数。0以上とする。']
   landing_user_count bigint [note: '【遷移ユーザー数】この投稿からアプリケーションページへ到達したユーザー数。0以上とする。']
   measured_at timestamptz [note: '【計測日時】']
+  execution_token uuid [note: '【Cron実行Token】ClaimしたWorkerだけが結果を保存するためのFencing Token。']
+  lease_expires_at timestamptz [note: '【Cron実行権期限】期限切れ後は別Workerが再Claimできる。']
+  attempt_count integer [not null, default: 0, note: '【指標取得試行回数】Claim時に増やす。最大回数のClaimが中断した行はLease切れ後にfailedへ確定する。']
+  next_attempt_at timestamptz [note: '【指標取得再試行日時】NULLまたは現在以前なら対象にできる。']
+  last_error_code varchar(255) [note: '【指標取得内部Error Code】外部APIの本文とCredentialは保存しない。']
+  memory_generated_at timestamptz [note: '【評価記憶生成日時】記憶が後から削除されても残し、再生成を防ぐ。']
+  memory_failed_at timestamptz [note: '【評価記憶生成失敗確定日時】最大試行回数へ到達し、自動再試行を停止した日時。']
+  memory_attempt_count integer [not null, default: 0, note: '【評価記憶生成試行回数】Claim時に増やす。最大回数のClaimが中断した行はLease切れ後に自動再試行を停止する。']
+  memory_next_attempt_at timestamptz [note: '【評価記憶再試行日時】']
+  memory_last_error_code varchar(255) [note: '【評価記憶内部Error Code】']
 
   indexes {
-    (status, scheduled_at)
+    (status, next_attempt_at, scheduled_at)
+    (memory_generated_at, memory_failed_at, memory_next_attempt_at)
   }
 
-  Note: '投稿IDを主キーとして計測処理を冪等にする。計測ステータスがcompletedの場合は、両方の計測値と計測日時を必須とする。'
+  Note: '投稿IDを主キーとして計測処理を冪等にする。Cronはexecution_tokenとlease_expires_atで実行権を制御し、XまたはGA4の部分成功値を保持してNULLのProviderだけを再試行する。v0.1ではfailedをpendingへ戻さない。計測ステータスがcompletedの場合は、両方の計測値と計測日時を必須とする。failedでは取得済みの部分値を保持してよいが、Browser向けAPIへは返さない。評価記憶はmemory_generated_atとmemory_failed_atがどちらもNULLの場合だけ生成し、利用者が記憶を削除しても再生成しない。すべてのtimestamptzはUTCとして保存する。'
 }
 
 Ref: post_metrics.post_id > posts.id [delete: restrict]
+
+Table api_list_snapshots {
+  id uuid [pk, note: '【一覧Snapshot ID】サーバーが生成し、不透明Cursorへ含める。']
+  marketer_id bigint [not null, note: '【マーケターID】Snapshotを作成した認証主体。']
+  resource varchar(50) [not null, note: '【一覧種別】postsまたはmetrics。']
+  filter_hash varchar(64) [not null, note: '【条件Hash】正規化したFilterとSortのSHA-256。']
+  summary jsonb [note: '【Snapshot Summary】metricsの期間全体集計。postsではNULL。']
+  created_at timestamptz [not null, default: `now()`, note: '【作成日時】']
+  expires_at timestamptz [not null, note: '【有効期限】作成から30分。']
+
+  indexes {
+    (marketer_id, resource, expires_at)
+    expires_at
+  }
+
+  Note: '可変な計測値で並べる一覧をPage間で固定する短期Snapshot。期限切れ後のCursorはINVALID_ARGUMENTとし、Browser向けResponseへSnapshot IDを直接返さない。'
+}
+
+Ref: api_list_snapshots.marketer_id > marketers.id [delete: cascade]
+
+Table api_list_snapshot_items {
+  snapshot_id uuid [not null, note: '【一覧Snapshot ID】']
+  position integer [not null, note: '【表示位置】0始まり。']
+  item jsonb [not null, note: '【固定Projection】対象Endpointの1要素を保存する。']
+
+  indexes {
+    (snapshot_id, position) [pk]
+  }
+
+  Note: '先頭Pageと同じTransactionで確定した順序と表示値を保持する。元データが更新されても有効期限内の続きPageはこのProjectionを返す。'
+}
+
+Ref: api_list_snapshot_items.snapshot_id > api_list_snapshots.id [delete: cascade]
 
 
 Table agent_memories {
