@@ -22,7 +22,7 @@ ERROR_SPECS: Final[dict[str, tuple[int, bool]]] = {
     "INVALID_IDEMPOTENCY_KEY": (400, False),
     "UNAUTHENTICATED": (401, False),
     "INVALID_CREDENTIALS": (401, False),
-    "CSRF_VALIDATION_FAILED": (403, False),
+    "CSRF_VALIDATION_FAILED": (403, True),
     "AGENT_SESSION_NOT_FOUND": (404, False),
     "IDEMPOTENCY_REQUEST_IN_PROGRESS": (409, True),
     "IDEMPOTENCY_KEY_REUSED": (409, False),

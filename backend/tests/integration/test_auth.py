@@ -87,6 +87,120 @@ async def test_me_Cookieがないとき401でCookieを削除する(anonymous: As
     assert any("csrf_token=" in c and "Max-Age=0" in c for c in deleted)
 
 
+async def test_CSRF再発行_旧TokenがなくてもBodyとCookieへ同じ新Tokenを返す(
+    account: Account,
+) -> None:
+    account.client.headers.pop("X-CSRF-Token")
+    account.client.cookies.delete("csrf_token")
+
+    response = await account.client.post("/api/v1/auth/csrf")
+
+    assert response.status_code == 200
+    token = response.json()["data"]["csrf_token"]
+    assert response.cookies["csrf_token"] == token
+    assert response.headers["cache-control"] == "no-store"
+    cookies = response.headers.get_list("set-cookie")
+    assert any(cookie.startswith("hiromeru_session=") for cookie in cookies)
+    assert any(cookie.startswith("csrf_token=") and "HttpOnly" not in cookie for cookie in cookies)
+
+    account.client.headers["X-CSRF-Token"] = token
+    assert (await account.client.post("/api/v1/agent-sessions")).status_code == 201
+
+
+async def test_CSRF再発行_新Cookieに対して旧Headerを送ると403で再試行可能(
+    account: Account,
+) -> None:
+    old_token = account.csrf
+    response = await account.client.post("/api/v1/auth/csrf")
+    assert response.status_code == 200
+    account.client.headers["X-CSRF-Token"] = old_token
+
+    rejected = await account.client.post("/api/v1/agent-sessions")
+
+    assert rejected.status_code == 403
+    assert rejected.json()["error"]["code"] == "CSRF_VALIDATION_FAILED"
+    assert rejected.json()["error"]["retryable"] is True
+
+
+async def test_CSRF再発行_未認証かつOrigin不正のとき認証を優先して401(
+    anonymous: AsyncClient,
+) -> None:
+    response = await anonymous.post(
+        "/api/v1/auth/csrf", headers={"Origin": "https://evil.example.com"}
+    )
+
+    assert response.status_code == 401
+    assert response.json()["error"]["code"] == "UNAUTHENTICATED"
+
+
+async def test_CSRF再発行_署名不正の認証Cookieのとき401でCookieを削除する(
+    account: Account,
+) -> None:
+    account.client.cookies.delete("hiromeru_session")
+    account.client.cookies.set("hiromeru_session", "invalid")
+
+    response = await account.client.post("/api/v1/auth/csrf")
+
+    assert response.status_code == 401
+    assert response.json()["error"]["code"] == "UNAUTHENTICATED"
+    deleted = response.headers.get_list("set-cookie")
+    assert any("hiromeru_session=" in cookie and "Max-Age=0" in cookie for cookie in deleted)
+    assert any("csrf_token=" in cookie and "Max-Age=0" in cookie for cookie in deleted)
+
+
+async def test_CSRF再発行_認証Cookieのアイドル期限切れのとき401でCookieを削除する(
+    account: Account, clock: FixedClock
+) -> None:
+    clock.advance(8 * 3600 + 1)
+
+    response = await account.client.post("/api/v1/auth/csrf")
+
+    assert response.status_code == 401
+    assert response.json()["error"]["code"] == "UNAUTHENTICATED"
+    deleted = response.headers.get_list("set-cookie")
+    assert any("hiromeru_session=" in cookie and "Max-Age=0" in cookie for cookie in deleted)
+    assert any("csrf_token=" in cookie and "Max-Age=0" in cookie for cookie in deleted)
+
+
+async def test_CSRF再発行_Originがないとき403(account: Account) -> None:
+    account.client.headers.pop("Origin")
+
+    response = await account.client.post("/api/v1/auth/csrf")
+
+    assert response.status_code == 403
+    assert response.json()["error"]["code"] == "CSRF_VALIDATION_FAILED"
+
+
+async def test_CSRF再発行_Originが許可外のとき403(account: Account) -> None:
+    account.client.headers["Origin"] = "https://evil.example.com"
+
+    response = await account.client.post("/api/v1/auth/csrf")
+
+    assert response.status_code == 403
+    assert response.json()["error"]["code"] == "CSRF_VALIDATION_FAILED"
+
+
+async def test_CSRF再発行_Originがなく許可Refererがあるとき200(account: Account) -> None:
+    account.client.headers.pop("Origin")
+    account.client.headers["Referer"] = f"{ORIGIN}/campaigns"
+
+    response = await account.client.post("/api/v1/auth/csrf")
+
+    assert response.status_code == 200
+
+
+async def test_CSRF再発行_認証Cookieのアイドル期限を延長する(
+    account: Account, clock: FixedClock
+) -> None:
+    clock.advance(7 * 3600)
+    assert (await account.client.post("/api/v1/auth/csrf")).status_code == 200
+    clock.advance(7 * 3600)
+
+    response = await account.client.get("/api/v1/auth/me")
+
+    assert response.status_code == 200
+
+
 async def test_ログアウト_Cookieを削除し以後のmeは401(account: Account) -> None:
     response = await account.client.post("/api/v1/auth/logout")
 
