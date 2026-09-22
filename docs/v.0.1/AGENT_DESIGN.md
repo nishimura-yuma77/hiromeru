@@ -334,7 +334,7 @@ flowchart TD
     METRICS --> END_OK([施策・類似度・評価概要を返す])
 ```
 
-検索結果は類似度順に返し、`title`はEmbedding対象に含めない。主な失敗は`INVALID_ARGUMENT`、`EMBEDDING_FAILED`、`CAMPAIGN_SEARCH_FAILED`。
+検索結果は類似度順に返す。検索用Embeddingには`title`も含め、利用者が一覧に表示された施策名から検索できるようにする。主な失敗は`INVALID_ARGUMENT`、`EMBEDDING_FAILED`、`CAMPAIGN_SEARCH_FAILED`。
 
 ### `propose_campaign`
 **利用Agent:** 親エージェント
@@ -359,17 +359,19 @@ flowchart TD
     SOURCE -- いいえ --> END_SOURCE([INVALID_PROPOSAL_SOURCE])
     SOURCE -- はい --> AUTHORIZE{既存Campaignは現在の会社に属するか}
     AUTHORIZE -- いいえ --> END_NOT_FOUND([CAMPAIGN_NOT_FOUND])
-    AUTHORIZE -- はい --> VALIDATE{施策案Schemaは正常か}
+    AUTHORIZE -- はい --> ACTIVE{既存Campaignは未Archiveか}
+    ACTIVE -- いいえ --> END_ARCHIVED([CAMPAIGN_ARCHIVED])
+    ACTIVE -- はい --> VALIDATE{施策案Schemaは正常か}
     VALIDATE -- いいえ --> END_INVALID([INVALID_CAMPAIGN_PROPOSAL])
     VALIDATE -- はい --> RESULT[実際の施策内容をTool Resultへ保存]
     RESULT --> COMPLETE([親Turnを完了])
 ```
 
-新規案では`id = null`、既存施策の変更案では会社所有権を検証済みのCampaign IDを`id`へ指定する。別会社のCampaignは存在しないCampaignと区別せず`CAMPAIGN_NOT_FOUND`として扱う。
+新規案では`id = null`、既存施策の変更案では会社所有権を検証済みのCampaign IDを`id`へ指定する。別会社のCampaignは存在しないCampaignと区別せず`CAMPAIGN_NOT_FOUND`として扱い、Archive済みCampaignの変更案は`CAMPAIGN_ARCHIVED`として返す。
 
 既存施策の変更案では、所有権の検証で取得したCampaignの`updated_at`を、アプリケーションが`expected_updated_at`へ設定する。値はLLMに生成させず、新規案では`null`とする。UIはこの値をフォームに保持し、最終承認時に施策upsert APIのRequest Bodyへそのまま設定する。承認までの間に別のSessionまたは別のマーケターが施策を更新した場合、APIが`409 CAMPAIGN_CONFLICT`を返す。
 
-成功時は入力した施策内容を正規化してTool Resultへ返し、UIが編集可能なフォームとして表示して親Turnを完了する。主な失敗は`INVALID_PROPOSAL_SOURCE`、`INVALID_CAMPAIGN_PROPOSAL`、`CAMPAIGN_NOT_FOUND`。
+成功時は入力した施策内容を正規化してTool Resultへ返し、UIが編集可能なフォームとして表示して親Turnを完了する。主な失敗は`INVALID_PROPOSAL_SOURCE`、`INVALID_CAMPAIGN_PROPOSAL`、`CAMPAIGN_NOT_FOUND`、`CAMPAIGN_ARCHIVED`。
 
 ### `get_post`
 **利用Agent:** 親エージェント、施策立案エージェント、コンテンツ制作エージェント
@@ -472,13 +474,15 @@ flowchart TD
     SOURCE -- いいえ --> END_SOURCE([INVALID_PROPOSAL_SOURCE])
     SOURCE -- はい --> AUTHORIZE{Campaignは現在の会社に属するか}
     AUTHORIZE -- いいえ --> END_NOT_FOUND([CAMPAIGN_NOT_FOUND])
-    AUTHORIZE -- はい --> VALIDATE{本文と遷移先URLは正常か}
+    AUTHORIZE -- はい --> ACTIVE{Campaignは未Archiveか}
+    ACTIVE -- いいえ --> END_ARCHIVED([CAMPAIGN_ARCHIVED])
+    ACTIVE -- はい --> VALIDATE{本文と遷移先URLは正常か}
     VALIDATE -- いいえ --> END_INVALID([INVALID_POST_PROPOSAL])
     VALIDATE -- はい --> RESULT[実際の投稿内容をTool Resultへ保存]
     RESULT --> COMPLETE([親Turnを完了])
 ```
 
-成功時は入力した投稿内容を正規化してTool Resultへ返し、UIが編集可能なフォームとして表示して親Turnを完了する。X向け文字数の最終検証はUTM付きURL結合後に投稿APIでも実施する。別会社のCampaignは存在しないCampaignと区別せず`CAMPAIGN_NOT_FOUND`として扱う。主な失敗は`INVALID_PROPOSAL_SOURCE`、`CAMPAIGN_NOT_FOUND`、`INVALID_POST_PROPOSAL`。
+成功時は入力した投稿内容を正規化してTool Resultへ返し、UIが編集可能なフォームとして表示して親Turnを完了する。X向け文字数の最終検証はUTM付きURL結合後に投稿APIでも実施する。別会社のCampaignは存在しないCampaignと区別せず`CAMPAIGN_NOT_FOUND`、Archive済みCampaignは`CAMPAIGN_ARCHIVED`として扱う。主な失敗は`INVALID_PROPOSAL_SOURCE`、`CAMPAIGN_NOT_FOUND`、`CAMPAIGN_ARCHIVED`、`INVALID_POST_PROPOSAL`。
 
 ### `run_campaign_planner`
 **利用Agent:** 親エージェント
@@ -555,7 +559,7 @@ flowchart TD
 
 - Checkpoint要約にLLMを使用する場合も、親エージェントが選択するToolとはせず、Context管理処理として実行する
 - X API、GA4 API、Embedding APIなどのクライアントは内部コンポーネントとして実装し、認証情報をLLMへ渡さない。アプリケーションAPIの詳細は`API_DESIGN.md`を参照する
-- 定期処理は投稿IDを使って冪等に実行し、同じ評価指標や記憶の重複保存を防止する
+- 定期処理は投稿IDを使って冪等に実行し、同じ評価指標や記憶の重複保存を防止する。実行時刻、Claim、Lease、部分成功、再試行および評価記憶の生成は`CRON.md`を正本とする
 
 ## 過去施策の想起
 施策立案では、過去施策を検索するかどうかをLLMの任意判断にせず、`run_campaign_planner`の実行フローで類似する過去施策、評価指標、Long-term Memoryを必ず取得する。取得した過去施策を再利用、差別化または無視する判断は施策立案エージェントへ委ねる。
@@ -587,7 +591,7 @@ flowchart TD
 
 - IDによる施策取得は`get_campaign`、自然言語による類似施策検索は`search_campaigns`を使用する
 - 意味検索では実行主体が所属する会社の施策だけを対象とし、類似度上位の施策と関連する評価指標を返す
-- 検索用テキストは`target_profile`、`background`、`objective`、`plan`から構築し、表示用の`title`は含めない
+- 検索用テキストは`title`、`target_profile`、`background`、`objective`、`plan`から構築する
 - 候補案のEmbeddingは検索時だけ一時的に生成し、人間が承認するまでDBへ保存しない
 - 類似度だけで施策案を自動拒否せず、ユーザーの依頼、過去の実績、再実施の価値をLLMが考慮する
 - 施策upsert APIの新規作成ではEmbeddingを先に生成し、`campaigns`と`campaign_embeddings`を同じDBトランザクションで保存する
@@ -595,7 +599,7 @@ flowchart TD
 - Embedding生成に失敗した場合は施策upsert APIを失敗させ、施策だけが検索対象から欠落する状態を作らない
 
 ## アプリケーションAPI結果の観測
-施策upsert APIとX投稿APIは、認証と親Session所有権を検証できた後の成功結果またはエラーを、指定親SessionのAPI実行Turnへ構造化`api_result`として保存する。API ResultはAgent Tool Resultではないため、アプリケーション生成の`assistant_message`を使用する。
+施策upsert API（承認）とX投稿APIは、認証と親Session所有権を検証できた後の確定した成功結果またはエラーを、指定親SessionのAPI実行Turnへ構造化`api_result`として保存する。API ResultはAgent Tool Resultではないため、アプリケーション生成の`assistant_message`を使用する。`X_POST_SAVE_FAILED`は暫定Errorであり、同じキーの再送で結果が確定するまで保存しない。
 
 ```json
 {
@@ -637,7 +641,13 @@ flowchart TD
     UI_ONLY --> RECOVER[有効な親Sessionを選択または作成]
     RECOVER --> FORWARD[マスク済みエラーをuser_messageへ保存]
     FORWARD --> LOOP
-    TRUSTED -- はい --> SAVE[api_resultを親Sessionへ保存]
+    TRUSTED -- はい --> TEMPORARY{X_POST_SAVE_FAILEDか}
+    TEMPORARY -- はい --> RETRY[api_resultを保存せずTurnを未完了に保つ]
+    RETRY --> SAME_KEY[UIが同じキーでDB保存だけを再実行]
+    SAME_KEY --> RESOLVED{結果は確定したか}
+    RESOLVED -- いいえ --> RETRY
+    RESOLVED -- はい --> SAVE[確定api_resultを親Sessionへ保存]
+    TEMPORARY -- いいえ --> SAVE
     SAVE --> COMPLETE[API実行Turnを完了]
     COMPLETE --> UI[UIへエラーを表示]
     UI --> WAIT[次のユーザー入力を待つ]
@@ -791,6 +801,25 @@ flowchart TD
 - 中断時に完了していなかったLLM呼び出しは、`llm_calls`へ記録されない場合がある。OrcaRouter側の利用量との差になり得る（既知の制約）
 - API実行Turnは対象外である。施策のupsertは同じキーの再送で、X投稿は`external_result`の有無に従って、API設計書の冪等性の仕組みで復旧する
 - 同じSessionで前のTurnが実行中（`pending`または`running`で、復旧判定時間の前）のときに、新しいAgent Turnを開始する要求は、`409 TURN_IN_PROGRESS`で拒否する。判定は、Session行をロックした同じTransaction内で、中断Turnの復旧の後に行い、実行中のTurnがなければ新しいTurnを作成する。API実行Turnは実行中のTurnとして数えない
+
+### 進捗イベント（SSE）
+- メッセージ送信API（`API_DESIGN.md`の5.3）が`Accept: text/event-stream`で呼ばれた場合、ループはTool・サブエージェントの呼び出しの前後で、進捗イベント（`activity_started`、`activity_finished`）を呼び出し元へ通知する
+- 通知はループのフック（呼び出しの直前と直後）で行う。LLMのトークン単位のストリーミング（OrcaRouterのstreaming）には依存しない
+- イベントに含めるのは、`activity_id`、`kind`（`tool`または`subagent`）、Agent Tool名（マスク済み）、結果の`status`だけとする。引数、結果、Webの取得内容、隔離された内容は含めない
+- ファイアウォールによってブロックされたToolの呼び出しは、`status: blocked`の`activity_finished`とし、ブロックの理由は含めない
+- サブエージェントの中のTool呼び出しは、`parent_activity_id`で親の呼び出しに紐づける
+- 進捗イベントは、`agent_events`や`llm_calls`へ保存しない。通知の失敗（接続の切断など）は、Turnの実行結果に影響させない
+
+### セキュリティ通知
+セキュリティイベント（`security_events`）は監査記録専用だが、ユーザーが状況を把握し、Agentが説明できるように、種別と制御内容だけを通知として扱う。イベントの一覧画面は設けない。
+
+- **ユーザーへの通知:** Turnを返すAPI（`API_DESIGN.md`の5.1）が、そのTurnのイベントを`security_notices`（`event_type`、`enforcement`、`detected_at`）として返す。SSEでは`turn_finished`に含まれる。Turnが`blocked`や`failed`の場合も返す
+- **同じTurnの中のAgent:** ブロックされたTool Call（`TOOL_CALL_BLOCKED`）と、隔離されたItem（`context_override`）には、`event_type`と`enforcement`に相当する安全な固定ラベルだけを含める。これにより、Agentは最終回答で、何が起きたか（外部情報に不正な指示があった、操作がブロックされたなど）をユーザーへ説明できる
+- **次のTurn以降のAgent:** Context構築時に、同じSessionの直近5Turnで検出したイベントから、種別と制御内容だけの短い通知（`content_source = system`）を作り、Contextへ追加する。通知は保存せず、`security_events`から毎回導出する。ユーザーが「さっきの警告は何か」と尋ねたとき、Agentが答えられるようにするためである
+- **Agentへ渡さない情報:** `summary`、`metadata`、`external_event_id`、検出した機密値、注入された指示の内容は、Contextにも回答にも含めない
+- **Agentができること:** 通知の内容をユーザーへ説明し、安全な代替（別の依頼の言い換え、別の情報源の使用の提案など）を示す。通知を理由に、ブロックされたToolを言い換えて再実行したり、Firewallの判定を回避したりしない
+- **Input Guardrailが復旧不能でTurnを`blocked`にした場合:** LLMを呼び出さないため、`assistant_message`は保存されない。UIは通知と`TURN_BLOCKED`を表示し、次のTurnで、Agentがユーザーの質問に答える
+- サブエージェント（子Session）で検出したイベントは、親Turnと関連付ける情報がないため、ユーザーへの通知には含めない。親Agentは、子Agentの失敗を失敗Tool Resultとして観測し、回答で伝える
 
 ### Context Checkpoint
 - Context Checkpointは、長くなった親セッションの古い会話履歴を要約し、LLMへ送るContext量を抑えるために使用する
