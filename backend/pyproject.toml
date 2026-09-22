@@ -1,0 +1,76 @@
+[project]
+name = "hiromeru-backend"
+version = "0.1.0"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "alembic==1.20.0",
+    "argon2-cffi==25.1.0",
+    "fastapi==0.141.1",
+    "httpx==0.28.1",
+    "oauthlib==3.3.1",
+    "pgvector==0.5.0",
+    "psycopg[binary]==3.3.5",
+    "pydantic-settings==2.15.0",
+    "sqlalchemy==2.0.54",
+    "structlog==26.1.0",
+    "uvicorn[standard]==0.53.0",
+]
+
+[dependency-groups]
+dev = [
+    "pyright==1.1.414",
+    "pytest==9.0.2",
+    "pytest-asyncio==1.4.0",
+    "pytest-cov==7.1.0",
+    "ruff==0.16.8",
+]
+
+[tool.uv]
+package = false
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+extend-exclude = [".ruff_cache"]
+
+[tool.ruff.lint]
+select = [
+    "E", "W", "F", "I", "UP", "B", "S", "N", "D", "ANN", "PL", "BLE", "RUF", "SIM", "C4", "T20",
+]
+ignore = [
+    "D203", "D213",  # google convention と衝突するルール
+    "D415", "D400",  # 日本語の句点「。」を文末記号として認識できないため
+    "RUF001", "RUF002", "RUF003",  # 日本語の全角文字を含むコメント・docstringを許可する
+    "PLR0911", "PLR0913", "PLR0917",  # 早期リターン・キーワード引数を使うため、数を制限しない
+    "PLR2004",  # HTTP Statusなど、意味の明らかな数値を許可する
+    "S105",  # マスク用のラベルを、パスワードの直書きと誤検知する
+]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.ruff.lint.isort]
+known-third-party = ["alembic"]
+
+[tool.ruff.lint.per-file-ignores]
+"**/__init__.py" = ["D104"]
+# 自動生成のマイグレーションはdocstringと型注釈を要求しない。
+"migrations/**" = ["D", "ANN", "E501", "N999", "PLR0915"]
+# テストは日本語の関数名（14章）を使い、assert・固定値を許可する。
+"tests/**" = [
+    "D", "ANN", "S101", "S105", "S106", "S107", "N802", "N999", "PLC2401", "PLR2004", "PLR0913", "B008",
+]
+"scripts/**" = ["T201"]
+
+# backend/ をワークスペースのルートとして開いた場合に、Pylance・pyright が api/ などのパッケージを解決するための設定。
+# リポジトリのルートを開いた場合は、ルートの pyrightconfig.json が使われる。
+[tool.pyright]
+pythonVersion = "3.12"
+extraPaths = [".", "scripts"]
+include = ["agent_runtime", "api", "clients", "core", "domain", "models", "repositories", "services", "scripts", "tests", "migrations", "main.py"]
+exclude = ["**/__pycache__", "migrations/versions"]

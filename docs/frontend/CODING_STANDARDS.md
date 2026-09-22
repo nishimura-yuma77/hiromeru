@@ -62,19 +62,14 @@ frontend/
 │       ├── components/
 │       │   └── CampaignView/
 │       │       ├── CampaignView.tsx
-│       │       ├── CampaignView.module.scss
-│       │       └── CampaignView.test.tsx
+│       │       └── CampaignView.module.scss
 │       ├── containers/
-│       │   ├── CampaignEditor.tsx
-│       │   └── CampaignEditor.test.tsx
+│       │   └── CampaignEditor.tsx
 │       ├── controllers/
 │       │   ├── useCampaignFormController.ts
-│       │   ├── useCampaignFormController.test.ts
-│       │   ├── useCampaignApprovalController.ts
-│       │   └── useCampaignApprovalController.test.ts
+│       │   └── useCampaignApprovalController.ts
 │       ├── state/
 │       │   ├── campaignFormReducer.ts
-│       │   ├── campaignFormReducer.test.ts
 │       │   ├── campaignEvents.ts
 │       │   └── campaignSelectors.ts
 │       ├── api/
@@ -92,8 +87,7 @@ frontend/
 │   ├── components/
 │   │   └── Button/
 │   │       ├── Button.tsx
-│   │       ├── Button.module.scss
-│   │       └── Button.test.tsx
+│   │       └── Button.module.scss
 │   ├── api/
 │   │   ├── browserApiClient.ts
 │   │   ├── serverApiClient.ts
@@ -191,14 +185,12 @@ app ──────> features ──────> shared
 ```text
 CampaignForm/
 ├── CampaignForm.tsx
-├── CampaignForm.module.scss
-└── CampaignForm.test.tsx
+└── CampaignForm.module.scss
 ```
 
 - **必須:** 見た目を持つComponentごとに同名の`*.module.scss`を1つ作成する
 - **必須:** Component固有のStyleを別ComponentのSCSSへ記述しない
 - **必須:** Provider、controller hook、Server関数、型定義など、見た目を持たない処理にはSCSSを作成しない
-- **推奨:** Testを対象Componentと同じディレクトリへ配置する
 
 ### 6.2 純粋UI
 
@@ -866,35 +858,33 @@ Idempotency-Keyの生成、保持、再利用、破棄はcontrollerとReducer Ev
 
 ## 22. Test規約
 
-### 22.1 配置
+v0.1では実装時間を優先し、画面上の各ユーザー操作について、正常に完了する経路を1件通すE2E Testだけを必須とする。
 
-- Component testはComponentと同じディレクトリへ置く
-- Controller testは`controllers/`へ置く
-- Reducer testは`state/`へ置く
-- 純粋関数のTestは対象ファイルと同じディレクトリへ置く
+### 22.1 必須範囲
 
-### 22.2 必須のTest対象
+- **必須:** `SCREEN_DESIGN.md`で定義した各ユーザー操作が、少なくとも1つの正常系E2E Testに含まれること
+- **必須:** Browserから操作し、画面遷移、表示結果、対象APIとの接続を確認すること
+- **必須:** 1つのE2E Scenarioで複数のユーザー操作を続けて確認してよい
+- **必須:** 各ユーザー操作と、それを確認するE2E Scenarioの対応を追跡できること
+- **必須:** Test間でFixture、Mock、Browser stateを共有せず、実行順に依存しないこと
+- **必須:** X、GA4、LLM、Embeddingなどの外部Serviceを実際に呼ばず、固定Fakeを使用すること
+- **必須:** 時刻、乱数、IDおよび外部応答を固定し、同じ結果を再現できること
+- **必須:** 実装詳細ではなく、ユーザー操作と画面上の観測可能な結果を検証すること
 
-- Reducerの全Eventと不正な状態遷移
-- Selectorの境界値
-- ControllerのAPI更新成功、失敗、Loading
-- Client再取得の中断、失敗、再試行
-- Server Componentの読取成功、Empty、失敗
-- Idempotency-Keyの生成と再利用
-- 二重送信の防止
-- 手書き修正、Agent再相談、最終承認の分離
-- UIのLoading、Empty、Error、Success表示
-- Keyboard操作とAccessible Name
-- Hover、Focus、Active、Disabledの操作Feedback
-- Reduced Motionでも操作できること
-- Animationを採用した場合も二重送信防止が有効であること
+「各ユーザー操作」は、Button Clickのような個々のDOM Eventではなく、ログイン、会話開始、メッセージ送信、施策承認、X投稿公開、検索、編集、削除、ログアウトなど、利用者が目的を持って行う操作を指す。
 
-- **必須:** 実装詳細ではなく、入力Eventと観測可能な結果を検証する
-- **必須:** Test間でMock、Global stateを共有しない
-- **推奨:** ReducerとSelectorを中心に高速なUnit testを作成する
-- **推奨:** UI ComponentはPropsとEvent通知を中心に検証する
+### 22.2 必須としないTest
 
-Test runnerとComponent test libraryは導入時に別途決定する。それまではTest fileの命名を`*.test.ts`または`*.test.tsx`へ統一する。
+次のTestはv0.1では必須としない。必要性が生じた場合に追加してよいが、網羅を求めない。
+
+- Component、Controller、Reducer、Selector、純粋関数のUnit Test
+- 異常系、境界値、入力不正、通信失敗のTest
+- Loading、Empty、Errorなど画面状態ごとのTest
+- Keyboard、Focus、Accessible Name、Reduced Motionなどの自動Test
+- Browser、Viewport、OSの組み合わせを網羅するTest
+- Code Coverageの目標設定
+
+E2E TestのRunner、配置、File命名、実行Commandは、E2E環境の導入時に決定する。Component test libraryはv0.1では導入対象としない。
 
 ## 23. 禁止事項
 
@@ -923,7 +913,7 @@ npm run lint
 npm run build
 ```
 
-Test環境導入後は、Frontend testも必須確認へ追加する。
+E2E環境導入後は、22章で定める正常系E2E Testを必須確認へ追加する。
 
 Reviewでは最低限、次を確認する。
 
@@ -951,7 +941,7 @@ Reviewでは最低限、次を確認する。
 - SCSSとSCSS Modules
 - Design token
 - Reducerとcontrollerによる状態管理
-- Frontend test環境
+- Frontend E2E環境
 
 今後のFeature実装開始時に次を実施する。
 
@@ -960,6 +950,6 @@ Reviewでは最低限、次を確認する。
 3. Design tokenを`shared/styles/_tokens.scss`へ定義する
 4. 現行画面をServer Component、責務別controller、純粋UIへ分割する
 5. Server用とBrowser用の型付けされたAPI clientを定義する
-6. Test runnerとComponent test libraryを決定する
+6. E2E Test runner、配置、File命名、実行Commandを決定する
 
 移行が完了するまでは既存コードとの差分を認識し、新規Featureを旧構成へ追加しない。

@@ -1,0 +1,48 @@
+"""業務ルールと設計書に由来する定数。"""
+
+# DB.dbml: 埋め込みは openai/text-embedding-3-small（1536次元）。
+EMBEDDING_DIMENSIONS = 1536
+
+# 施策の入力上限。title は campaigns.title（varchar(255)）に合わせる。
+MAX_CAMPAIGN_TITLE_LENGTH = 255
+MAX_CAMPAIGN_TEXT_LENGTH = 10_000
+
+# API_DESIGN 3.1: Xの現行文字数規則。URLは長さに関わらず23とし、上限は280。
+X_MAX_WEIGHTED_LENGTH = 280
+X_URL_WEIGHT = 23
+MAX_LANDING_URL_LENGTH = 2048
+
+# API_DESIGN 6.1: 一覧のページング。
+DEFAULT_PAGE_LIMIT = 20
+MAX_PAGE_LIMIT = 50
+MAX_SEARCH_QUERY_LENGTH = 1000
+
+# API_DESIGN 6.3: 施策詳細に含める投稿・記憶の件数上限。
+CAMPAIGN_DETAIL_POSTS_LIMIT = 20
+CAMPAIGN_DETAIL_MEMORIES_LIMIT = 20
+
+# API_DESIGN 5.1: security_notices の最大件数。
+SECURITY_NOTICES_LIMIT = 20
+
+# API_DESIGN 5.3: セッションタイトルは、マスク済みメッセージの先頭50文字。
+SESSION_TITLE_LENGTH = 50
+
+# API_DESIGN 3.1: 初週計測は公開から7日後。
+METRICS_DELAY_DAYS = 7
+
+# API_DESIGN 3.1: X投稿成功後のDB保存の再試行上限と待ち時間の基準（秒）。
+DB_SAVE_MAX_ATTEMPTS = 3
+DB_SAVE_BACKOFF_BASE_SECONDS = 0.2
+
+# API_DESIGN 2.3: 処理中の同一キー再送に返す Retry-After（秒）。
+IN_PROGRESS_RETRY_AFTER_SECONDS = 5
+
+# API_DESIGN 5.3: SSEのkeep-alive間隔（秒）。
+SSE_KEEP_ALIVE_SECONDS = 15
+
+# 認証Cookie（API_DESIGN 2.8）。
+SESSION_COOKIE_NAME = "hiromeru_session"
+CSRF_COOKIE_NAME = "csrf_token"
+CSRF_HEADER_NAME = "X-CSRF-Token"
+SESSION_IDLE_SECONDS = 8 * 60 * 60
+SESSION_ABSOLUTE_SECONDS = 7 * 24 * 60 * 60

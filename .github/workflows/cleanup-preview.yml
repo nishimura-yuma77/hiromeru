@@ -1,0 +1,80 @@
+name: Cleanup Preview Deployment
+
+on:
+  pull_request:
+    types:
+      - closed
+
+permissions:
+  contents: read
+
+jobs:
+  cleanup:
+    name: Delete Vercel previews
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      HEAD_REF: ${{ github.event.pull_request.head.ref }}
+      REPOSITORY: ${{ github.repository }}
+      VERCEL_PROJECT_ID: ${{ vars.VERCEL_PROJECT_ID }}
+      VERCEL_TEAM_ID: ${{ vars.VERCEL_TEAM_ID }}
+      VERCEL_TOKEN: ${{ secrets.VERCEL_PREVIEW_CLEANUP_TOKEN }}
+    steps:
+      - name: Delete deployments for closed PR
+        run: |
+          if [ -z "$VERCEL_TOKEN" ]; then
+            echo "::error::VERCEL_PREVIEW_CLEANUP_TOKEN is not configured"
+            exit 1
+          fi
+
+          node --input-type=module <<'NODE'
+          const { HEAD_REF, REPOSITORY, VERCEL_PROJECT_ID, VERCEL_TEAM_ID, VERCEL_TOKEN } =
+            process.env;
+          const [owner, repository] = REPOSITORY.split("/");
+          const deployments = [];
+          let until;
+
+          do {
+            const url = new URL("https://api.vercel.com/v6/deployments");
+            url.searchParams.set("projectId", VERCEL_PROJECT_ID);
+            url.searchParams.set("teamId", VERCEL_TEAM_ID);
+            url.searchParams.set("limit", "100");
+            if (until) url.searchParams.set("until", until);
+
+            const response = await fetch(url, {
+              headers: { Authorization: `Bearer ${VERCEL_TOKEN}` },
+            });
+            if (!response.ok) {
+              throw new Error(`Failed to list Vercel deployments: ${response.status}`);
+            }
+            const page = await response.json();
+            deployments.push(...page.deployments);
+            until = page.pagination?.next;
+          } while (until);
+
+          const targets = deployments.filter(
+            (deployment) =>
+              deployment.target !== "production" &&
+              deployment.meta?.githubCommitOrg === owner &&
+              deployment.meta?.githubCommitRepo === repository &&
+              deployment.meta?.githubCommitRef === HEAD_REF,
+          );
+
+          for (const deployment of targets) {
+            const url = new URL(`https://api.vercel.com/v13/deployments/${deployment.uid}`);
+            url.searchParams.set("teamId", VERCEL_TEAM_ID);
+            const response = await fetch(url, {
+              method: "DELETE",
+              headers: { Authorization: `Bearer ${VERCEL_TOKEN}` },
+            });
+            if (!response.ok && response.status !== 404) {
+              throw new Error(
+                `Failed to delete Vercel deployment ${deployment.uid}: ${response.status}`,
+              );
+            }
+            console.log(`Deleted ${deployment.uid}`);
+          }
+
+          console.log(`Deleted ${targets.length} deployment(s) for ${HEAD_REF}`);
+          NODE
