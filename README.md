@@ -88,7 +88,8 @@ docker compose run --rm migrate
 | `backend/tests/integration/` | 結合テスト |
 | `backend/migrations/` | DB migration |
 | `backend/main.py` | Vercel Functions用のエントリポイント（`backend/`をimportパスへ追加して`api.main`の`app`を公開する） |
-| `backend/pyproject.toml` | pytestの設定 |
+| `backend/pyproject.toml` | Backendの依存関係とTool設定 |
+| `backend/uv.lock` | Backend依存関係のLockfile |
 | `docker/frontend/Dockerfile` | Frontend開発イメージ |
 | `docker/backend/Dockerfile` | Backendとmigrationの共通イメージ |
 | `compose.yaml` | ローカル開発環境 |

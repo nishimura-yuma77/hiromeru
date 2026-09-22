@@ -1,5 +1,32 @@
-# Vercelが依存関係を requirements.txt から読み込めるように、[project] テーブルは置かない。
-# uv への移行時（規約2章）に、[project] と依存関係をここへ集約する。
+[project]
+name = "hiromeru-backend"
+version = "0.1.0"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "alembic==1.20.0",
+    "argon2-cffi==25.1.0",
+    "fastapi==0.141.1",
+    "httpx==0.28.1",
+    "pgvector==0.5.0",
+    "psycopg[binary]==3.3.5",
+    "pydantic-settings==2.15.0",
+    "sqlalchemy==2.0.54",
+    "structlog==26.1.0",
+    "uvicorn[standard]==0.53.0",
+]
+
+[dependency-groups]
+dev = [
+    "pyright==1.1.414",
+    "pytest==9.0.2",
+    "pytest-asyncio==1.4.0",
+    "pytest-cov==7.1.0",
+    "ruff==0.16.8",
+]
+
+[tool.uv]
+package = false
+
 [tool.pytest.ini_options]
 pythonpath = ["."]
 testpaths = ["tests"]
