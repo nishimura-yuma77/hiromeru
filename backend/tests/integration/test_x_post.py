@@ -6,6 +6,7 @@ import pytest
 from sqlalchemy import func, select
 from sqlalchemy.exc import OperationalError
 
+from domain.tracking import build_tracking_url
 from models import Post, PostMetric, PostTrackingLink
 from repositories.database import SessionLocal
 from repositories.posts import PostRepository
@@ -21,6 +22,13 @@ async def _post_count(campaign_id: int) -> int:
             select(func.count()).select_from(Post).where(Post.campaign_id == campaign_id)
         )
     return int(count or 0)
+
+
+def _landing_url_for_tracked_length(target: int, campaign_id: int, key: str) -> str:
+    prefix = "https://example.com/?q="
+    base_length = len(build_tracking_url(prefix, campaign_id, key).tracked_url)
+    assert target >= base_length
+    return prefix + "a" * (target - base_length)
 
 
 async def test_公開成功_正しい内容のとき201で投稿とUTM付きURLを返す(
@@ -97,23 +105,84 @@ async def test_文字数超過_URL込みで280を超えるとき422でXを呼ば
     assert x_api.calls == []
 
 
-async def test_遷移先URL上限_UTM追加後に2048文字を超えるときlanding_urlのErrorを返す(
-    account: Account,
+async def test_遷移先URL上限_UTM追加後が2048文字ちょうどなら投稿できる(
+    account: Account, x_api: FakeXApi
 ) -> None:
     session_id = await account.create_session()
     campaign_id = await account.create_campaign(session_id)
-    landing_url = "https://example.com/?q=" + "a" * 1_950
+    key = str(uuid.uuid4())
+    landing_url = _landing_url_for_tracked_length(2_048, campaign_id, key)
+
+    response = await account.publish_post(
+        session_id, post_body(campaign_id, landing_url=landing_url), key
+    )
+
+    assert response.status_code == 201
+    assert len(response.json()["data"]["tracked_url"]) == 2_048
+    assert len(x_api.calls) == 1
+
+
+async def test_遷移先URL上限_UTM追加後が2049文字ならlanding_urlのErrorを返す(
+    account: Account, x_api: FakeXApi
+) -> None:
+    session_id = await account.create_session()
+    campaign_id = await account.create_campaign(session_id)
+    key = str(uuid.uuid4())
+    landing_url = _landing_url_for_tracked_length(2_049, campaign_id, key)
+
+    response = await account.publish_post(
+        session_id, post_body(campaign_id, landing_url=landing_url), key
+    )
+
+    assert response.status_code == 422
+    assert response.json()["error"]["field_errors"] == [
+        {
+            "field": "landing_url",
+            "code": "TOO_LONG",
+            "message": "UTM追加後の遷移先URLは2,048文字以内にしてください。",
+        }
+    ]
+    assert x_api.calls == []
+
+
+async def test_遷移先URL上限_入力が2049文字ならSchemaErrorでXを呼ばない(
+    account: Account, x_api: FakeXApi
+) -> None:
+    session_id = await account.create_session()
+    campaign_id = await account.create_campaign(session_id)
+    prefix = "https://example.com/"
+    landing_url = prefix + "a" * (2_049 - len(prefix))
 
     response = await account.publish_post(
         session_id, post_body(campaign_id, landing_url=landing_url)
     )
 
-    assert response.status_code == 422
-    assert response.json()["error"]["field_errors"][0] == {
-        "field": "landing_url",
-        "code": "TOO_LONG",
-        "message": "UTM追加後の遷移先URLは2,048文字以内にしてください。",
-    }
+    assert response.status_code == 400
+    assert response.json()["error"]["field_errors"] == [
+        {
+            "field": "landing_url",
+            "code": "TOO_LONG",
+            "message": "遷移先URLは2,048文字以内で入力してください。",
+        }
+    ]
+    assert x_api.calls == []
+
+
+async def test_遷移先URL上限_入力が2048文字ちょうどなら受け付ける(
+    account: Account, x_api: FakeXApi
+) -> None:
+    session_id = await account.create_session()
+    campaign_id = await account.create_campaign(session_id)
+    prefix = "https://example.com/?utm_source="
+    landing_url = prefix + "a" * (2_048 - len(prefix))
+
+    response = await account.publish_post(
+        session_id, post_body(campaign_id, landing_url=landing_url)
+    )
+
+    assert len(landing_url) == 2_048
+    assert response.status_code == 201
+    assert len(x_api.calls) == 1
 
 
 async def test_Body検証_投稿本文が空のときbodyのFieldErrorを返す(account: Account) -> None:
@@ -128,6 +197,21 @@ async def test_Body検証_投稿本文が空のときbodyのFieldErrorを返す(
     ]
 
 
+async def test_Body検証_NULを含む未知FieldもDB保存で500にせず400へ変換する(
+    account: Account,
+) -> None:
+    session_id = await account.create_session()
+    campaign_id = await account.create_campaign(session_id)
+    body = post_body(campaign_id)
+    body["unknown\x00field"] = "value"
+
+    response = await account.publish_post(session_id, body)
+
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "INVALID_ARGUMENT"
+    assert response.json()["error"]["field_errors"][0]["field"] == "unknown[NUL]field"
+
+
 async def test_遷移先URL不正_httpでもhttpsでもないとき422(account: Account) -> None:
     session_id = await account.create_session()
     campaign_id = await account.create_campaign(session_id)
@@ -140,6 +224,46 @@ async def test_遷移先URL不正_httpでもhttpsでもないとき422(account: 
     error = response.json()["error"]
     assert error["code"] == "INVALID_X_POST"
     assert error["field_errors"][0]["code"] == "INVALID_URL"
+
+
+@pytest.mark.parametrize(
+    "landing_url",
+    [
+        "https://user@example.com/path",
+        "https://user:password@example.com/path",
+        "https://[::1/path",
+        "https:///path",
+        "https://example.com\\evil/path",
+        "https://example.com%2Fevil/path",
+        "https://example.com\x00/path",
+        "https://./",
+    ],
+)
+async def test_遷移先URL不正_UserInfoや不正Hostを422へ変換し外部Clientを呼ばない(
+    account: Account,
+    embedding: FakeEmbedding,
+    x_api: FakeXApi,
+    landing_url: str,
+) -> None:
+    session_id = await account.create_session()
+    campaign_id = await account.create_campaign(session_id)
+    embedding.calls.clear()
+
+    response = await account.publish_post(
+        session_id, post_body(campaign_id, landing_url=landing_url)
+    )
+
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "INVALID_X_POST"
+    assert response.json()["error"]["field_errors"] == [
+        {
+            "field": "landing_url",
+            "code": "INVALID_URL",
+            "message": "遷移先URLが正しくありません。",
+        }
+    ]
+    assert embedding.calls == []
+    assert x_api.calls == []
 
 
 async def test_投稿内容検証_本文とURLが不正なとき複数field_errorsを保存して再返却する(

@@ -30,7 +30,9 @@ _PHONE_COMPACT = re.compile(r"(?<!\d)0\d{9,10}(?!\d)")
 
 def mask_text(text: str) -> str:
     """文字列内の機密情報をマスクする。"""
-    masked = _KEY_VALUE.sub(lambda m: f"{m.group(1)}{m.group(2)}{MASK_SECRET}", text)
+    # PostgreSQLのtext/jsonbへ保存できないNULを、監査履歴では安全な表記へ置き換える。
+    masked = text.replace("\x00", "[NUL]")
+    masked = _KEY_VALUE.sub(lambda m: f"{m.group(1)}{m.group(2)}{MASK_SECRET}", masked)
     masked = _BEARER.sub(lambda m: f"{m.group(1)} {MASK_SECRET}", masked)
     masked = _API_KEY.sub(MASK_SECRET, masked)
     masked = _EMAIL.sub(MASK_EMAIL, masked)
@@ -46,5 +48,8 @@ def mask_json(value: Any) -> Any:  # noqa: ANN401 - 任意のJSON値を再帰的
     if isinstance(value, list):
         return [mask_json(item) for item in value]
     if isinstance(value, dict):
-        return {key: mask_json(item) for key, item in value.items()}
+        return {
+            mask_text(key) if isinstance(key, str) else key: mask_json(item)
+            for key, item in value.items()
+        }
     return value
