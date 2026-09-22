@@ -11,11 +11,14 @@ from sqlalchemy.orm import aliased
 
 from agent_runtime.executor import ToolExecutor
 from agent_runtime.runner import (
+    ActivityKind,
+    ActivityStatus,
     AgentRunError,
     CampaignPlannerOutput,
     CampaignProposal,
     ChildRunInput,
     ContentCreatorOutput,
+    ProgressReporter,
     XPostProposal,
 )
 from agent_runtime.tools import (
@@ -268,13 +271,17 @@ class _RunChildHandler(_ParentHandler):
         if self._remaining(context) <= 0:
             await self._fail_child(record.turn_id)
             _raise("SUBAGENT_FAILED")
+        reporter = _NestedReporter(
+            cast(ProgressReporter, context.progress_reporter or _NullReporter()),
+            context.parent_activity_id,
+        )
         child_executor = ToolExecutor(
             self._ctx,
             marketer_id=context.marketer_id,
             company_id=context.company_id,
             session_id=record.session_id,
             turn_id=record.turn_id,
-            reporter=_NullReporter(),
+            reporter=reporter,
             agent_context=child_context,
             budget_started_at=context.turn_started_at,
             budget=context.budget,
@@ -295,7 +302,7 @@ class _RunChildHandler(_ParentHandler):
                     parent_started_at=context.turn_started_at,
                     budget=context.budget,
                 ),
-                _NullReporter(),
+                reporter,
             )
             raw = child_result.output
         except AgentRunError as error:
@@ -518,6 +525,24 @@ class _NullReporter:
         del activity_id, status
 
 
+class _NestedReporter:
+    """子Agent内のActivityを、親のsubagent Activityへ関連付ける。"""
+
+    def __init__(self, reporter: ProgressReporter, parent_activity_id: str | None) -> None:
+        self._reporter = reporter
+        self._parent_activity_id = parent_activity_id
+
+    def activity_started(
+        self, kind: ActivityKind, name: str, parent_activity_id: str | None = None
+    ) -> str:
+        return self._reporter.activity_started(
+            kind, name, parent_activity_id or self._parent_activity_id
+        )
+
+    def activity_finished(self, activity_id: str, status: ActivityStatus) -> None:
+        self._reporter.activity_finished(activity_id, status)
+
+
 def register_proposal_tools(ctx: ServiceContext) -> None:
     """4つの子Agent・提案Toolを既存Registryへ追加する。"""
     definitions = (
@@ -600,5 +625,6 @@ def register_proposal_tools(ctx: ServiceContext) -> None:
                     else "INVALID_ARGUMENT"
                 ),
                 uses_remaining_turn_time=name in _RUN_NAMES,
+                activity_kind="subagent" if name in _RUN_NAMES else "tool",
             )
         )

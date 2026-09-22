@@ -220,3 +220,8 @@ class TurnService:
         if view is None:  # 作成済みのTurnが消えることはないため、到達しない。
             raise AppError("INTERNAL_ERROR")
         return view
+
+    async def fail_running(self, prepared: PreparedTurn, error_code: str) -> TurnView:
+        """SSE外側の失敗で残ったrunning Turnを即時終端化し、現在のProjectionを返す。"""
+        code = error_code if error_code in ERROR_SPECS else "AGENT_EXECUTION_FAILED"
+        return await self._finish(prepared, None, code, None, False)

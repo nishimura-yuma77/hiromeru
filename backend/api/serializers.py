@@ -68,8 +68,8 @@ def serialize_session_list(view: SessionListView) -> dict[str, Any]:
     }
 
 
-def serialize_turn(view: TurnView) -> dict[str, Any]:
-    """5.1のTurnの形式。"""
+def serialize_turn_projection(view: TurnView) -> dict[str, Any]:
+    """5.1のTurnの形式。SSEの障害時にも同じProjectionを利用する。"""
     return {
         "agent_turn_id": view.agent_turn_id,
         "turn_number": view.turn_number,
@@ -112,6 +112,11 @@ def serialize_turn(view: TurnView) -> dict[str, Any]:
             for item in view.items
         ],
     }
+
+
+def serialize_turn(view: TurnView) -> dict[str, Any]:
+    """5.1のTurnの形式。"""
+    return serialize_turn_projection(view)
 
 
 def serialize_history(view: HistoryView) -> dict[str, Any]:

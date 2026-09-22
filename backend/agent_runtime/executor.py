@@ -11,6 +11,7 @@ from agent_runtime.budget import TurnBudget
 from agent_runtime.firewall import FirewallDecision, FirewallRequest
 from agent_runtime.guardrail import GuardrailDecision, GuardrailRequest
 from agent_runtime.runner import (
+    ActivityKind,
     ActivityStatus,
     AgentContext,
     AgentContextEntry,
@@ -160,7 +161,17 @@ class ToolExecutor:
             terminal = await self._terminal(prepared)
             return terminal or _failure("TOOL_EXECUTION_IN_PROGRESS")
 
-        activity_id = self._activity_started(mask_text(call.name), parent_activity_id)
+        activity_id = self._activity_started(
+            definition.activity_kind if definition is not None else "tool",
+            mask_text(call.name),
+            parent_activity_id,
+        )
+        context = context.model_copy(
+            update={
+                "progress_reporter": self._reporter,
+                "parent_activity_id": activity_id or parent_activity_id,
+            }
+        )
         result: ToolResult
         status: ToolExecutionStatus
         event_type: SecurityEventType | None = None
@@ -540,9 +551,11 @@ class ToolExecutor:
             )
             return item
 
-    def _activity_started(self, name: str, parent_activity_id: str | None) -> str:
+    def _activity_started(
+        self, kind: ActivityKind, name: str, parent_activity_id: str | None
+    ) -> str:
         try:
-            return self._reporter.activity_started("tool", name, parent_activity_id)
+            return self._reporter.activity_started(kind, name, parent_activity_id)
         except Exception:  # noqa: BLE001 - 進捗通知は実行結果へ影響させない
             return ""
 

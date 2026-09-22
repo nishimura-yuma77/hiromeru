@@ -6,9 +6,14 @@ from sqlalchemy import func, select
 
 from agent_runtime.executor import ToolExecutor
 from agent_runtime.runner import (
+    ActivityKind,
+    ActivityStatus,
     CampaignPlannerOutput,
     CampaignProposal,
+    ChildRunInput,
+    ChildRunResult,
     ContentCreatorOutput,
+    ProgressReporter,
     XPostProposal,
 )
 from agent_runtime.tools import ToolCall
@@ -42,7 +47,11 @@ async def _turn(ctx: ServiceContext, account: Account, session_id: int) -> tuple
 
 
 async def _executor(
-    ctx: ServiceContext, account: Account, session_id: int, turn_id: int
+    ctx: ServiceContext,
+    account: Account,
+    session_id: int,
+    turn_id: int,
+    reporter: ProgressReporter | None = None,
 ) -> ToolExecutor:
     context = await AgentContextBuilder(ctx).build(session_id, turn_id)
     return ToolExecutor(
@@ -51,9 +60,34 @@ async def _executor(
         company_id=account.company_id,
         session_id=session_id,
         turn_id=turn_id,
-        reporter=NullReporter(),
+        reporter=reporter or NullReporter(),
         agent_context=context,
     )
+
+
+class _RecordingReporter:
+    def __init__(self) -> None:
+        self.events: list[tuple[str, dict[str, str | None]]] = []
+
+    def activity_started(
+        self, kind: ActivityKind, name: str, parent_activity_id: str | None = None
+    ) -> str:
+        activity_id = f"a{len([event for event in self.events if event[0] == 'started']) + 1}"
+        self.events.append(
+            (
+                "started",
+                {
+                    "activity_id": activity_id,
+                    "kind": kind,
+                    "name": name,
+                    "parent_activity_id": parent_activity_id,
+                },
+            )
+        )
+        return activity_id
+
+    def activity_finished(self, activity_id: str, status: ActivityStatus) -> None:
+        self.events.append(("finished", {"activity_id": activity_id, "status": status}))
 
 
 def _campaign_proposal(campaign_id: int | None = None) -> CampaignProposal:
@@ -65,6 +99,52 @@ def _campaign_proposal(campaign_id: int | None = None) -> CampaignProposal:
         objective="応募数を増やす",
         plan="柔軟な働き方をXで訴求する",
     )
+
+
+async def test_子Agent内ActivityはsubagentのActivityへ関連付ける(
+    account: Account,
+    ctx: ServiceContext,
+    agent: FakeAgentRunner,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    session_id = await account.create_session()
+    turn_id, request_id = await _turn(ctx, account, session_id)
+    reporter = _RecordingReporter()
+    executor = await _executor(ctx, account, session_id, turn_id, reporter)
+    original = agent.run_child
+
+    async def run_child(
+        run_input: ChildRunInput, child_reporter: ProgressReporter
+    ) -> ChildRunResult:
+        activity_id = child_reporter.activity_started("tool", "search_campaigns")
+        child_reporter.activity_finished(activity_id, "succeeded")
+        return await original(run_input, child_reporter)
+
+    monkeypatch.setattr(agent, "run_child", run_child)
+    result = await executor.invoke(
+        ToolCall(
+            name="run_campaign_planner",
+            stable_key="planner-activity",
+            arguments={"request_item_id": request_id},
+        )
+    )
+
+    assert result.success is True
+    started = [payload for event, payload in reporter.events if event == "started"]
+    assert started == [
+        {
+            "activity_id": "a1",
+            "kind": "subagent",
+            "name": "run_campaign_planner",
+            "parent_activity_id": None,
+        },
+        {
+            "activity_id": "a2",
+            "kind": "tool",
+            "name": "search_campaigns",
+            "parent_activity_id": "a1",
+        },
+    ]
 
 
 async def test_Planner提案は子の最終結果だけを保存しUIへ投影する(

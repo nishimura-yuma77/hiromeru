@@ -4,7 +4,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import StrEnum
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Any, Literal, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, model_validator
 
@@ -14,7 +14,16 @@ if TYPE_CHECKING:
     from agent_runtime.runner import AgentContext
 
 _TRUSTED_FIELD_NAMES = frozenset(
-    {"company_id", "marketer_id", "session_id", "turn_id", "agent_type", "parent_session_id"}
+    {
+        "agent_type",
+        "company_id",
+        "marketer_id",
+        "parent_activity_id",
+        "parent_session_id",
+        "progress_reporter",
+        "session_id",
+        "turn_id",
+    }
 )
 
 
@@ -126,6 +135,8 @@ class TrustedToolContext(StrictToolModel):
     turn_started_at: datetime
     provenance: tuple[ToolProvenanceRef, ...] = ()
     budget: Any = Field(default=None, exclude=True)
+    progress_reporter: Any = Field(default=None, exclude=True)
+    parent_activity_id: str | None = Field(default=None, exclude=True)
 
 
 class ToolHandler(Protocol):
@@ -163,6 +174,7 @@ class ToolDefinition:
     terminal: bool = False
     input_error_code: str = "INVALID_ARGUMENT"
     uses_remaining_turn_time: bool = False
+    activity_kind: Literal["tool", "subagent"] = "tool"
 
 
 class ToolRegistryError(ValueError):
