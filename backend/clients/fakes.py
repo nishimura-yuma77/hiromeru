@@ -30,3 +30,8 @@ class FakeXApiClient:
         """本文を外部へ送らず固定Prefixの投稿IDを返す。"""
         del text
         return XPostResult(x_post_id=f"fake-x-{uuid.uuid4().hex}")
+
+    async def get_impression_count(self, x_post_id: str) -> int:
+        """外部通信せずMetrics取得済みを表す0を返す。"""
+        del x_post_id
+        return 0

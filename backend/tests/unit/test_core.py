@@ -50,6 +50,10 @@ def _real_settings(**overrides: object) -> Settings:
         ("カード 4111 1111 1111 1111 です", "カード [CARD] です"),
         ("api_key=abcdef1234567890", "api_key=[SECRET]"),
         ("Authorization: Bearer abcdefghijklmnop1234", "Authorization: Bearer [SECRET]"),
+        (
+            'Authorization: OAuth oauth_consumer_key="key", oauth_token="token"',
+            "Authorization: OAuth [SECRET]",
+        ),
         ("キー sk-abcdefghijklmnopqrstuvwx です", "キー [SECRET] です"),
     ],
 )
@@ -123,9 +127,8 @@ def test_エラー定義_全コードにメッセージがありApp_Errorは未�
         AppError("UNKNOWN")
 
 
-def test_エラー_X_POST_FAILEDは429のときだけ再試行可能を指定できる() -> None:
-    assert AppError("X_POST_FAILED").retryable is False
-    assert AppError("X_POST_FAILED", retryable=True).retryable is True
+def test_エラー_X_POST_FAILEDは新しい承認とkeyで再試行可能() -> None:
+    assert AppError("X_POST_FAILED").retryable is True
 
 
 def test_設定_本番で署名鍵がないとき起動に失敗する() -> None:

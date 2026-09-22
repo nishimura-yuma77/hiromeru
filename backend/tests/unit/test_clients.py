@@ -4,7 +4,14 @@ from pydantic import SecretStr
 
 from api.container import build_default_context
 from clients.embedding import OrcaRouterEmbeddingClient
-from clients.errors import EmbeddingError, XApiOutcomeUnknownError, XApiRejectedError
+from clients.errors import (
+    EmbeddingError,
+    XApiConfigurationError,
+    XApiOutcomeUnknownError,
+    XApiProviderError,
+    XApiRejectedError,
+    XApiRetryableProviderError,
+)
 from clients.fakes import FakeEmbeddingClient, FakeXApiClient
 from clients.x_api import HttpXApiClient
 from core.config import Settings
@@ -120,13 +127,28 @@ async def test_Embeddingのエラー文言_通信エラーの詳細と認証情�
     assert "secret" not in str(info.value)
 
 
-def _x_client(handler: httpx.MockTransport, token: str = "token") -> HttpXApiClient:
+def _x_client(
+    handler: httpx.MockTransport,
+    *,
+    api_key: str = "api-key",
+    api_key_secret: str = "api-secret",
+    access_token: str = "access-token",
+    access_token_secret: str = "access-secret",
+) -> HttpXApiClient:
     return HttpXApiClient(
-        base_url="https://api.x.example", access_token=token, timeout_seconds=1, transport=handler
+        base_url="https://api.x.example",
+        api_key=api_key,
+        api_key_secret=api_key_secret,
+        access_token=access_token,
+        access_token_secret=access_token_secret,
+        timeout_seconds=1,
+        transport=handler,
+        oauth_nonce="fixed-nonce",
+        oauth_timestamp="1700000000",
     )
 
 
-async def test_X投稿成功_201のときx_post_idを返しBearerで認証する() -> None:
+async def test_X投稿成功_201のときx_post_idを返しOAuth1署名で認証する() -> None:
     seen: list[httpx.Request] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -137,7 +159,12 @@ async def test_X投稿成功_201のときx_post_idを返しBearerで認証する
 
     assert result.x_post_id == "123"
     assert seen[0].url == "https://api.x.example/2/tweets"
-    assert seen[0].headers["authorization"] == "Bearer token"
+    assert seen[0].headers["authorization"] == (
+        'OAuth oauth_nonce="fixed-nonce", oauth_timestamp="1700000000", '
+        'oauth_version="1.0", oauth_signature_method="HMAC-SHA1", '
+        'oauth_consumer_key="api-key", oauth_token="access-token", '
+        'oauth_signature="mq1SEiOvuTikTTcv%2BsggpW5XMt4%3D"'
+    )
 
 
 @pytest.mark.parametrize("status", [400, 401, 403, 429])
@@ -151,7 +178,7 @@ async def test_X投稿拒否_4xxのとき拒否として扱い再試行しない
     with pytest.raises(XApiRejectedError) as info:
         await _x_client(httpx.MockTransport(handler)).post("本文")
 
-    assert info.value.retryable is (status == 429)
+    assert info.value.status_code == status
     assert len(calls) == 1
 
 
@@ -169,6 +196,22 @@ async def test_X投稿結果不明_構造化されていない4xxと408は結果
         await _x_client(httpx.MockTransport(handler)).post("本文")
 
     assert len(calls) == 1
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"title": "", "detail": ""},
+        {"errors": []},
+        {"errors": [{}]},
+        {"errors": ["not structured"]},
+    ],
+)
+async def test_X投稿結果不明_4xxのError構造が不完全なとき結果不明(body: object) -> None:
+    response = httpx.Response(400, json=body)
+
+    with pytest.raises(XApiOutcomeUnknownError):
+        await _x_client(httpx.MockTransport(lambda _request: response)).post("本文")
 
 
 @pytest.mark.parametrize("status", [500, 502, 503])
@@ -195,12 +238,91 @@ async def test_X投稿結果不明_タイムアウトと不正な応答のとき
         await _x_client(httpx.MockTransport(lambda _r: httpx.Response(201, json={}))).post("本文")
 
 
-async def test_X投稿_アクセストークンがないとき送信せず拒否として扱う() -> None:
+@pytest.mark.parametrize(
+    "missing",
+    ["api_key", "api_key_secret", "access_token", "access_token_secret"],
+)
+async def test_X投稿設定不正_credentialが不足するとき送信しない(missing: str) -> None:
     def handler(_request: httpx.Request) -> httpx.Response:
         raise AssertionError("通信してはいけない")
 
-    with pytest.raises(XApiRejectedError):
-        await _x_client(httpx.MockTransport(handler), token="").post("本文")
+    credentials = {
+        "api_key": "api-key",
+        "api_key_secret": "api-secret",
+        "access_token": "access-token",
+        "access_token_secret": "access-secret",
+    }
+    credentials[missing] = ""
+
+    with pytest.raises(XApiConfigurationError):
+        await _x_client(httpx.MockTransport(handler), **credentials).post("本文")
+
+
+@pytest.mark.parametrize("count", [0, 42])
+async def test_XMetrics取得_impression_countが0以上の整数なら返す(count: int) -> None:
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(200, json={"data": {"public_metrics": {"impression_count": count}}})
+
+    result = await _x_client(httpx.MockTransport(handler)).get_impression_count("123")
+
+    assert result == count
+    assert seen[0].url == "https://api.x.example/2/tweets/123?tweet.fields=public_metrics"
+    assert 'oauth_signature="fDfunenbcpLJMxMlXguxijnhWzg%3D"' in seen[0].headers["authorization"]
+
+
+@pytest.mark.parametrize("count", [-1, True, "1", 1.5, None])
+async def test_XMetrics応答不正_impression_countが非負整数でないときProviderError(
+    count: object,
+) -> None:
+    response = httpx.Response(200, json={"data": {"public_metrics": {"impression_count": count}}})
+
+    with pytest.raises(XApiRetryableProviderError):
+        await _x_client(httpx.MockTransport(lambda _request: response)).get_impression_count("123")
+
+
+@pytest.mark.parametrize("status", [408, 429, 500, 503])
+async def test_XMetrics一時失敗_408と429と5xxのときRetryableProviderError(status: int) -> None:
+    response = httpx.Response(status, json={"detail": "provider-secret-body"})
+
+    with pytest.raises(XApiRetryableProviderError) as info:
+        await _x_client(httpx.MockTransport(lambda _request: response)).get_impression_count("123")
+
+    assert "provider-secret-body" not in str(info.value)
+
+
+async def test_XMetrics認証失敗_401のときCredentialとProviderBodyを例外へ含めない() -> None:
+    response = httpx.Response(401, json={"detail": "provider-secret-body"})
+
+    with pytest.raises(XApiConfigurationError) as info:
+        await _x_client(httpx.MockTransport(lambda _request: response)).get_impression_count("123")
+
+    error = str(info.value)
+    assert "provider-secret-body" not in error
+    assert "api-secret" not in error
+    assert "access-secret" not in error
+
+
+async def test_XMetrics取得失敗_404のとき再試行対象外のProviderError() -> None:
+    response = httpx.Response(404, json={"detail": "not found"})
+
+    with pytest.raises(XApiProviderError) as info:
+        await _x_client(httpx.MockTransport(lambda _request: response)).get_impression_count("123")
+
+    assert not isinstance(info.value, XApiRetryableProviderError)
+    assert "not found" not in str(info.value)
+
+
+async def test_XMetrics通信失敗_timeoutのときRetryableProviderError() -> None:
+    def timeout(request: httpx.Request) -> httpx.Response:
+        raise httpx.ReadTimeout("provider-secret-body", request=request)
+
+    with pytest.raises(XApiRetryableProviderError) as info:
+        await _x_client(httpx.MockTransport(timeout)).get_impression_count("123")
+
+    assert "provider-secret-body" not in str(info.value)
 
 
 def test_Client_Mode_fakeとrealで実行Clientを切り替える() -> None:

@@ -31,7 +31,10 @@ def build_default_context(settings: Settings | None = None) -> ServiceContext:
         )
         x_api = HttpXApiClient(
             base_url=resolved.x_api_base_url,
+            api_key=resolved.x_api_key.get_secret_value(),
+            api_key_secret=resolved.x_api_key_secret.get_secret_value(),
             access_token=resolved.x_access_token.get_secret_value(),
+            access_token_secret=resolved.x_access_token_secret.get_secret_value(),
             timeout_seconds=resolved.x_api_timeout_seconds,
         )
     return ServiceContext(

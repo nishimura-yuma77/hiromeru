@@ -49,7 +49,7 @@ ERROR_SPECS: Final[dict[str, tuple[int, bool]]] = {
     "POST_NOT_FOUND": (404, False),
     "X_POST_UNRESOLVED": (409, False),
     "INVALID_X_POST": (422, False),
-    "X_POST_FAILED": (502, False),  # 429 のときだけ再試行可能（条件付き）
+    "X_POST_FAILED": (502, True),  # 新しい承認とIdempotency-Keyで再実行する
     "X_POST_OUTCOME_UNKNOWN": (504, False),
     "X_POST_SAVE_FAILED": (500, True),
     "MEMORY_NOT_FOUND": (404, False),
@@ -117,7 +117,7 @@ class AppError(Exception):
             code: API_DESIGN 10章に登録されたエラーコード。
             message: 利用者向けの説明。省略時は既定のメッセージを使う。
             agent_turn_id: 履歴へ保存したTurnのID。保存しないエラーでは None。
-            retryable: 再試行可否。省略時はコードの既定値を使う（X_POST_FAILED のみ上書きする）。
+            retryable: 再試行可否。省略時はコードの既定値を使う。
             retry_after_seconds: `Retry-After` ヘッダーに設定する秒数。
             field_errors: 入力FieldごとのError。入力以外のErrorでは空配列。
 

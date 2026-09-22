@@ -9,18 +9,25 @@ class EmbeddingError(UpstreamError):
     """Embeddingを生成できなかった。"""
 
 
+class XApiConfigurationError(UpstreamError):
+    """X APIのCredentialが不足または無効で、Requestを実行できない。"""
+
+
+class XApiProviderError(UpstreamError):
+    """X APIの読み取り処理で、再試行対象外のProvider Errorが発生した。"""
+
+
+class XApiRetryableProviderError(XApiProviderError):
+    """X APIの読み取り処理で、一時的なProvider障害が発生した。"""
+
+
 class XApiRejectedError(UpstreamError):
     """X APIが投稿の失敗を確定して返した（4xx）。投稿されていないことが確実。"""
 
     def __init__(self, status_code: int) -> None:
-        """失敗のHTTP Statusを保持する。429 のときだけ再試行可能とする。"""
+        """失敗のHTTP Statusを保持する。"""
         super().__init__(f"X APIが投稿を拒否しました (status={status_code})")
         self.status_code = status_code
-
-    @property
-    def retryable(self) -> bool:
-        """再試行できるか（429 のみ）。"""
-        return self.status_code == 429
 
 
 class XApiOutcomeUnknownError(UpstreamError):

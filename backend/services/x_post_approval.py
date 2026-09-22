@@ -11,7 +11,12 @@ from typing import Any
 
 from sqlalchemy.exc import SQLAlchemyError
 
-from clients.errors import EmbeddingError, XApiOutcomeUnknownError, XApiRejectedError
+from clients.errors import (
+    EmbeddingError,
+    XApiConfigurationError,
+    XApiOutcomeUnknownError,
+    XApiRejectedError,
+)
 from core.errors import AppError, FieldError, LeaseLostError
 from core.logging import get_logger, safe_error_text
 from domain.constants import (
@@ -178,8 +183,8 @@ class XPostApprovalService:
         try:
             try:
                 result = await self._ctx.x_api.post(text)
-            except XApiRejectedError as error:
-                failure = AppError("X_POST_FAILED", retryable=error.retryable)
+            except (XApiConfigurationError, XApiRejectedError):
+                failure = AppError("X_POST_FAILED", retryable=True)
                 return await self._fail(ctx, failure, ApiIdempotencyStatus.FAILED)
             except XApiOutcomeUnknownError as error:
                 _log.warning("x_post_outcome_unknown", error=safe_error_text(error))

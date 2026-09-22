@@ -379,20 +379,27 @@ async def test_Embedding失敗_Xへ投稿する前に500_EMBEDDING_FAILEDで止�
     assert x_api.calls == []
 
 
-async def test_X拒否_403のとき502_X_POST_FAILEDで再試行不可(
+async def test_X拒否_403のとき502_X_POST_FAILEDで新しい承認は再試行可能(
     account: Account, x_api: FakeXApi
 ) -> None:
     session_id = await account.create_session()
     campaign_id = await account.create_campaign(session_id)
     x_api.outcome = "rejected"
+    key = str(uuid.uuid4())
 
-    response = await account.publish_post(session_id, post_body(campaign_id))
+    response = await account.publish_post(session_id, post_body(campaign_id), key)
+    x_api.outcome = "ok"
+    replay = await account.publish_post(session_id, post_body(campaign_id), key)
+    retried = await account.publish_post(session_id, post_body(campaign_id))
 
     assert response.status_code == 502
     error = response.json()["error"]
     assert error["code"] == "X_POST_FAILED"
-    assert error["retryable"] is False
-    assert await _post_count(campaign_id) == 0
+    assert error["retryable"] is True
+    assert replay.json() == response.json()
+    assert retried.status_code == 201
+    assert len(x_api.calls) == 2
+    assert await _post_count(campaign_id) == 1
 
 
 async def test_X拒否_429のとき502で再試行可能(account: Account, x_api: FakeXApi) -> None:

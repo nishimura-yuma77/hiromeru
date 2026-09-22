@@ -18,6 +18,7 @@ _API_KEY = re.compile(
     r"\b(?:sk|pk|rk|ghp|gho|ghs|xox[abprs]|AKIA|AIza)[A-Za-z0-9_\-]{16,}\b|\bAKIA[0-9A-Z]{16}\b"
 )
 _BEARER = re.compile(r"(?i)\b(bearer)\s+[A-Za-z0-9._\-~+/]{16,}=*")
+_OAUTH = re.compile(r"(?i)\bOAuth\s+[^\r\n]+")
 _KEY_VALUE = re.compile(
     r"(?i)\b(api[_-]?key|access[_-]?token|secret|password|passwd|token)\b(\s*[:=]\s*)"
     r"[^\s,;\"']+"
@@ -34,6 +35,7 @@ def mask_text(text: str) -> str:
     masked = text.replace("\x00", "[NUL]")
     masked = _KEY_VALUE.sub(lambda m: f"{m.group(1)}{m.group(2)}{MASK_SECRET}", masked)
     masked = _BEARER.sub(lambda m: f"{m.group(1)} {MASK_SECRET}", masked)
+    masked = _OAUTH.sub(f"OAuth {MASK_SECRET}", masked)
     masked = _API_KEY.sub(MASK_SECRET, masked)
     masked = _EMAIL.sub(MASK_EMAIL, masked)
     masked = _CARD.sub(MASK_CARD, masked)

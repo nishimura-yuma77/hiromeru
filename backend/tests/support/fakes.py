@@ -3,6 +3,7 @@
 import asyncio
 import hashlib
 import random
+import uuid
 from datetime import UTC, datetime, timedelta
 
 from agent_runtime.runner import AgentRunInput, AgentRunOutput, ProgressReporter
@@ -68,7 +69,7 @@ class FakeXApi:
         self.rejected_status = 403
         self.gate: asyncio.Event | None = None
         self.started = asyncio.Event()
-        self._counter = 0
+        self.impression_count = 0
 
     async def post(self, text: str) -> XPostResult:
         """`outcome` に従って結果を返す。`gate` があれば、解放されるまで待つ。"""
@@ -82,8 +83,12 @@ class FakeXApi:
             raise XApiOutcomeUnknownError("fake unknown")
         if self.outcome == "unexpected":
             raise RuntimeError("fake unexpected")
-        self._counter += 1
-        return XPostResult(x_post_id=f"x-{id(self)}-{self._counter}")
+        return XPostResult(x_post_id=f"x-{uuid.uuid4().hex}")
+
+    async def get_impression_count(self, x_post_id: str) -> int:
+        """設定したMetrics値を返す。"""
+        del x_post_id
+        return self.impression_count
 
 
 async def no_sleep(_seconds: float) -> None:
