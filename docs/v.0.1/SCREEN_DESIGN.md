@@ -1,10 +1,10 @@
-# 画面設計書（v0.5）
+# 画面設計書（v0.10）
 
 対象: hiromeru（AI支援型Xマーケティングシステム）MVP の画面一覧
 
 ## 1. 文書の責務
 
-本書は、MVPの画面一覧と、各画面の役割・遷移・使用するAPIを定義する。画面のレイアウトと文言の詳細は、本書の対象外とする。
+本書は、MVPの画面一覧と、各画面の役割・遷移・使用するAPI、および実装に必要な共通UIと画面ごとの表示・操作仕様を定義する。APIのSchemaや業務ルールは下記の正本を参照し、本書では利用者が見る状態と操作へ対応づける。
 
 - 業務フローは`USECASE.md`を正本とする
 - APIのRequest、Response、エラーは`API_DESIGN.md`を正本とする
@@ -28,7 +28,7 @@
 | ID | 画面名 | パス | 目的 | 使用するAPI |
 | --- | --- | --- | --- | --- |
 | SC-01 | ログイン | `/login` | メールアドレスとパスワードでログインする | `POST /auth/login`、`POST /auth/logout`、`GET /auth/me` |
-| SC-02 | チャット | `/chat`、`/chat/new`、`/chat/{session_id}` | 会話一覧から会話を選んで再開する、または新しい会話を始める。親Agentと会話し、施策案・投稿案を編集・再相談・最終承認する | `GET /agent-sessions`、`POST /agent-sessions`、`POST /agent-sessions/{id}/turns`、`GET /agent-sessions/{id}`、`GET /agent-sessions/{id}/turns/{turn_id}`、`POST /agent-sessions/{id}/campaigns`、`POST /agent-sessions/{id}/x/posts` |
+| SC-02 | チャット | `/chat`、`/chat/new`、`/chat/{session_id}` | 会話一覧から会話を選んで再開する、または新しい会話を始める。親Agentと会話し、施策案・投稿案を編集・再相談・最終承認する | `GET /agent-sessions`、`POST /agent-sessions`、`POST /agent-sessions/{id}/turns`、`GET /agent-sessions/{id}`、`GET /agent-sessions/{id}/turns/{turn_id}`、`GET /campaigns`、`POST /agent-sessions/{id}/campaigns`、`POST /agent-sessions/{id}/x/posts` |
 | SC-03 | （欠番） | — | SC-02に統合した。旧「会話一覧」（`/sessions`） | — |
 | SC-04 | 施策一覧 | `/campaigns` | 承認して保存した施策を一覧・検索する | `GET /campaigns` |
 | SC-05 | 施策詳細 | `/campaigns/{campaign_id}` | 施策の内容と、関連する投稿・記憶、投稿ごとの初週PV数を確認する。施策を直接編集する | `GET /campaigns/{campaign_id}`、`PUT /campaigns/{campaign_id}`（施策の編集） |
@@ -48,18 +48,19 @@
 
 | 画面 | `app/`のルート | Feature | 初期表示の読取 | Clientの操作 |
 | --- | --- | --- | --- | --- |
-| SC-01 | `app/login/` | `auth` | なし | ログイン、ログアウト |
-| SC-02 | `app/chat/`（`layout.tsx`に会話一覧、`page.tsx`が一覧）、`app/chat/new/`、`app/chat/[session_id]/` | `agent` | Server Component（会話一覧の先頭20件、履歴の取得） | 会話一覧の追加読み込み（無限スクロール）、新しい会話の作成、メッセージ送信（SSEの受信）、Turnのポーリング、フォームの編集、承認 |
-| SC-04、SC-05 | `app/campaigns/`、`app/campaigns/[campaign_id]/` | `campaigns`（SC-05の編集フォームは`agent`） | Server Component | 検索、絞り込み（URLを更新する）、施策の編集（SC-05。`agent`Featureのフォーム） |
-| SC-06、SC-07 | `app/posts/`、`app/posts/[post_id]/` | `posts` | Server Component | 検索、絞り込み（URLを更新する） |
-| SC-08 | `app/metrics/` | `metrics` | Server Component | 期間の絞り込み（URLを更新する） |
-| SC-09 | `app/memories/` | `memories` | Server Component | 検索、忘却 |
+| SC-01 | `app/login/` | `auth` | Server Component（`GET /auth/me`によるログイン済み判定） | ログイン |
+| SC-02 | `app/(authenticated)/chat/`（`layout.tsx`に会話一覧、`page.tsx`が一覧）、`app/(authenticated)/chat/new/`、`app/(authenticated)/chat/[session_id]/` | `agent` | Server Component（会話一覧の先頭20件、履歴の取得） | 会話一覧の追加読み込み（無限スクロール）、新しい会話の作成、メッセージ送信（SSEの受信）、Turnのポーリング、フォームの編集、承認 |
+| SC-04、SC-05 | `app/(authenticated)/campaigns/`、`app/(authenticated)/campaigns/[campaign_id]/` | `campaigns`（SC-05の編集フォームは`agent`） | Server Component | 検索、絞り込み（URLを更新する）、施策の編集（SC-05。`agent`Featureのフォーム） |
+| SC-06、SC-07 | `app/(authenticated)/posts/`、`app/(authenticated)/posts/[post_id]/` | `posts` | Server Component | 検索、絞り込み（URLを更新する） |
+| SC-08 | `app/(authenticated)/metrics/` | `metrics` | Server Component | 期間の絞り込み（URLを更新する） |
+| SC-09 | `app/(authenticated)/memories/` | `memories` | Server Component | 検索、忘却 |
 
 - 業務データの読取は、Server Componentで行う（規約11.1）。Clientの再取得は、Turnの進捗の受信（SSE）と、切断時のTurnのポーリング、施策の選択の検索（6.11）、会話一覧の追加読み込み（6.13）だけとする（規約11.3。Turnは応答が最大200秒かかり、進捗を逐次表示し、応答を受け取れない場合に状態を確認する必要があるため。施策の選択は、入力に応じた候補の表示が必要なため。会話一覧は、スクロールに応じて続きを読み込む必要があるため）
 - Feature間の直接参照は原則禁止のため（規約4.4）、複数のFeatureにまたがる画面は`app/`で組み立てる。該当する箇所は、SC-05の編集フォーム（下記）である
 - `app/`の`loading.tsx`、`error.tsx`、`not-found.tsx`で、6.8の画面状態を共通に扱う
-- 施策のフォーム（項目の入力部品と検証Schema）は、SC-02の提案フォームとSC-05の編集フォームで共通のため、まとめて`agent`Featureに置く。`campaigns`Featureには置かない（重複や`shared`への切り出しは行わない）。`app/campaigns/[campaign_id]/`が、`campaigns`Featureの表示と、`agent`Featureが公開する編集フォームを組み合わせる。投稿フォームも、`agent`Featureに置く
-- `app/chat/layout.tsx`が会話一覧を描画し、`page.tsx`、`new/page.tsx`、`[session_id]/page.tsx`をその子とする。一覧と会話は同じFeature（`agent`）に含まれる
+- 施策のフォーム（項目の入力部品と検証Schema）は、SC-02の提案フォームとSC-05の編集フォームで共通のため、まとめて`agent`Featureに置く。`campaigns`Featureには置かない（重複や`shared`への切り出しは行わない）。`app/(authenticated)/campaigns/[campaign_id]/`が、`campaigns`Featureの表示と、`agent`Featureが公開する編集フォームを組み合わせる。投稿フォームも、`agent`Featureに置く
+- `app/(authenticated)/layout.tsx`が、認証済み画面のApp ShellとNotification Toastを組み立てる。Route GroupはURLへ現れない（6.15）
+- `app/(authenticated)/chat/layout.tsx`が会話一覧を描画し、`page.tsx`、`new/page.tsx`、`[session_id]/page.tsx`をその子とする。一覧と会話は同じFeature（`agent`）に含まれる
 
 ## 4. 画面遷移
 
@@ -99,61 +100,498 @@ flowchart TD
 - `429`（試行回数の超過）: 「しばらくしてから再試行してください」と表示する
 - ユーザー登録、パスワード再設定の画面は設けない（マーケターは事前登録する）
 
+**Design plan**
+
+| 項目 | 方針 |
+| --- | --- |
+| Subject | Hiromeruへ安全にログインし、採用Xの運用を再開する入口 |
+| Audience | 事前にアカウントを発行された採用マーケター |
+| Primary job | メールアドレスとパスワードを入力し、元の業務画面へ移動する |
+| 情報の優先順位 | Login Form、入力Error、Brand、サービス利用相談 |
+| Palette | 左カラムはBrand Strongと反転文字、右カラムはPaper背景、CardはWhite Surface、ErrorはDanger状態色 |
+| Typography | LogoはLatin、見出しとFormはSans。補助文を過度に小さくしない |
+| Layout | PCはBrandとFormの2カラム、SPはBrandとLogin Cardの1カラム |
+| Motion | Input ErrorとForm Errorが対象箇所の下端から現れるFeedbackだけに限定する |
+
+**PCワイヤー**
+
+```text
+┌──────────────────────────┬──────────────────────────────────────────────┐
+│                          │                                              │
+│      [H] HIROMERU        │             ┌────────────────────────┐       │
+│                          │             │ [H] HIROMERU           │       │
+│ SNS採用を自動化する      │             │                        │       │
+│ AIエージェント           │             │ ログイン               │       │
+│                          │             │                        │       │
+│                          │             │ メールアドレス         │       │
+│                          │             │ ┌────────────────────┐ │       │
+│                          │             │ │                    │ │       │
+│                          │             │ └────────────────────┘ │       │
+│                          │             │ エラーメッセージ       │       │
+│                          │             │                        │       │
+│                          │             │ パスワード     [表示] │       │
+│                          │             │ ┌────────────────────┐ │       │
+│                          │             │ │                    │ │       │
+│                          │             │ └────────────────────┘ │       │
+│                          │             │ エラーメッセージ       │       │
+│                          │             │                        │       │
+│                          │             │ [     ログイン      ] │       │
+│                          │             │ Form error tray        │       │
+│                          │             └────────────────────────┘       │
+│                          │                                              │
+│                          │       サービス利用相談はXまで @hiromaru_jp  │
+└──────────────────────────┴──────────────────────────────────────────────┘
+```
+
+- `tablet`以上で2カラムとし、左カラムはViewportの約40%、最小Inline sizeは`--login-brand-panel-min-width`（`24rem`）とする。右カラムは残りの幅を使う
+- 左カラムにHiromeru Logoと「SNS採用を自動化するAIエージェント」だけを表示し、中央付近で左揃えにする。Navigation、機能説明、装飾的な図は置かない
+- 右カラムはLogin Cardとサービス利用相談の2段とし、Login Cardを利用可能な領域の中央へ、相談導線をInline endかつBlock endへ配置する
+- 相談導線をViewportへ固定しない。高さが不足する場合は右カラムをDocument scrollし、Formと相談導線の両方へ到達できるようにする
+- Login Cardの最大Inline sizeは`--login-card-max-width`（`28rem`）とする。Card上部はHiromeru Logoと`h1`「ログイン」だけとし、挨拶、説明、登録案内、パスワード再設定を置かない
+- CardはSurfaceとBorderで背景から分ける。大きなShadow、Glass effect、背景画像は使用しない
+
+**SPワイヤー**
+
+```text
+┌───────────────────────────────────┐
+│                                   │
+│          [H] HIROMERU             │
+│ SNS採用を自動化するAIエージェント │
+│                                   │
+│ ┌───────────────────────────────┐ │
+│ │ [H] HIROMERU                  │ │
+│ │                               │ │
+│ │ ログイン                      │ │
+│ │                               │ │
+│ │ メールアドレス                │ │
+│ │ ┌───────────────────────────┐ │ │
+│ │ │                           │ │ │
+│ │ └───────────────────────────┘ │ │
+│ │ エラーメッセージ              │ │
+│ │                               │ │
+│ │ パスワード            [表示] │ │
+│ │ ┌───────────────────────────┐ │ │
+│ │ │                           │ │ │
+│ │ └───────────────────────────┘ │ │
+│ │ エラーメッセージ              │ │
+│ │                               │ │
+│ │ [          ログイン         ] │ │
+│ │ Form error tray               │ │
+│ │                               │ │
+│ │ ───────────────────────────── │ │
+│ │ サービス利用相談はXまで       │ │
+│ │ @hiromaru_jp                  │ │
+│ └───────────────────────────────┘ │
+│                                   │
+└───────────────────────────────────┘
+```
+
+- `tablet`未満は1カラムとし、Page上部にHiromeru Logoと「SNS採用を自動化するAIエージェント」を中央揃えで表示する
+- Login Card内にもFormの識別としてHiromeru Logoと`h1`「ログイン」を表示する
+- PageのInline paddingは`--space-4`、Login Cardの最大Inline sizeは`--login-card-max-width`とし、利用可能な幅まで広げる
+- Login ButtonはCardのInline sizeに合わせる。CardがViewportより高い場合はPage全体をScrollさせる
+- サービス利用相談はCard Footerに移し、本文との間をDividerで分ける
+- 320px幅、200% Zoom、長いError文でも横Scrollを発生させず、Input、Login Button、相談導線を失わない
+
+**Brandとサービス利用相談**
+
+- Hiromeru LogoはLPと同じMark、Latin表記、比率を使う。SC-01ではNavigation Linkにせず、現在のPageを示す非操作要素とする
+- 相談の文言は「サービス利用相談はXまで」、Linkは「@hiromaru_jp」とする
+- Link先は`https://x.com/hiromaru_jp`とし、新しいTabで開く。Visible textまたはVisually hidden textで「新しいタブで開く」と伝える
+- X Logoを併記する場合は装飾扱いとし、`aria-hidden="true"`を設定する
+- PCでは相談導線を右カラム右下、SPではLogin Cardの下部に表示する
+- 実装前に`--login-brand-panel-min-width`と`--login-card-max-width`をLayout tokenへ追加し、SC-01のComponent内へ寸法のLiteralを重複して記述しない
+
+**Formと入力属性**
+
+- EmailとPasswordは6.14.2の共通`TextField`を使用する。Labelを常に表示し、Placeholderだけで項目を示さない
+- Emailは`type="email"`、`name="email"`、`autocomplete="username"`、`inputmode="email"`を設定する
+- Passwordは`type="password"`、`name="password"`、`autocomplete="current-password"`を設定する
+- Password Manager、自動入力、貼り付けを許可する。Passwordへ文字種や長さのClient validationを追加しない
+- Passwordの「表示／隠す」は`TextField`の`trailingAction`へVisibleなButtonとして置く。表示を切り替えても値、選択範囲、Focusを維持する
+- EnterでSubmitできる。EmailはSubmit時に前後の空白を除き、Passwordは加工しない
+- Client validationはEmailの必須・形式とPasswordの必須だけを扱う。失敗時はRequestを送らず、最初のError InputへFocusを移す
+
+**InputごとのError文言**
+
+| Input | 条件 | 文言 |
+| --- | --- | --- |
+| Email | 空 | メールアドレスを入力してください |
+| Email | 形式不正 | メールアドレスの形式で入力してください |
+| Email | `401 INVALID_CREDENTIALS` | メールアドレスまたはパスワードが正しくありません |
+| Password | 空 | パスワードを入力してください |
+| Password | `401 INVALID_CREDENTIALS` | メールアドレスまたはパスワードが正しくありません |
+
+- `INVALID_CREDENTIALS`では両InputをError状態とし、利用者が登録有無や誤っている項目を判別できない同じ文言を両方のInput下に表示する
+- 同じ認証Errorを支援技術へ二重に割り込ませない。VisibleなErrorは各Inputの`aria-describedby`で関連付け、FormのStatus領域から認証失敗を1回だけ通知する
+- Field固有のErrorは、入力変更後の再検証で解消した場合に取り除く。認証Errorは次のSubmit開始時に取り除き、入力変更だけでは自動で消さない
+
+**Form Error Trayの文言**
+
+Login Button直下に、特定のInputへ割り当てられないErrorを表示する。Login画面のErrorをNotification Toastだけで伝えない。
+
+| 条件 | 文言 | 次の操作 |
+| --- | --- | --- |
+| `400 INVALID_ARGUMENT` | 入力内容を確認して、もう一度ログインしてください | Inputを確認して再Submit |
+| `403 CSRF_VALIDATION_FAILED`相当 | 安全性を確認できなかったため、ログインできませんでした。ページを再読み込みしてください | Pageを再読み込み |
+| `429 Too Many Requests` | 試行回数が上限を超えました。しばらくしてから再試行してください | 時間をおいて再Submit |
+| Network Error | 通信できませんでした。通信環境を確認して、もう一度お試しください | 同じ入力で再Submit |
+| Timeout | ログイン処理が完了しませんでした。時間をおいて、もう一度お試しください | 時間をおいて再Submit |
+| `500`またはResponse parse failure | ログインできませんでした。時間をおいて、もう一度お試しください | 時間をおいて再Submit |
+| `GET /auth/me`の回復可能な失敗 | ログイン状態を確認できませんでした。ページを再読み込みしてください | Pageを再読み込み |
+
+- Form Error Trayは`role="alert"`、`tabIndex={-1}`とし、Form Errorだけが発生したSubmit失敗ではTrayへFocusを移す
+- Form Errorは入力変更では消さず、次のSubmit開始時に取り除く。再読み込みが必要なErrorでは「ページを再読み込み」Buttonを表示する
+- `GET /auth/me`が`401 UNAUTHENTICATED`の場合はErrorではなく未ログイン状態としてFormを表示する。`200`の場合はFormを表示せず元のURL、なければ`/chat`へ移動する
+
+**ErrorのMotion**
+
+```text
+┌───────────────────────────┐
+│ Input                     │
+└───────────────────────────┘
+          ↓
+  エラーメッセージ
+```
+
+- Field Errorは各Inputの直下に置き、Inputの下端からせり出すように表示する。Error領域は`overflow: clip`とし、Error文は隠れた位置から最終位置へ移動する
+- 開始位置は`transform: translateY(calc(var(--motion-distance-md) * -1))`と`opacity: 0`、終了位置は`transform: translateY(0)`と`opacity: 1`とする
+- 表示は`--duration-normal`と`--easing-emphasized`、解除は`--duration-fast`と`--easing-standard`を使う
+- Form Error TrayもLogin Button下端から同じ方向へせり出す。DOMへの追加、読み上げ、Focus移動、Requestの結果処理はAnimation完了を待たない
+- Error領域には想定するError文の最小Block sizeを確保し、表示時のLayout shiftを抑える
+- `prefers-reduced-motion: reduce`では移動とFadeを行わず、Errorを最終位置へ即時表示・非表示する
+
+**状態と操作**
+
+| 状態 | 表示と操作 |
+| --- | --- |
+| 初期 | EmailとPasswordは空。自動Focusは行わない |
+| 入力中 | Browser補完、Password Manager、貼り付けを許可する |
+| Password表示 | 値、選択範囲、Focusを保持して`type`を切り替える |
+| 送信中 | Login ButtonにSpinnerと「ログイン中」を表示し、Login ButtonとPassword toggleを無効にする。Inputは`readOnly`とし、Request中に値を変更させない |
+| Client validation失敗 | Requestを送らず、各InputへErrorを表示して最初のError InputへFocusを移す |
+| 認証失敗 | 入力値を保持し、両Inputへ同じErrorを表示する。自動で再Submitしない |
+| 通信・Server失敗 | 入力値を保持し、Form Error Trayを表示する。自動で再Submitしない |
+| 成功 | 認証Cookieと`csrf_token`を受け取り、元のURL、なければ`/chat`へ移動する |
+| ログイン済み | Login Formを表示せず、元のURL、なければ`/chat`へ移動する |
+
+- 未認証画面へ移動するときは、元のPathとSearch Paramsを`next`へ保持する。Login成功後は、同一Originの認証後Pathとして検証できる相対URLだけへ移動する
+- `next`がない、不正、`//`で始まる、外部Originを示す、または認証後画面でない場合は`/chat`へ移動する
+
+**受け入れ条件**
+
+- PCではBrandとFormの2カラム、SPではBrand、Login Card、Card Footerの順で表示される
+- PCの相談導線が右カラム右下、SPの相談導線がCard下部に表示され、`@hiromaru_jp`を新しいTabで開ける
+- KeyboardだけでEmail、Password、表示切替、Login、X Link、再読み込みを操作できる
+- Password Manager、自動入力、貼り付け、Enter Submitが機能する
+- Login送信中はButtonにSpinnerと「ログイン中」を表示し、Buttonの幅を変えずに二重Submitを防ぐ
+- Error時に該当InputがError外観になり、各Input下の具体的な文言と`aria-describedby`で関連付けられる
+- ErrorがInputまたはLogin Buttonの下端から表示され、Reduced Motionでは即時表示される
+- `INVALID_CREDENTIALS`でメールアドレスの登録有無や誤っている項目を判別できない
+- Login固有のErrorがNotification Toastだけに表示されない
+
 ### SC-02 チャット
 親Agentとの会話と、提案の編集・承認を行う中心の画面である。
 
-**構成**
-- 会話エリア: Turnの`user_message`、`assistant_message`、提案フォーム、承認結果（`api_result`）を、時系列に表示する
-- 入力欄: メッセージ（上限あり）の入力と送信
-- 会話一覧: `/chat`の本体であり、`/chat/new`と`/chat/{session_id}`では画面の左に表示する（`GET /agent-sessions`）。最終更新の新しい順に、無限スクロールで表示する（先頭の20件はServer Componentで取得し、末尾までスクロールしたら次の20件を`next_cursor`で読み込む。6.13）。表示は、会話のタイトルと最終更新日時とする
-- 画面ごとの表示: デスクトップでは、`/chat`は左に一覧、右に新しい会話の入力欄を表示する。モバイルでは、`/chat`は一覧と「新しい会話」だけを表示し、`/chat/new`と`/chat/{session_id}`は会話だけを表示して「一覧へ戻る」を出す（6.9）
-- 会話のタイトルは、最初のメッセージの先頭部分から自動で付く。タイトルがない会話（作成されたが、メッセージがまだない会話）は、「無題の会話」と表示する。アーカイブと削除の操作は設けない
-- 会話がない場合は、一覧に「まだ会話がありません。マーケティングの依頼から始めましょう」と表示する
+**Design plan**
 
-**送信の流れ**
-1. 新しい会話（`/chat`のデスクトップ表示、または`/chat/new`）で最初に送信するとき、`POST /agent-sessions`でSessionを作成してから、`POST .../turns`で送信する。送信が始まったら、`/chat/{session_id}`へ移動する
-2. `Accept: text/event-stream`で送信し、Turnが終わるまで待つ（最大200秒）。待つ間は「実行中」と、届いた進捗（`activity_started`／`activity_finished`。例:「施策を立案中」）を表示し、送信ボタンを無効にする。`turn_finished`のTurnを受け取ったら次へ進む
-3. 完了したTurnの`items`を表示する。ストリームが`turn_finished`の前に切れたときは、`turn_started`の`agent_turn_id`で`GET .../turns/{turn_id}`（5.4）をポーリングして結果を確認する。`agent_turn_id`を受け取る前に切れたときは、履歴（5.6）を再取得する
-4. 提案（`campaign_proposal`、`x_post_proposal`）はフォームとして表示する
+| 項目 | 方針 |
+| --- | --- |
+| Subject | Agentとの相談から施策保存・X公開までを、一つの時系列で進める業務Workspace |
+| Audience | 採用Xの施策と投稿を継続運用するマーケター |
+| Primary job | 会話を再開または開始し、提案を編集・再相談・最終承認する |
+| 情報の優先順位 | 選択中の会話、最新Turn、未承認の提案、Composer、会話一覧、過去履歴 |
+| Palette | Paper背景、UserとAgentで異なるSurface、Greenの主要Action、状態別のSuccess・Warning・Danger |
+| Typography | Message本文とFormはSans、IDや補助的な数値だけMono。本文はMobileでも`--font-size-md`以上 |
+| Layout | PCはGlobal Sidebar、会話一覧、会話の3列。SPは会話一覧と会話をRouteで分離する |
+| Motion | Spinner、Error、最新Messageへの移動など、状態と位置関係を伝えるFeedbackに限定する |
 
-**提案フォーム**（`USECASE.md`の4章）
-- 施策フォーム: タイトル、ターゲット像、実施背景、施策目的、施策内容。既存施策の変更案では、提案時点の`updated_at`をフォームに保持する（`expected_updated_at`）
-- 投稿フォーム: 対象施策（Agentの提案値を初期値とし、アーカイブされていない施策から検索して選び直せる。6.11）、投稿本文、遷移先URL
-- 3つの操作: 「手書き修正」（画面上だけで編集。履歴へ保存しない）、「Agentと再相談」（現在の値と指示を新しいメッセージとして送信）、「最終承認」
+**PCワイヤー**
 
-**最終承認**
-- 承認操作ごとに`Idempotency-Key`（UUID）を生成する。二重クリックや通信の再試行では同じキーを使い、新しい承認操作でだけ新しいキーにする
-- X投稿と、既存施策の上書きでは、確認ダイアログを表示する（X投稿は「Xに公開される」ことを明記する）
-- 結果は、同じ会話の`api_result`として表示する。成功時は、SC-05またはSC-07への導線を出す
+```text
+┌──────────────┬─────────────────────┬────────────────────────────────────┐
+│ Global nav   │ 会話                │ 選択中の会話タイトル               │
+│              │ [＋ 新しい会話]     ├────────────────────────────────────┤
+│ チャット     │                     │ [以前の会話を読み込む]             │
+│ 施策         │ ● 選択中の会話     │                                    │
+│ 投稿         │   更新日時          │              あなた                │
+│ 計測結果     │                     │       ┌──────────────────────┐     │
+│ 記憶         │   別の会話          │       │ 施策を考えてください │     │
+│              │   更新日時          │       └──────────────────────┘     │
+│              │                     │                                    │
+│              │   無題の会話        │ Hiromeru AI                        │
+│              │                     │ ┌──────────────────────────────┐   │
+│ Account      │ [さらに読み込む]    │ │ Agentの回答                  │   │
+│              │                     │ └──────────────────────────────┘   │
+│              │                     │                                    │
+│              │                     │ Hiromeru AI                        │
+│              │                     │ ┌──────────────────────────────┐   │
+│              │                     │ │ 施策案Form                   │   │
+│              │                     │ │ [Agentと再相談] [最終承認]  │   │
+│              │                     │ └──────────────────────────────┘   │
+│              │                     ├────────────────────────────────────┤
+│              │                     │ Message textarea                  │
+│              │                     │ 0 / 4,000              [送信]     │
+└──────────────┴─────────────────────┴────────────────────────────────────┘
+```
 
-**セキュリティ通知**
-- Turnの`security_notices`があるとき、そのTurnの下に通知を表示する。一覧画面は設けず、チャットの中で伝える。Turnが`blocked`や`failed`の場合も表示する
-- 文言は、次の2つを続けて表示する。検出した内容そのもの（注入された指示、機密値など）は表示しない
+- `tablet`以上では6.15のGlobal Sidebar、会話一覧、会話の3列とする。会話一覧は`--conversation-list-width`、会話列は`minmax(0, 1fr)`とする
+- Workspace全体を`100dvb`に収め、会話一覧と会話履歴を独立してScrollさせる。会話HeaderとComposerは会話列に残す
+- 会話本文は最大Inline size`--conversation-content-width`（`52rem`）として会話列の中央へ置く。Proposal Bubbleはこの幅まで使用できる
+- `/chat`の会話列と`/chat/new`は新しい会話、`/chat/{session_id}`は選択中の会話を表示する
 
-  | `event_type` | 種別の文言 |
-  | --- | --- |
-  | `prompt_injection` | 外部の情報に、AIへの不正な指示が含まれている可能性を検出しました |
-  | `sensitive_data` | 機密情報が含まれている可能性を検出しました |
-  | `unauthorized_tool_call` | 許可されていない操作を検出しました |
-  | `unsafe_external_action` | 外部への安全でない操作を検出しました |
+**SP会話一覧ワイヤー**
 
-  | `enforcement` | 制御の文言 |
-  | --- | --- |
-  | `blocked` | 該当の処理は実行していません |
-  | `sanitized` | 該当の内容は、安全な内容に置き換えて処理しました |
-  | `observed` | 処理は続行しました |
+```text
+┌─────────────────────────────────┐
+│ [Menu] Hiromeru                 │
+├─────────────────────────────────┤
+│ 会話            [新しい会話]   │
+│                                 │
+│ ┌─────────────────────────────┐ │
+│ │ 経験者採用の施策            │ │
+│ │ 9月22日 14:30               │ │
+│ └─────────────────────────────┘ │
+│ ┌─────────────────────────────┐ │
+│ │ 無題の会話                  │ │
+│ │ 9月21日 10:15               │ │
+│ └─────────────────────────────┘ │
+│                                 │
+│ [さらに読み込む]               │
+└─────────────────────────────────┘
+```
 
-- 同じ種別と制御の通知が複数ある場合は、1つにまとめて件数を添える。`blocked`は`role="alert"`、それ以外は`role="status"`で、支援技術へ通知する（規約19章）
-- 詳しい状況は、ユーザーがチャットでAgentに尋ねられる（次のTurnで、Agentが種別と制御内容の範囲で説明する。`AGENT_DESIGN.md`の「セキュリティ通知」）
+**SP会話ワイヤー**
 
-**状態とエラー**（詳細は6.3）
-- 実行中のTurnがある間は、送信を受け付けない（`TURN_IN_PROGRESS`）
-- Turnが失敗（上限超過、Guardrailによるブロック、中断など）した場合は、理由を表示し、ユーザーが同じ依頼を再送できるようにする。Agentは自動で再実行しない
-- Responseを受け取れなかった場合は、同じメッセージを再送せず、履歴（`GET /agent-sessions/{id}`）で最新のTurnを確認する。実行中なら`GET .../turns/{turn_id}`で終了を待つ
-- `AGENT_SESSION_NOT_FOUND`（承認APIで会話が見つからない）: 利用できる会話を選ぶか新しく作成し、マスク済みのエラーを新しいメッセージとして送信する
+```text
+┌─────────────────────────────────┐
+│ [会話一覧へ戻る]                │
+│ 経験者採用の施策                │
+├─────────────────────────────────┤
+│                    あなた       │
+│       ┌───────────────────────┐ │
+│       │ 施策を考えてください │ │
+│       └───────────────────────┘ │
+│                                 │
+│ Hiromeru AI                     │
+│ ┌─────────────────────────────┐ │
+│ │ Agentの回答                │ │
+│ └─────────────────────────────┘ │
+│                                 │
+│ Hiromeru AI                     │
+│ ┌─────────────────────────────┐ │
+│ │ 施策案Form                 │ │
+│ │ [Agentと再相談]           │ │
+│ │ [最終承認]                │ │
+│ └─────────────────────────────┘ │
+├─────────────────────────────────┤
+│ Message textarea                │
+│ 0 / 4,000            [送信]     │
+└─────────────────────────────────┘
+```
+
+- `tablet`未満では、`/chat`に会話一覧だけ、`/chat/new`と`/chat/{session_id}`に会話だけを表示する
+- 会話画面のHeaderには「会話一覧へ戻る」と会話タイトルを表示する。戻る操作は`/chat`へ移動する
+- Headerを除くWorkspaceを`calc(100dvb - var(--app-header-height))`に収め、履歴だけをScrollさせる
+
+**会話一覧**
+
+- Headerは`h1`「会話」と「新しい会話」で構成する。選択すると`/chat/new`へ移動し、Sessionは最初のMessage送信時まで作成しない
+- Sessionは`updated_at`の新しい順に、タイトルと更新日時を表示する。日時は`Intl.DateTimeFormat`を使用する
+- タイトルは表示上2行までとするが、Accessible Nameには完全な文字列を使う。`title = null`は「無題の会話」とする
+- 選択中の会話はBrand Surface、Inline start Border、Text weight、`aria-current="page"`で示す。色だけに依存しない
+- Archive、削除、名前変更、検索は設けない
+- 会話がない場合は「まだ会話がありません。マーケティングの依頼から始めましょう」と「新しい会話を始める」を表示する
+- 先頭20件はServer Componentで描画する。末尾到達で次の20件を自動取得し、同じ位置にKeyboard操作用の「さらに読み込む」Buttonも置く
+- 追加読込中はSpinnerと「読み込み中」、失敗時は表示済み会話を残して「もう一度読み込む」を表示する。重複は`session_id`で除く（6.13）
+
+**新しい会話**
+
+```text
+┌─────────────────────────────────────────────┐
+│          Hiromeru AIに相談する              │
+│   施策づくりや投稿案について相談できます   │
+│                                             │
+│ [新しい採用施策を考える]                    │
+│ [既存の施策から投稿案を作る]                │
+│ [公開済み投稿の結果を振り返る]              │
+├─────────────────────────────────────────────┤
+│ Message textarea                            │
+│ 0 / 4,000                        [送信]      │
+└─────────────────────────────────────────────┘
+```
+
+- 相談例Buttonは、その文言をComposerへ設定してFocusを移すだけとし、自動送信しない。利用者は内容を編集してから送信する
+- 相談例は「新しい採用施策を考える」「既存の施策から投稿案を作る」「公開済み投稿の結果を振り返る」の3つとする
+- 最初の送信時は、同じButton操作の中で`POST /agent-sessions`を1回実行し、成功した`session_id`でMessageを送る。Session作成からTurn終了までButtonにSpinnerと「送信中」を表示する
+- Session作成後、Turnの送信を開始した時点で`/chat/{session_id}`へ移動する。二重ClickとShortcutの連続入力を受け付けない
+
+**Bubbleと履歴の表示**
+
+| Item | 配置 | 最大幅 | Visible label |
+| --- | --- | --- | --- |
+| `user_message` | Inline end | 本文レーンの75% | あなた |
+| `assistant_message` | Inline start | 本文レーンの85% | Hiromeru AI |
+| `campaign_proposal`、`x_post_proposal` | Inline start | 本文レーン全幅 | Hiromeru AI |
+| `approval_action` | Inline end | 本文レーンの85% | あなた |
+| `api_result` | Inline start | 本文レーンの85% | システム |
+| Turn進捗 | Inline start | 本文レーンの85% | Hiromeru AI |
+
+- UserとAgentの双方をBubbleで表示する。AI生成内容には「Hiromeru AI」、LLMを使用しないAPI処理結果には「システム」を表示し、人の発言に見せない
+- 各Turnを時系列のList itemとし、その中のItemを`item_number`順に表示する。APIの順序を画面都合で変更しない
+- Message本文はPlain textとして改行を維持し、Markdownや外部HTMLとして解釈しない。長いURLと連続文字列は`overflow-wrap: anywhere`で折り返す
+- 各Bubbleに`time`要素で日時を表示する。発言者は色だけでなく、配置、Visible label、Surfaceで区別する
+- Tool Call、提案以外のTool Result、Web取得内容、記憶内容、隔離内容、子Sessionの内部履歴は表示しない
+
+**過去履歴とScroll**
+
+- 初期表示は最新20 Turnを古い順から新しい順に並べ、会話末尾を表示する
+- 履歴の上端へ到達し、`has_more = true`なら、最小の`turn_number`を`before_turn_number`として以前の20 Turnを自動取得する
+- 上端にはKeyboard操作用の「以前の会話を読み込む」Buttonも置く。自動取得とButton操作で同じ`before_turn_number`を二重に取得しない
+- 取得中は上端にSpinnerと「以前の会話を読み込み中」、失敗時は現在の履歴を残して「もう一度読み込む」を表示する
+- 古いTurnを先頭へ追加した後は、追加前後のScroll height差を補正し、利用者が読んでいたBubbleの位置を維持する
+- 新しいItemを受け取ったとき、利用者が末尾付近にいる場合だけ末尾へScrollする。過去を読んでいる場合は位置を動かさず「最新のメッセージへ」を表示する
+- UserがMessageを送信したときは送信したBubbleを表示して末尾へ移動する。過去履歴の件数とScroll位置はURLへ保持しない
+
+**Composer**
+
+- 複数行Textarea、文字数Counter、Send Button、補助Statusで構成する。添付、画像、音声、TurnのCancelは設けない
+- Textareaは最小3行、最大Block size`--composer-max-height`（`12rem`）とし、それ以上はTextarea内をScrollさせる
+- 前後の空白を除いて1文字以上、アプリケーション設定の上限以下（既定4,000文字）を有効とし、`0 / 4,000`形式でCounterを表示する
+- Enterは改行、`Ctrl+Enter`または`Command+Enter`は送信とする。日本語入力などのComposition中はShortcutでも送信しない
+- 空、上限超過、Turn実行中は送信できない。実行中はButtonにSpinnerと「送信中」を表示し、「回答が完了すると送信できます」を`aria-live="polite"`で通知する
+- Turn実行中も次のDraftをTextareaへ入力できるが送信はできない。送信受付時の値だけを消し、その後に入力したDraftを消さない
+- Keyboard ShortcutまたはButtonで送信を受け付けた後もComposerへFocusを残す
+
+**送信と進捗**
+
+1. 新しい会話ではSessionを作成し、既存会話では現在の`session_id`を使う
+2. `Accept: text/event-stream`でMessageを送信し、User BubbleとProgress Bubbleを表示する
+3. `turn_started`のIDを切断時の確認用に保持し、`activity_started`と`activity_finished`を表示用Statusへ変換する
+4. `turn_finished`でProgress Bubbleを置き換え、TurnのItem、Error、Security Noticeを表示する
+
+| Activity `name` | 表示文言 |
+| --- | --- |
+| `get_session_items` | 会話履歴を確認中 |
+| `search_long_term_memory` | 記憶を検索中 |
+| `save_long_term_memory` | 記憶を保存中 |
+| `delete_long_term_memory` | 記憶を忘却中 |
+| `web_search` | Webを検索中 |
+| `web_fetch` | Web情報を確認中 |
+| `get_campaign`、`search_campaigns` | 施策を確認中 |
+| `get_post`、`search_posts` | 投稿を確認中 |
+| `get_marketing_metrics` | 計測結果を確認中 |
+| `run_campaign_planner` | 施策を立案中 |
+| `run_content_creator` | 投稿案を作成中 |
+| `propose_campaign` | 施策案を整理中 |
+| `propose_x_post` | 投稿案を整理中 |
+| 未知の名前 | 処理中 |
+
+- Progress Bubbleは、現在実行中のActivityをSpinner付きで、完了済みActivityを直近3件まで表示する。Raw Tool名、引数、結果、URL、記憶内容、Block理由は表示しない
+- `activity_finished`が`failed`または`blocked`でも内部理由を表示せず、`turn_finished`の安全なErrorとSecurity Noticeを待つ
+- Button内の「送信中」は操作受付、Progress BubbleはAgentの進捗を示す別のStatusとして併記する
+- `prefers-reduced-motion: reduce`ではSpinnerを停止するが、進捗文言と完了状態を残す
+
+**施策提案Form**
+
+- Headerに「施策案」と状態「未承認」「手書きで編集中」「過去の提案」「承認済み」のいずれかを表示する
+- タイトル、ターゲット像、実施背景、施策目的、施策内容を最初から編集可能にする。`id`と`expected_updated_at`は非表示で保持し、加工しない
+- 初期値との差が生じたら「手書きで編集中」と「提案内容に戻す」を表示する。戻す操作は現在の提案値へ戻すだけで、履歴やDBを変更しない
+- 画面上の中間編集をReducerのLocal stateだけに保持する。入力変更でAgent、API、業務DBを呼び出さない
+- Footerに「Agentと再相談」と「最終承認」を表示する。新規施策は確認Modalなし、既存施策の上書きは「既存の内容を置き換えます」の確認Modalを表示する
+- 承認中はButtonにSpinnerと「承認中」を表示し、同じ操作とForm編集を無効にする。Field Errorは各Field直下へ表示する
+- APIで定義していない最大文字数を画面だけに追加しない。必須項目とBackendの業務条件を同じSchemaで検証する
+
+**X投稿提案Form**
+
+- Headerに「X投稿案」と状態「未公開」「手書きで編集中」「過去の提案」「公開済み」のいずれかを表示する
+- 対象施策、投稿本文、遷移先URLを最初から編集可能にする。対象施策は6.11の検索付きComboboxを使用する
+- 投稿本文と遷移先URLを別Fieldとし、URLは用途に合う`type`と`inputmode`を設定する。本文とUTM付きURLを結合したX文字数規則はBackendを正とする
+- Footerに「Agentと再相談」と「承認して公開」を表示する。公開前に「Xへ公開され、公開後は変更・削除できません」の確認Modalを必須とする
+- 公開中はButtonにSpinnerと「公開中」を表示し、同じ操作とForm編集を無効にする。`INVALID_X_POST`は該当FieldへErrorを表示する
+- 投稿案はX公開成功まで業務データへ保存せず、会話履歴とFormだけに保持する
+
+**Agentと再相談**
+
+- 「Agentと再相談」で同じProposal Bubble内にLabel「修正したい内容」のTextareaと、「取消」「相談内容を送信」を表示する。Modalへ移動しない
+- 送信時は現在のForm値と修正指示を新しいMessageとして送る。ButtonにSpinnerと「相談中」を表示し、再相談を最終承認として扱わない
+- 取消では修正指示だけを破棄し、Form値を維持する。新しい提案を受け取ったら、以前の提案をRead-onlyにして新しい提案をActionableにする
+
+**Actionableな提案**
+
+- 各提案種別で、後続に同種の提案がなく、対応する承認処理が完了済みまたは未解決ではない最新の提案だけを編集・再相談・承認可能にする
+- `upsert_campaign`または`publish_x_post`の成功した`api_result`が後続にある提案はRead-onlyにする。`IDEMPOTENCY_REQUEST_IN_PROGRESS`、`X_POST_OUTCOME_UNKNOWN`、`X_POST_SAVE_FAILED`の承認処理が後続にある場合も、新しい承認を開始できないRead-onlyとし、同じKeyの結果確認または復旧だけを表示する
+- Validation Error、`CAMPAIGN_CONFLICT`、外部作用開始前の失敗で終わった承認は、Errorを表示したうえで提案をActionableのままにする。内容を修正した次の承認は新しい`Idempotency-Key`を使う
+- 同種の新しい提案がある場合、以前の提案はRead-onlyにして「過去の提案」と表示する。Read-only Formから操作Buttonを取り除く
+- Actionable判定はTurnとItemの順序、提案種別、後続のApproval typeと`api_result`から導出し、提案Tool Result自体は変更しない
+
+**最終承認と承認履歴**
+
+- 承認操作ごとにUUID形式の`Idempotency-Key`を生成する。二重Click、通信切断後の再送、内部再試行では同じキーを使い、新しい明示的な承認操作でだけ新しいキーにする
+- `approval_action`はUser側Bubbleへ「施策を最終承認しました」または「X投稿を承認して公開しました」と表示する
+- 承認時のRequest Snapshotはnativeの`details`と`summary`「承認内容を見る」で展開する。初期状態は閉じ、すべての項目をRead-onlyで表示する
+- `api_result`は「システム」のBubbleとし、Success、Error、Outcome unknownをIcon、Title、文言で示す。LLMの回答に見せない
+- API Responseで遷移先IDを取得できる成功直後はSC-05またはSC-07へのLinkを表示する。履歴再取得後に`api_result`だけからIDを復元できない場合は、存在しないLinkを作らない
+- 承認の重大なErrorと結果不明は会話内に残し、Notification Toastだけで伝えない
+
+**Errorと切断からの回復**
+
+| 状況 | 表示と操作 |
+| --- | --- |
+| Messageが空または4,000文字超過 | Composer直下へ具体的なValidation Errorを表示し、送信しない |
+| `TURN_IN_PROGRESS` | 実行中Turnの終了を待ち、「回答が完了すると送信できます」を表示する |
+| TurnのBlock・上限超過・実行失敗 | 該当Turn直下に安全な理由と「同じ内容を入力欄へ戻す」を表示する |
+| `TURN_INTERRUPTED` | 「処理が中断されました。もう一度送信してください」と表示する |
+| SSE切断 | 「結果を確認中」に変更し、同じMessageを再送せず最終状態を確認する |
+| `AGENT_SESSION_NOT_FOUND` | 利用できる会話を選ぶか新しく作成し、必要ならマスク済みErrorを新しいMessageとして送る |
+| Approvalの入力Error | Proposal Formの該当Fieldへ表示し、新しい承認操作を促す |
+| Approvalの処理中 | `Retry-After`後に同じKeyで結果を再取得する |
+| X投稿の結果不明・保存失敗 | 6.3の文言と操作を会話内に残し、自動再投稿しない |
+
+- `turn_started`後に切断した場合は、3秒間隔で`GET .../turns/{turn_id}`をPollする。終了、Abort、画面離脱、または復旧判定時間（既定330秒）に通信の余裕30秒を加えた360秒で停止する。360秒で終端状態を確認できない場合は「結果を確認できません。会話を再読み込みしてください」を表示する
+- `turn_started`前に切断した場合はSession履歴を再取得する。いずれも同じMessageを自動再送しない
+- Userが「同じ内容を入力欄へ戻す」を選んだ場合だけ、失敗したMessageをComposerへ設定してFocusを移す。送信は利用者が明示的に行う
+
+**Security Notice**
+
+- Turnの`security_notices`は、そのTurnのItemの後、Turn Errorの前に表示する。Turnが`blocked`または`failed`でも表示する
+- 同じ`event_type`と`enforcement`は1つにまとめ、複数なら件数を添える。検出内容そのもの、内部識別子、Tool引数、Block理由を表示しない
+
+| `event_type` | 種別の文言 |
+| --- | --- |
+| `prompt_injection` | 外部の情報に、AIへの不正な指示が含まれている可能性を検出しました |
+| `sensitive_data` | 機密情報が含まれている可能性を検出しました |
+| `unauthorized_tool_call` | 許可されていない操作を検出しました |
+| `unsafe_external_action` | 外部への安全でない操作を検出しました |
+
+| `enforcement` | 制御の文言 |
+| --- | --- |
+| `blocked` | 該当の処理は実行していません |
+| `sanitized` | 該当の内容は、安全な内容に置き換えて処理しました |
+| `observed` | 処理は続行しました |
+
+- `blocked`は`role="alert"`、それ以外は`role="status"`とする。詳しい状況は、次のTurnで利用者がAgentへ尋ねられる
+
+**未確定内容と離脱**
+
+- Proposal Formに初期値と異なる手書き修正がある場合、または再相談の修正指示が入力済みの場合は、会話切替、Global navigation、Browser back、Reloadの前に離脱を確認する
+- 通常のComposer Draftだけでは離脱警告を出さない。DraftはURL、Local storage、業務DBへ保存しない
+
+**Accessibilityと受け入れ条件**
+
+- PCでは3列、SPでは会話一覧と会話がRouteで分かれ、主要操作をKeyboardだけで完了できる
+- User、Hiromeru AI、システムをVisible label、配置、Surfaceで区別し、色だけに依存しない
+- `Ctrl+Enter`と`Command+Enter`で送信でき、Enterで改行でき、日本語変換中に誤送信しない
+- Turn実行中はSend ButtonにSpinnerと「送信中」、会話内にProgress Bubbleを表示し、役割を混同しない
+- 過去履歴と会話一覧は自動読込だけに依存せず、Buttonでも追加取得できる。追加後に閲覧位置が変わらない
+- Composer、Proposal Form、Modal、承認履歴、Security Noticeを320px幅と200% Zoomで操作でき、横Scrollを発生させない
+- Proposal Formの手書き修正、再相談、最終承認が別の操作として認識でき、自由文を最終承認として扱わない
+- 承認時Snapshotを`details`で確認でき、古い提案を誤って再承認できない
+- Loading、Activity、Validation、Security Notice、承認結果を適切なLive regionから通知し、同じ内容を重複して読み上げない
+- Sticky ComposerとNotification ToastがFocus対象を覆わず、Reduced MotionでもLoading、Error、最新Messageへの導線を理解できる
 
 ### SC-03（欠番）
-SC-02に統合した。会話一覧の表示と操作は、SC-02の「構成」に示す。
+SC-02に統合した。会話一覧の表示と操作は、SC-02の「会話一覧」に示す。
 
 ### SC-04 施策一覧
 - 表示: 承認して保存した施策のタイトル、施策目的、作成日時、更新日時、投稿数と計測の集計（計測済み・計測待ち・失敗の件数、PV数・流入ユーザー数の合計、流入率（6.12））
@@ -209,7 +647,7 @@ SC-02に統合した。会話一覧の表示と操作は、SC-02の「構成」�
 ## 6. 共通仕様
 
 ### 6.1 グローバルナビ
-ログイン後の全画面に表示する。項目は、チャット（会話一覧を含む）、施策、投稿、計測結果、記憶、ログアウトとする。ログイン中のメールアドレスは、`GET /auth/me`で取得して表示する（Server Componentで取得し、画面の再読み込み後も表示する）。
+ログイン後の全画面に表示する。項目は、チャット（会話一覧を含む）、施策、投稿、計測結果、記憶、ログアウトとする。ログイン中のメールアドレスは、`GET /auth/me`で取得して表示する（Server Componentで取得し、画面の再読み込み後も表示する）。配置とレスポンシブ動作は、6.15の認証後App Shellに従う。
 
 ### 6.2 認証とCSRF
 - 認証は、署名付きCookieで行う。`401 UNAUTHENTICATED`を受けた場合は、SC-01へ移動する（ログイン後は元のURLへ戻る）
@@ -292,13 +730,13 @@ Server dataを表示するすべての画面は、次の状態を扱う。
 
 ### 6.9 レスポンシブとアクセシビリティ
 - Breakpointは、規約13.6の`mobile`（40rem）、`tablet`（64rem）、`desktop`（80rem）とし、モバイルを基準にする
-- グローバルナビは、デスクトップでは常に表示し、モバイルではメニューとして開閉する
+- グローバルナビは、`tablet`以上ではSidebarとして常に表示し、`tablet`未満ではDrawerMenuとして開閉する
 - SC-02は、デスクトップでは左に会話一覧、右に会話（または新しい会話の入力欄）を並べる。モバイルでは、`/chat`は一覧だけ、`/chat/new`と`/chat/{session_id}`は会話だけを表示し、会話から一覧へ戻る導線を出す
 - 各画面に、本文へ移動するSkip linkと、`h1`から始まる見出しの階層を設ける
 - 主要な操作は、キーボードだけで完了できる。確認ダイアログを閉じたときは、開いたボタンへフォーカスを戻す
 - SC-02の提案フォームに未確定の手書き修正がある状態、またはSC-05の編集フォームに未保存の編集がある状態で、別の画面や会話へ移動する場合は、離脱の前に警告する（規約19章）
 - 非同期の更新（Turnの実行中、承認の処理中、検索）は、`aria-live="polite"`で通知する
-- 画面のデザインは、実装の前にDesign plan（規約13.1）を作成して決める。本書は、レイアウトと文言の詳細を対象外とする
+- 画面のデザインは、実装の前にDesign plan（規約13.1）を作成し、本書へレイアウト、主要文言、状態、操作の詳細を記録する
 
 ### 6.10 初週PV数のバー
 SC-05（施策詳細）とSC-06（投稿一覧）の投稿の行に表示する。
@@ -344,13 +782,582 @@ SC-02の会話一覧（`/chat`、および`/chat/new`と`/chat/{session_id}`の�
 - スクロールだけに頼らず、末尾に「さらに読み込む」ボタンを置き、キーボードだけでも続きを読み込めるようにする（規約19章）
 - 表示している間に、会話が更新されて順序が変わる場合がある（最終更新の順のため）。追加で読み込んだ会話が、すでに表示している会話と重複した場合は、`session_id`で除いて、表示済みの行を残す。一覧の再取得は、新しい会話の作成、メッセージ送信、Turnの完了のたびに、先頭の20件を取り直して置き換える（追加で読み込んだ分は、いったん閉じる）
 
+### 6.14 共通UIコンポーネント
+
+全Featureで再利用する表示部品を、`frontend/shared/components/<ComponentName>/`へ置く。各ディレクトリは、原則として`<ComponentName>.tsx`、`<ComponentName>.module.scss`、`<ComponentName>.test.tsx`で構成する。ProviderやHookなど、見た目を持たないファイルにSCSS Moduleは作らない。
+
+**共通の実装原則**
+
+- ComponentはPropsに応じた表示とEvent通知だけを行い、API、router、業務ルール、エラーコードから文言への変換を持たない
+- `className`と`style`は公開Propsに含めない。配置は親のLayoutが担当し、色、余白、角丸、影、z-index、Motionは`shared/styles`のSemantic tokenを参照する
+- 操作可能な要素の最小操作領域は、Pointerの種類によらず縦横`2.75rem`を確保する。表示上のIconが小さい場合も、Button自体の操作領域を縮めない
+- 状態が重なった場合は、`loading`、`disabled`、`error`、`active`、`focus-visible`、`hover`、`default`の順で視覚表現を優先する。`isLoading`がnativeの`disabled`を設定しても、LoadingのSpinnerと文言を表示する。Focus ringは、ErrorやLoadingと同時でも残す
+- Hoverだけに依存した情報や操作を設けない。Focusは`--focus-ring-width`、`--focus-ring-offset`、`--color-focus-ring`で明示する
+- Motionは`transform`と`opacity`だけに使い、`--duration-fast`または`--duration-normal`で完了させる。`prefers-reduced-motion: reduce`ではMotionを無効にしても、同じ状態と操作を理解できるようにする
+- IconにはSVGを使用する。装飾Iconは`aria-hidden="true"`とし、Iconだけの操作はこの節の`Button`では扱わず、具体的な`aria-label`を必須とする別の`IconButton`として定義する
+- 実装前に、既存Tokenで表せない状態別のSurface、Text、Border、Disabled、Overlay、Layer、Control、App Shellの値をSemantic tokenへ追加する。少なくとも`success`、`info`、`warning`、`danger`の4状態色、`--color-surface-disabled`、`--color-text-disabled`、`--color-overlay`、`--z-index-app-header`、`--z-index-toast`、`--z-index-overlay`、`--control-min-height`、`--app-header-height`、`--app-sidebar-width`、`--conversation-list-width`、`--conversation-content-width`、`--composer-max-height`、`--toast-max-width`、`--spinner-size`、`--duration-spinner`、`--easing-linear`を定義する。ComponentからPrimitive tokenやColor literalを参照しない
+
+#### 6.14.1 Button
+
+フォーム送信、確認、取消、再試行など、その場で処理を実行する操作に使う。画面遷移には`Link`または`a`を使い、Buttonでrouterを呼び出さない。Visibleな動詞のラベルを必須とし、IconだけのButtonはこのComponentで作らない。
+
+**公開API**
+
+```tsx
+type ButtonProps = Omit<
+  React.ComponentPropsWithRef<"button">,
+  "children" | "className" | "disabled" | "style"
+> & {
+  children: React.ReactNode;
+  variant?: "primary" | "secondary" | "danger" | "ghost";
+  size?: "small" | "medium";
+  disabled?: boolean;
+  isLoading?: boolean;
+  loadingLabel?: string;
+  block?: boolean;
+};
+```
+
+- `variant`の既定値は`primary`、`size`は`medium`、`type`は誤送信を避けるため`button`とする。フォームの送信だけ、利用側が`type="submit"`を明示する
+- `children`は通常時と処理中で位置と幅が変わらないVisible labelとする。`isLoading`ではSpinnerと`loadingLabel`を表示し、`loadingLabel`の既定値は「処理中」とする
+- `isLoading`または`disabled`ではnativeの`disabled`を設定する。`isLoading`ではあわせて`aria-busy="true"`を設定し、利用側のcontrollerも同じ処理の再実行を受け付けない
+- `isLoading`ではSpinnerだけに置き換えず、処理内容を示す`loadingLabel`を必ず併記する。Spinnerは装飾として`aria-hidden="true"`にし、支援技術には`loadingLabel`をButtonのAccessible Nameとして伝える
+- `block`はButtonを親の横幅に合わせる場合だけ使う。Mobileの主要Submitでは`block`を使い、Desktopでは内容幅を基本とする
+- `ref`はnativeの`button`へ渡せるようにし、Modalを閉じた後のFocus復帰などに使う
+
+**Variant**
+
+| Variant | 用途 | 見た目 | 同じ領域での使用数 |
+| --- | --- | --- | --- |
+| `primary` | 画面またはフォームの主要操作 | Brand背景、反転文字、Borderなし | 原則1つ |
+| `secondary` | 取消、戻る、再相談など | Surface背景、Strong border、Primary text | 必要な数 |
+| `danger` | 忘却など元に戻せない操作の確定 | Danger背景、反転文字 | 確認Modal内に原則1つ |
+| `ghost` | 閉じる、補助操作 | 透明背景、Primary text | 主要操作より弱く表示 |
+
+**寸法と状態**
+
+| 項目 | `small` | `medium` |
+| --- | --- | --- |
+| 最小の高さ | `--control-min-height`（`2.75rem`） | `--control-min-height`（`2.75rem`） |
+| Inline padding | `--space-3` | `--space-4` |
+| Font | `--font-size-sm` / `--font-weight-semibold` | `--font-size-md` / `--font-weight-semibold` |
+| LabelとIconの間隔 | `--space-2` | `--space-2` |
+
+| 状態 | 表示と操作 |
+| --- | --- |
+| `hover` | 背景またはBorderのContrastを1段強める。位置や寸法を変えない |
+| `active` | `transform: translateY(var(--motion-distance-sm))`で押下を示す。処理開始はAnimationを待たない |
+| `focus-visible` | 共通Focus ringを表示する |
+| `disabled` | `isLoading=false`ではDisabled用SurfaceとTextを使用し、Spinner、Hover、Activeを表示しない |
+| `loading` | Spinnerを先頭、`loadingLabel`を後ろに表示する。Loadingの外観をDisabledより優先し、Buttonの幅を維持して連打を受け付けない |
+
+**Spinner**
+
+- Spinnerは`--spinner-size`（`1rem`）のSVGまたはCSS Ringとし、StrokeまたはBorderへ`currentColor`を使う
+- SpinnerとLabelの間隔は`--space-2`とする。Buttonの中央にSpinnerだけを表示せず、SpinnerとLabelの組を中央揃えにする
+- Spinnerは`transform: rotate()`だけをAnimation対象とし、1回転の時間に`--duration-spinner`、Timing functionに`--easing-linear`を使う。Loading中だけ繰り返す
+- 通常LabelとLoading表示を同じGrid areaへ重ね、非表示側を`visibility: hidden`かつAccessibility treeから除外する。Buttonは両方の幅を事前に確保し、Loading開始時の幅と周囲のLayoutを変えない
+- `prefers-reduced-motion: reduce`では回転を停止する。静止したRingとVisibleな`loadingLabel`を残し、Loading状態を識別できるようにする
+- RequestはClickまたはSubmitの受付直後に開始し、Spinnerの描画や回転開始を待たない
+
+**非同期操作の文言**
+
+| 操作 | 通常Label | `loadingLabel` |
+| --- | --- | --- |
+| Login | ログイン | ログイン中 |
+| Message送信 | 送信 | 送信中 |
+| Agentと再相談 | Agentと再相談 | 相談中 |
+| 施策の最終承認 | 最終承認 | 承認中 |
+| X投稿の最終承認 | 承認して公開 | 公開中 |
+| 施策編集の保存 | 保存 | 保存中 |
+| 記憶の忘却 | 忘却する | 忘却中 |
+| 一覧の追加読込 | さらに読み込む | 読み込み中 |
+| 回復可能な処理の再試行 | もう一度試す | 再試行中 |
+| Logout | ログアウト | ログアウト中 |
+
+- 画面固有の操作名が表にない場合も、通常Labelと同じ動詞を使った具体的な進行形を設定し、「処理中」だけで済ませない
+- Button内のSpinnerとLoading labelは操作を受け付けたことを示す。SC-02の会話内に表示するAgentの「実行中」やActivityは、処理の進捗を示す別のStatusとして併記する
+
+**受け入れ条件**
+
+- EnterとSpaceでnative Buttonとして実行でき、`disabled`と`isLoading`では実行されない
+- `type`を省略したButtonが親FormをSubmitしない
+- Labelが2行になってもIconとSpinnerが重ならず、長い日本語を省略しない
+- Focus、Disabled、Loadingが色だけでなく、Focus ring、操作不能、Spinnerと文言で判別できる
+- Loading開始前後でButtonのInline sizeと周囲のLayoutが変わらない
+- Reduced MotionでSpinnerが回転しなくても、静止RingとLoading labelから処理中と判断できる
+- Loadingの開始と完了は、利用側のStatus領域またはToastでも支援技術へ通知される
+
+#### 6.14.2 TextField
+
+メールアドレス、パスワード、検索語、URLなどの単一行入力に使う。複数行の本文は`TextArea`、選択は`Select`または`Combobox`として別に定義し、`TextField`へModeを追加しない。
+
+**公開API**
+
+```tsx
+type TextFieldProps = Omit<
+  React.ComponentPropsWithRef<"input">,
+  "className" | "name" | "size" | "style"
+> & {
+  name: string;
+  label: string;
+  description?: string;
+  error?: string;
+  trailingAction?: React.ReactNode;
+};
+```
+
+- `label`は常に表示する。PlaceholderをLabelの代わりにせず、入力例が必要な場合だけ使用する
+- `id`がなければ`useId()`で生成し、Visible labelの`htmlFor`と一致させる。`name`、用途に合う`type`、`autocomplete`、`inputmode`は利用側が必ず指定する
+- `description`と`error`には別のIDを割り当て、入力の`aria-describedby`へ存在するものだけを結合する
+- `error`がある場合は`aria-invalid="true"`とし、入力直後ではなく、Blur後またはSubmit後に利用側が渡す。Error文は入力の直下へ表示し、Inputの`aria-describedby`で関連付ける
+- 必須項目はnativeの`required`に加え、Labelの横に「必須」とTextで表示する。任意項目に記号だけの説明を使わない
+- `trailingAction`は表示上InputのInline endへ置くが、Inputと重ねない。Passwordの表示切替など、Fieldに直接関係する1つの操作だけに使用する
+- `TextField`は`trailingAction`の処理や文言を知らない。SC-01では利用側がPasswordの「表示／隠す」Buttonと状態を渡す
+
+**Anatomyと状態**
+
+```text
+Label   必須
+┌──────────────────────────────┐
+│ Value / placeholder [action] │
+└──────────────────────────────┘
+Description または Error
+```
+
+| 状態 | Border | 補助表示 | DOM |
+| --- | --- | --- | --- |
+| `default` | `--color-border` | Description | 通常の`input` |
+| `hover` | `--color-border-strong` | 変更なし | 変更なし |
+| `focus-visible` | Brand borderと共通Focus ring | 変更なし | native Focus |
+| `error` | `--color-border-danger` | Danger icon、具体的なErrorと修正方法 | `aria-invalid="true"`、`aria-describedby` |
+| `disabled` | Disabled SurfaceとText | Descriptionを残す | native `disabled` |
+| `readOnly` | Secondary Surface、通常のText Contrast | 「変更できません」が必要ならDescriptionへ表示 | native `readOnly` |
+
+- 入力の最小の高さは`--control-min-height`、Inline paddingは`--space-3`、Labelとの間隔は`--space-2`、補助表示との間隔は`--space-1`とする
+- Errorは枠の色だけで示さず、Iconと文言を併記する。DescriptionはError表示中も必要なら残し、Errorと重複する文言は削る
+- Error領域はInput直下に置き、想定する文言の最小Block sizeを確保する。`overflow: clip`の内側で、Error文を`translateY(calc(var(--motion-distance-md) * -1))`と`opacity: 0`から最終位置へ表示する
+- Errorの表示は`--duration-normal`と`--easing-emphasized`、解除は`--duration-fast`と`--easing-standard`を使う。DOMへの追加、読み上げ、Focus移動はAnimation完了を待たない
+- `prefers-reduced-motion: reduce`ではErrorの移動とFadeを行わず、最終位置へ即時表示・非表示する
+- FormのSubmit失敗時は、画面仕様に従い、最初のError InputまたはForm上部のError summaryへFocusを移す。Toastだけで入力Errorを伝えない
+
+**受け入れ条件**
+
+- Label、Description、Errorの関連をAccessible NameとDescriptionで取得できる
+- Email、Password、URL、検索で適切なKeyboardとAutocompleteを指定できる
+- 貼り付けを禁止せず、長い入力、空文字、日本語変換中でもLayoutと入力を壊さない
+- Errorの追加が読み上げられ、修正後に`aria-invalid`とError文が取り除かれる
+- Error文がInputの下端から表示され、Reduced Motionでは即時表示される
+- `trailingAction`が入力値を覆わず、KeyboardでInputの次に操作できる
+- Tab順はDOM順と一致し、Focus時にSticky headerやOverlayで全体が隠れない
+
+#### 6.14.3 Card
+
+情報を視覚的にまとめる非操作のSurfaceとして使う。Card全体への`onClick`、`role="button"`、`tabIndex`は設けない。画面遷移はCard内の見出しまたは「詳細を見る」のLink、更新操作はButtonで提供する。
+
+**公開API**
+
+```tsx
+type CardProps = {
+  as?: "div" | "section" | "article";
+  variant?: "surface" | "subtle" | "outlined";
+  padding?: "small" | "medium" | "large";
+  id?: string;
+  ariaLabel?: string;
+  ariaLabelledBy?: string;
+  children: React.ReactNode;
+};
+```
+
+- `as`の既定値は`div`とする。単独で意味が完結する一覧項目は`article`、見出しを持つ画面内の区画は`section`を利用側が明示する
+- `section`では`ariaLabel`または`ariaLabelledBy`を必須とする。見出しがある場合はVisible headingのIDを`ariaLabelledBy`へ渡す
+- Header、Body、Footerの専用Subcomponentは作らない。利用側がSemantic HTMLを使い、Card直下のLayoutで`--space-4`の間隔を設ける
+
+| Variant | 用途 | Surface | Border / Shadow |
+| --- | --- | --- | --- |
+| `surface` | 標準の情報群 | `--color-surface` | `--color-border`、Shadowなし |
+| `subtle` | 補助情報、入れ子の情報群 | `--color-background-secondary` | Borderなし、Shadowなし |
+| `outlined` | 背景との差より境界を強調する情報群 | 透明 | `--color-border-strong`、Shadowなし |
+
+| Padding | 値 | 用途 |
+| --- | --- | --- |
+| `small` | `--space-3` | 密度の高い一覧の補助情報 |
+| `medium` | `--space-4` | 既定 |
+| `large` | `--space-5` | 詳細画面の主要な情報群 |
+
+- 角丸は`--radius-md`とする。重要度を影の強さで表現せず、見出し、順序、余白で情報の優先順位を示す
+- Card自体はHover、Active、Pointer cursor、移動Animationを持たない。内部のLinkとButtonだけが操作Feedbackを持つ
+- Mobileでは親幅に収め、固定幅を持たない。長いURL、ID、投稿本文は`overflow-wrap: anywhere`で折り返し、横Scrollを発生させない
+
+**受け入れ条件**
+
+- CardだけがTab順に追加されず、内部の操作だけへFocusできる
+- `article`と`section`を用途に応じて選べ、Heading階層をCard Componentが強制しない
+- Cardを入れ子にする場合は、SurfaceまたはBorderが異なり、境界を色だけに依存しない
+- 320px幅、長文、空の補助項目でも内容が重ならず、横Scrollを発生させない
+
+#### 6.14.4 Modal
+
+利用者が現在の作業を中断して判断する必要がある確認、または短い補助操作に使う。通常の情報閲覧、長いフォーム、画面遷移の代替には使わない。6.4の確認操作は、このModalを使用する。
+
+**公開API**
+
+```tsx
+type ModalCloseReason = "closeButton" | "cancelButton" | "escape" | "backdrop";
+
+type ModalProps = {
+  open: boolean;
+  title: string;
+  description?: string;
+  size?: "small" | "medium" | "large";
+  dismissible?: boolean;
+  initialFocusRef?: React.RefObject<HTMLElement | null>;
+  children: React.ReactNode;
+  footer?: React.ReactNode;
+  onRequestClose: (reason: ModalCloseReason) => void;
+};
+```
+
+- nativeの`<dialog>`を`showModal()`でTop layerへ表示する。`open`は利用側が管理し、Componentは閉じる理由を`onRequestClose`で通知するだけとする
+- `dismissible`の既定値は`true`とし、Close Button、Escape、Backdropで閉じられる。保存または承認のRequest中だけ`false`とし、処理完了またはError表示まで閉じられないことを画面内の文言で示す
+- `title`をVisibleな`h2`として表示し、生成したIDを`aria-labelledby`へ設定する。`description`があれば`aria-describedby`へ設定する
+- 確認Modalの初期Focusは、取消など最も安全な操作へ置く。通常ModalはClose Button、明確な主入力を持つDesktopのModalだけ`initialFocusRef`の入力へ置く
+- 開く直前のElementを保持し、閉じた後に存在していて操作可能ならFocusを戻す。存在しない場合は、画面の`h1`または次の論理的な操作へ利用側がFocusを移す
+- Footerの操作順は、DOM上で「取消」「確定」とする。DesktopではInline endへ横並び、Mobileでは同じ順序のまま上から縦に全幅で表示し、視覚順、Tab順、読み上げ順を一致させる
+
+| Size | 最大Inline size | 用途 |
+| --- | --- | --- |
+| `small` | `24rem` | 短い確認 |
+| `medium` | `32rem` | 既定の確認、補助操作 |
+| `large` | `40rem` | 複数の確認項目を含む内容 |
+
+- 外側はViewportに`--space-4`の余白を確保し、Block sizeは`90dvb`以下とする。HeaderとFooterを固定し、本文だけをScroll可能にする
+- `<dialog>`と本文へ`overscroll-behavior: contain`を設定し、Backdrop後方のPageをScrollさせない
+- Backdropは`--color-overlay`、Panelは`--color-surface`、z-indexは`--z-index-overlay`を使う。表示はOpacityと短いScaleだけとし、Reduced Motionでは即時表示する
+- Request失敗はModal内の操作付近に表示し、入力Errorは該当Fieldにも表示する。Notification Toastだけを表示してModalを閉じない
+
+**受け入れ条件**
+
+- 開いている間、TabとShift+TabのFocusがnative dialog内に留まり、背面を操作できない
+- `dismissible=true`ではEscape、Close Button、Backdropの各操作で理由を通知し、`false`ではどれでも閉じない
+- 閉じた後に起点のButtonへFocusが戻る
+- 320px幅、200% Zoom、長いTitleと本文でもClose ButtonとFooterが画面外へ失われない
+- Reduced Motionでも開閉、処理中、Errorを識別できる
+
+#### 6.14.5 DrawerMenu
+
+Mobileでグローバルナビを表示するためのNavigation専用Drawerとする。Desktopの常設Navigationや、任意の編集Panelには使わない。内容はApp Shellが渡し、Drawer自体は遷移先やログアウト処理を知らない。
+
+**公開API**
+
+```tsx
+type DrawerCloseReason = "closeButton" | "escape" | "backdrop" | "navigation";
+
+type DrawerMenuProps = {
+  id: string;
+  open: boolean;
+  label?: string;
+  children: React.ReactNode;
+  footer?: React.ReactNode;
+  onRequestClose: (reason: DrawerCloseReason) => void;
+};
+```
+
+- nativeの`<dialog>`をModal表示し、Inline startから開くPanelとしてStyleする。`label`の既定値は「メニュー」とし、Panel上部のVisible headingおよび`aria-labelledby`に使用する
+- 開くButtonはDrawerの外に置き、`aria-controls={id}`、`aria-expanded={open}`、Accessible Name「メニューを開く」を設定する。開いている間は、同じ位置のClose Buttonを「メニューを閉じる」とする
+- Main navigationは`<nav aria-label="メインメニュー">`とLinkのListで構成する。現在の画面のLinkには`aria-current="page"`を設定する
+- Navigation Linkを実行したら`navigation`で閉じる。現在地のLinkを選んだ場合も閉じる。Logoutの処理中はFooterのButtonをLoadingにするが、Navigation LinkとClose Buttonは無効にしない
+- 表示時はClose ButtonへFocusを置き、閉じた後は開くButtonへ戻す。TabはDrawer内に留まり、EscapeとBackdropで閉じられる
+
+**Layout**
+
+- `tablet`未満でだけ使用する。PanelのInline sizeは`min(20rem, calc(100vi - var(--space-6)))`、Block sizeは`100dvb`とし、Safe areaをPaddingへ加える
+- Headerは上部、Footerのメールアドレスとログアウトは下部、Navigationは中央のScroll領域とする。長いメールアドレスは折り返す
+- LinkとButtonの操作領域は高さ`--control-min-height`以上とする。Linkは現在地、Hover、Focus、Activeを色だけでなく左Borderまたは太さでも区別する
+- Panelの移動には`transform`と`--duration-normal`を使い、BackdropはOpacityだけを変える。Reduced Motionでは移動せず即時表示する
+- `<dialog>`とScroll領域へ`overscroll-behavior: contain`を設定し、背面のPageをScrollさせない
+
+**受け入れ条件**
+
+- 開くButton、Close Button、Escape、Backdrop、Navigationのすべてで開閉できる
+- Screen readerがDrawerの名前、現在地、開閉状態を取得できる
+- Keyboardだけで全NavigationとLogoutへ到達し、Focusが背面へ移動しない
+- 320px幅、Landscape、長いメールアドレス、Navigation項目の長文化でもFooterが失われず、NavigationだけがScrollする
+- DesktopではDrawerのTriggerとDialogを表示せず、常設Navigationを表示する
+
+#### 6.14.6 NotificationToast
+
+画面を移動せずに伝えられる、非同期操作の結果と注意を通知する。成功、補助情報、注意、回復可能な失敗を扱い、利用者の判断や入力修正に必要な情報をToastだけへ置かない。
+
+| Variant | 用途 | 既定Title | Live region | 自動消去 |
+| --- | --- | --- | --- | --- |
+| `success` | 保存、更新、再取得などの成功 | 完了しました | `role="status"`、`aria-live="polite"` | 5秒後 |
+| `info` | 操作を妨げない補助情報 | お知らせ | `role="status"`、`aria-live="polite"` | 5秒後 |
+| `warning` | 利用者の確認が必要だが、現在の操作を続けられる状態 | 確認してください | `role="status"`、`aria-live="polite"` | 自動では閉じない |
+| `error` | 画面を維持したまま回復または再試行できる失敗 | 処理できませんでした | `role="alert"`、`aria-live="assertive"` | 自動では閉じない |
+
+| Toastを使う | Toastだけでは扱わない |
+| --- | --- |
+| 保存や更新の完了 | Fieldの入力Error。該当FieldとError summaryへ表示する |
+| 一覧の追加読込、再取得、補助操作の結果 | `401`のログイン遷移、`404`のNot found |
+| 同じ操作を安全に再試行できる失敗 | `X_POST_OUTCOME_UNKNOWN`、`X_POST_SAVE_FAILED`など、画面内に残す必要がある結果 |
+| 操作を続けられる軽微な注意 | 確認、承認、破壊的操作の代替 |
+
+- `error` Variantは、現在の画面を維持しながら利用者へ知らせる必要がある重要な失敗に限定する。追加読込、再取得、Background更新、補助操作のAPI通信失敗が該当する
+- SC-01には`NotificationToastProvider`を配置しない。Login Formの入力Error、`INVALID_CREDENTIALS`、Rate limit、Login APIの通信・Server Errorは、SC-01のInputまたはForm Error Trayへ表示する
+- Field、Modal、Page内にErrorの対象と回復操作を置ける場合は、その場所を優先する。Notification Toastを既存のError表示の重複通知として使わない
+
+**公開API**
+
+```tsx
+type NotificationVariant = "success" | "info" | "warning" | "error";
+
+type NotificationToastData = {
+  id: string;
+  variant: NotificationVariant;
+  title?: string;
+  message: string;
+  actionLabel?: string;
+};
+
+type NotificationToastProps = {
+  notification: NotificationToastData;
+  actionLoading?: boolean;
+  onAction?: (id: string) => void;
+  onDismiss: (id: string) => void;
+};
+
+type NotifyNotificationInput = Omit<NotificationToastData, "id"> & {
+  dedupeKey?: string;
+  onAction?: () => void | Promise<void>;
+};
+```
+
+- `NotificationToast`は純粋な表示Componentとする。`NotificationToastProvider`と`useNotificationToast()`が画面内で一意な連番IDの生成、Queue、重複排除、自動消去、Actionの処理中状態、表示とDismissのEventを管理する
+- `NotificationToastProvider`は認証後App Layoutに1つだけ置く。同時に表示するToastは1件とし、後続はFIFOで最大2件まで待機させる
+- 同じ`dedupeKey`の通知が表示中または待機中なら追加せず、既存のVariant、Title、Message、Actionを最新に置き換える。上限を超えた古い待機通知は破棄し、Consoleへ内容を出さない
+- `success`と`info`は5秒後に閉じる。PointerがToast上にある間、Toast内へKeyboard Focusがある間、またはActionの実行中は残り時間を停止し、外れた後に残り時間から再開する
+- `warning`と`error`は、Close Button、任意のAction成功、または画面遷移で閉じる。通知を読む時間を利用者へ強制しない
+- `message`はcontrollerのMapperで業務結果またはError codeから変換した、安全で具体的な文言と次の操作を渡す。BackendのMessage、Stack trace、URL、Secretをそのまま渡さない
+- `actionLabel`がある場合だけSecondary相当のButtonを表示し、再試行や結果を開くなど1つの操作に限る。Close ButtonはVariantによらず表示し、Accessible Nameを「通知を閉じる」とする
+
+**配置とMotion**
+
+```text
+              Viewport上端
+                   ↓
+          ┌────────────────────┐
+          │ ✓ 保存しました   × │
+          └────────────────────┘
+
+┌──────────────┬─────────────────────────────┐
+│ Global nav   │ Main                        │
+│              │                             │
+└──────────────┴─────────────────────────────┘
+```
+
+- Viewportへ`position: fixed`で配置し、Inline方向はViewport全体の中央とする。画面やMain contentの幅、Sidebarの有無では位置を変えない
+- Desktopの最終位置はSafe areaと`--space-3`を空けたBlock start、最大Inline sizeは`--toast-max-width`（`24rem`）とする
+- Mobileの最終位置は、Safe areaと`--app-header-height`の下に`--space-2`を空けた位置とする。Inline方向は左右に`--space-3`を確保し、その範囲で最大幅まで広げる
+- MobileではToastをApp Headerより低いLayerに置き、Headerの背後からHeader直下へ降りてくるように見せる。Menu ButtonとLogoを覆わない
+- 非表示位置は最終位置よりToast自身の高さと`--space-3`だけ上とし、表示時は`translateY`と`opacity`で上部から降ろす。表示は`--duration-normal`、終了は`--duration-fast`で上部へ戻す
+- `prefers-reduced-motion: reduce`では移動とFadeを行わず、最終位置へ即時表示・非表示する
+- LayerはPage content、Toast、App HeaderとSidebar、Dialogの順とする。nativeのModalとDrawerはTop layerに置き、Toastより前面に表示する
+
+**表示とAccessibility**
+
+- Variantに対応するIcon、Title、Message、任意のAction、Close Buttonを表示する。状態別のSurface、Border、Textを使い、色だけでなくIconとTitleでVariantを示す
+- 表示中の1件だけをLive regionとし、`aria-atomic="true"`を設定する。Toast表示時にFocusを移さず、現在の入力やModal操作を中断しない
+- Toast内のActionとClose ButtonはKeyboardで操作でき、操作領域を`--control-min-height`以上とする。ToastがFocused element全体を覆わないようにする
+- Action実行中はAction ButtonをLoadingにし、二重実行と自動消去を停止する。失敗時は同じToastを残し、Variantと文言を更新できる
+
+**受け入れ条件**
+
+- 各通知が、Variantに対応する1つのLive regionからTitleとMessageを1回だけ読み上げられる
+- Toast表示時にFocusが移らず、ActionまたはClose Buttonへ通常のTab順で到達できる
+- `success`と`info`は5秒後に閉じ、Hover、Focus、Action中は残り時間が停止する
+- `warning`と`error`は自動で閉じず、Close後に待機中の次のToastを表示する
+- 同じ`dedupeKey`を重複表示せず、通知の更新で同じ内容を繰り返し読み上げない
+- 長い日本語、長い識別子、200% Zoom、320px幅でも横Scrollを発生させず、Close Buttonを失わない
+
+### 6.15 認証後App Shell
+
+SC-02、SC-04からSC-09で共有する画面外枠である。SC-01とLPには使用しない。Desktopは固定左Sidebar、MobileはSticky HeaderとDrawerMenuでGlobal navigationを提供する。
+
+**Design plan**
+
+| 項目 | 方針 |
+| --- | --- |
+| Subject | AIとの相談、施策、公開済み投稿、計測、記憶を行き来する業務Workspace |
+| Audience | 採用Xを継続運用するマーケター |
+| Primary job | 現在地とログイン状態を失わず、主要5機能へ移動する |
+| 情報の優先順位 | Page content、現在地、主要Navigation、Account、通知 |
+| Palette | Paper背景、White Surface、Greenの現在地、Limeは主要Actionの限定的な強調、状態色 |
+| Typography | Navigationと本文はSans、IDや補助的な数値だけMono |
+| Layout | DesktopはSidebarとMain、MobileはHeaderとMain。SC-02だけDesktopのMainを会話一覧と会話へ分割する |
+| Motion | DrawerとNotification Toastの空間関係だけに使用し、Page遷移へ装飾Motionを追加しない |
+
+**Desktop共通ワイヤー**
+
+```text
+┌──────────────────┬──────────────────────────────────────────┐
+│ Hiromeru         │                                          │
+│                  │  <main id="main-content">                │
+│ チャット         │                                          │
+│ 施策             │  Page heading                             │
+│ 投稿             │  Page actions                             │
+│ 計測結果         │                                          │
+│ 記憶             │  Page content                             │
+│                  │                                          │
+│                  │                                          │
+│ user@example.com │                                          │
+│ ログアウト       │                                          │
+└──────────────────┴──────────────────────────────────────────┘
+```
+
+- `tablet`以上では、Inline startにSidebarを常設する。`--app-sidebar-width`は`tablet`以上`14rem`、`desktop`以上`16rem`とし、Block sizeは`100dvb`、Block startにSticky配置する
+- Sidebarは上からLogo、Main navigation、可変の空白、ログイン中のメールアドレス、ログアウトの順とする。Navigation領域だけを必要に応じてScroll可能にし、Accountとログアウトは下端に残す
+- Main navigationは`<nav aria-label="メインメニュー">`とLinkのListで構成する。順序は、チャット、施策、投稿、計測結果、記憶とする
+- 現在地のLinkには`aria-current="page"`を設定し、Brand Surface、Inline startのBorder、Text weightで示す。Hoverとの違いを色だけに依存させない
+- Mainは`min-inline-size: 0`、`min-block-size: 100dvb`とする。通常画面のContentは`--layout-max-width`までとし、`tablet`で`--space-5`、`desktop`で`--space-6`のPage paddingを設ける
+- Page全体をDocument scrollさせ、SidebarはViewportに残す。SC-02のWorkspaceだけは、下記の専用Scrollを使う
+- Footerは設けない。Notification Toastは6.14.6に従い、Sidebarを含むViewport全体の上部中央へ表示する
+
+**Mobile共通ワイヤー**
+
+```text
+┌─────────────────────────────────┐
+│ [Menu]  Hiromeru                │  Sticky Header
+├─────────────────────────────────┤
+│                                 │
+│ <main id="main-content">        │
+│                                 │
+│ Page heading                    │
+│ Page content                    │
+│                                 │
+└─────────────────────────────────┘
+```
+
+- `tablet`未満ではSidebarを描画せず、高さ`--app-header-height`（`4rem`）のHeaderをBlock startへSticky配置する
+- HeaderはInline startからMenu Button、Logoの順とする。Menu Buttonは`--control-min-height`以上の操作領域を持ち、DrawerMenuの`id`を`aria-controls`、開閉状態を`aria-expanded`で示す
+- MainのInline paddingは`--space-4`、Block paddingは画面の内容に応じて`--space-5`を基本とする。Notification ToastはHeaderの背後からHeader直下へ表示する
+- DrawerMenuの内容と操作は6.14.5に従う。Drawerを閉じた後はMenu ButtonへFocusを戻す
+
+**Drawer展開時**
+
+```text
+┌──────────────────────┬──────────────┐
+│ メニュー        [×]  │              │
+│                      │              │
+│ チャット             │              │
+│ 施策                 │  Backdrop    │
+│ 投稿                 │              │
+│ 計測結果             │              │
+│ 記憶                 │              │
+│                      │              │
+│ user@example.com     │              │
+│ ログアウト           │              │
+└──────────────────────┴──────────────┘
+```
+
+**SC-02のDesktop Workspace**
+
+```text
+┌──────────────┬──────────────────┬────────────────────────────┐
+│ Global nav   │ 会話一覧         │ 会話                       │
+│              │                  │                            │
+│ チャット     │ 新しい会話       │ Messages                   │
+│ 施策         │                  │ Proposal forms             │
+│ 投稿         │ Session 1        │                            │
+│ 計測結果     │ Session 2        │                            │
+│ 記憶         │ Session 3        │                            │
+│              │                  ├────────────────────────────┤
+│ Account      │ さらに読み込む   │ Message composer           │
+└──────────────┴──────────────────┴────────────────────────────┘
+```
+
+- `tablet`以上では、Global Sidebar、会話一覧、会話の3列とする。`--conversation-list-width`は`tablet`以上`18rem`、`desktop`以上`20rem`とし、会話列は`minmax(0, 1fr)`とする
+- Workspaceは`100dvb`に収め、Document全体をScrollさせない。会話一覧と会話履歴を独立したScroll領域とし、Message composerは会話列のBlock endに残す
+- `/chat`の会話列には新しい会話の入力を表示する。`/chat/new`と`/chat/{session_id}`では、新しい会話または選択中の会話を表示する
+- `tablet`未満では、`/chat`に会話一覧だけ、`/chat/new`と`/chat/{session_id}`に会話だけを表示する。会話画面には「会話一覧へ戻る」を表示し、Headerを除いた`calc(100dvb - var(--app-header-height))`をWorkspaceの高さとする
+
+**Landmark、Focus、Scroll**
+
+- App Shellの先頭に「本文へ移動」Skip linkを置き、各画面で1つだけ存在する`<main id="main-content">`へ移動する
+- Desktop Sidebarは`aside`、Global navigationは`nav`、Mobile上部は`header`を使用する。App ShellはPage固有の`h1`を描画しない
+- Page遷移後はPage固有の`h1`をFocus可能な状態にして、必要な場合にFocusを移せるようにする。Drawerを閉じるだけの場合はMenu Buttonへ戻す
+- Sticky Header、Sidebar、Message composer、Notification ToastがFocused element全体を覆わないように、Scroll領域へ適切な`scroll-padding`を設定する
+- Sidebar、Drawer、会話一覧のScroll位置はURLに保持しない。ブラウザの戻る操作では、Next.jsの標準Scroll復元を妨げない
+
+**実装構成**
+
+```tsx
+type AppNavigationId = "chat" | "campaigns" | "posts" | "metrics" | "memories";
+
+type AppNavigationItem = {
+  id: AppNavigationId;
+  label: string;
+  href: string;
+  icon: React.ReactNode;
+};
+
+type AppShellProps = {
+  email: string;
+  navigationItems: AppNavigationItem[];
+  activeNavigationId: AppNavigationId;
+  drawerOpen: boolean;
+  logoutLoading: boolean;
+  children: React.ReactNode;
+  onDrawerOpen: () => void;
+  onDrawerClose: (reason: DrawerCloseReason) => void;
+  onLogout: () => void;
+};
+```
+
+- `navigationItems`のIconは装飾として`aria-hidden="true"`にし、LinkのAccessible NameにはVisibleな`label`を使う
+- `activeNavigationId`は現在のPathからClient境界が導出する。AppShellはPathを解析せず、受け取ったIDと一致するLinkへ`aria-current="page"`を設定する
+
+```text
+app/
+├── layout.tsx
+├── login/
+└── (authenticated)/
+    ├── layout.tsx
+    ├── chat/
+    ├── campaigns/
+    ├── posts/
+    ├── metrics/
+    └── memories/
+
+shared/components/
+├── AppShell/
+├── DrawerMenu/
+└── NotificationToast/
+```
+
+- Rootの`app/layout.tsx`はHTML、Metadata、Global styleだけを担当する。`app/(authenticated)/layout.tsx`がServer Componentとして`GET /auth/me`を実行し、利用者情報を認証後Shellへ渡す
+- `GET /auth/me`が`401`の場合は、元のURLを保持して`/login`へRedirectする。Route Groupの`(authenticated)`はURLへ現れない
+- `AppShell`は、利用者のメールアドレス、現在地、DrawerとLogoutの表示状態、childrenをPropsで受け取る純粋UIとする。APIとrouterを直接呼び出さない
+- 現在地の判定、Drawerの開閉、Logout Eventの接続は小さいClient境界へ置く。Logout Requestは`auth`FeatureのcontrollerとAPI Clientが実行する
+- `NotificationToastProvider`は認証後Layoutに1つだけ配置する。PageやFeatureごとにProviderまたはLive regionを追加しない
+
+**受け入れ条件**
+
+- Desktop、Tablet、MobileでGlobal navigationの項目、現在地、メールアドレス、ログアウトへ到達できる
+- 320px幅、200% Zoom、長いメールアドレスでも横Scrollせず、Main contentとLogoutを失わない
+- KeyboardだけでSkip link、Global navigation、Main content、Logoutを順に操作できる
+- Mobile Drawerを開いている間は背面を操作できず、閉じた後にMenu ButtonへFocusが戻る
+- SC-02のDesktopで会話一覧と会話履歴が独立してScrollし、Message composerが画面外へ失われない
+- Notification Toastが上部中央から表示され、DesktopではSidebarの有無に位置を左右されず、MobileではHeaderの操作を覆わない
+- Reduced MotionではDrawerとNotification Toastの移動を無効にしても、開閉と通知状態を理解できる
+
 ## 7. 参照用のAPI
 
 画面が使用する参照用のAPI（`API_DESIGN.md`の6章）と、記憶の削除API（同7章）、SC-05の施策の編集で使う施策編集API（同4.2）を示す。
 
 | API | 画面 | 内容 | 定義 |
 | --- | --- | --- | --- |
-| `GET /campaigns` | SC-04、SC-06 | 施策の一覧、キーワードによる意味検索、作成日時による絞り込み。計測の集計を含む | 6.2 |
+| `GET /campaigns` | SC-02、SC-04、SC-06 | 投稿提案Formの対象施策の選択、施策の一覧、キーワードによる意味検索、作成日時による絞り込み。計測の集計を含む | 6.2 |
 | `GET /campaigns/{campaign_id}` | SC-05 | 施策の内容、紐づく投稿・記憶、計測の集計 | 6.3 |
 | `GET /posts` | SC-06 | 公開済み投稿の一覧、キーワードによる意味検索、施策・公開日時による絞り込み、公開日時・初週PV数による並び替え。計測の状態と値を含む | 6.4 |
 | `GET /posts/{post_id}` | SC-07 | 公開済み投稿の内容、対象施策、UTM、計測結果 | 6.5 |
@@ -391,7 +1398,7 @@ SC-02の会話一覧（`/chat`、および`/chat/new`と`/chat/{session_id}`の�
 | 8 記憶管理 | SC-09、SC-02（記憶の保存を依頼） |
 | NFR-SEC-007 認証とセッションを保護する | SC-01、6.2 |
 | NFR-REL-008 承認APIを冪等にする、NFR-REL-009 中断されたAgent Turnを復旧する | SC-02、6.3 |
-| Frontend規約 4章 ディレクトリ構成、11章 サーバー通信 | 3.1 |
+| Frontend規約 4章 ディレクトリ構成、11章 サーバー通信 | 3.1、6.15 |
 | Frontend規約 9.4 URL state | 6.7 |
 | Frontend規約 18章 Errorと画面状態 | 6.3、6.8 |
-| Frontend規約 13.6 Breakpoint、19章 Accessibility | 6.9 |
+| Frontend規約 6章 Component、13章 Design、15章 Motion、19章 Accessibility | 6.9、6.14、6.15 |
