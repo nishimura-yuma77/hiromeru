@@ -82,6 +82,7 @@ class FakeXApi:
         self.gate: asyncio.Event | None = None
         self.started = asyncio.Event()
         self.impression_count = 0
+        self.metrics_error: Exception | None = None
 
     async def post(self, text: str) -> XPostResult:
         """`outcome` に従って結果を返す。`gate` があれば、解放されるまで待つ。"""
@@ -99,7 +100,9 @@ class FakeXApi:
 
     async def get_impression_count(self, x_post_id: str) -> int:
         """設定したMetrics値を返す。"""
-        del x_post_id
+        self.calls.append(x_post_id)
+        if self.metrics_error is not None:
+            raise self.metrics_error
         return self.impression_count
 
 
@@ -109,10 +112,13 @@ class FakeGa4:
     def __init__(self) -> None:
         self.calls: list[Ga4ReportQuery] = []
         self.active_users = 0
+        self.error: Exception | None = None
 
     async def get_active_users(self, query: Ga4ReportQuery) -> int:
         """Queryを記録して固定値を返す。"""
         self.calls.append(query)
+        if self.error is not None:
+            raise self.error
         return self.active_users
 
 
