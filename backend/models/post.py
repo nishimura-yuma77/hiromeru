@@ -1,5 +1,6 @@
 """公開済み投稿と、その検索・トラッキング・計測のモデル。"""
 
+import uuid
 from datetime import datetime
 
 from pgvector.sqlalchemy import Vector
@@ -12,6 +13,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
 )
+from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from domain.constants import EMBEDDING_DIMENSIONS
@@ -85,7 +87,18 @@ class PostMetric(Base):
 
     __tablename__ = "post_metrics"
     __table_args__ = (
-        Index("ix_post_metrics_status_scheduled", "status", "scheduled_at"),
+        Index(
+            "ix_post_metrics_status_next_scheduled",
+            "status",
+            "next_attempt_at",
+            "scheduled_at",
+        ),
+        Index(
+            "ix_post_metrics_memory_retry",
+            "memory_generated_at",
+            "memory_failed_at",
+            "memory_next_attempt_at",
+        ),
         CheckConstraint(
             "status <> 'completed' OR (x_pv_count IS NOT NULL"
             " AND landing_user_count IS NOT NULL AND measured_at IS NOT NULL)",
@@ -96,9 +109,15 @@ class PostMetric(Base):
             " AND (landing_user_count IS NULL OR landing_user_count >= 0)",
             name="ck_post_metrics_non_negative",
         ),
+        CheckConstraint(
+            "attempt_count >= 0 AND memory_attempt_count >= 0",
+            name="ck_post_metrics_attempts_non_negative",
+        ),
     )
 
-    post_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("posts.id"), primary_key=True)
+    post_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("posts.id", ondelete="RESTRICT"), primary_key=True
+    )
     scheduled_at: Mapped[datetime]
     status: Mapped[PostMetricStatus] = mapped_column(
         pg_enum(PostMetricStatus, "post_metric_status"), server_default="pending"
@@ -106,3 +125,13 @@ class PostMetric(Base):
     x_pv_count: Mapped[int | None] = mapped_column(BigInteger, default=None)
     landing_user_count: Mapped[int | None] = mapped_column(BigInteger, default=None)
     measured_at: Mapped[datetime | None] = mapped_column(default=None)
+    execution_token: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), default=None)
+    lease_expires_at: Mapped[datetime | None] = mapped_column(default=None)
+    attempt_count: Mapped[int] = mapped_column(server_default="0")
+    next_attempt_at: Mapped[datetime | None] = mapped_column(default=None)
+    last_error_code: Mapped[str | None] = mapped_column(String(255), default=None)
+    memory_generated_at: Mapped[datetime | None] = mapped_column(default=None)
+    memory_failed_at: Mapped[datetime | None] = mapped_column(default=None)
+    memory_attempt_count: Mapped[int] = mapped_column(server_default="0")
+    memory_next_attempt_at: Mapped[datetime | None] = mapped_column(default=None)
+    memory_last_error_code: Mapped[str | None] = mapped_column(String(255), default=None)
