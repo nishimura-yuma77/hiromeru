@@ -243,7 +243,9 @@ class MemoryView:
     content: str
     similarity: float | None
     campaigns: list[tuple[int, str, datetime | None]]
+    campaigns_next_cursor: str | None
     posts: list[tuple[int, datetime]]
+    posts_next_cursor: str | None
 
 
 @dataclass(frozen=True)
@@ -251,4 +253,20 @@ class MemoryListView:
     """記憶一覧。"""
 
     memories: list[MemoryView]
+    next_cursor: str | None
+
+
+@dataclass(frozen=True)
+class MemoryCampaignListView:
+    """記憶に関連する施策の一覧。"""
+
+    campaigns: list[tuple[int, str, datetime | None]]
+    next_cursor: str | None
+
+
+@dataclass(frozen=True)
+class MemoryPostListView:
+    """記憶に関連する公開済み投稿の一覧。"""
+
+    posts: list[tuple[int, datetime]]
     next_cursor: str | None

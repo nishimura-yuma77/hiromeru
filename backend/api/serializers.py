@@ -9,7 +9,9 @@ from services.views import (
     CampaignEditView,
     CampaignListView,
     HistoryView,
+    MemoryCampaignListView,
     MemoryListView,
+    MemoryPostListView,
     MetricsReportView,
     MetricsView,
     PostDetailView,
@@ -246,12 +248,36 @@ def serialize_memory_list(view: MemoryListView) -> dict[str, Any]:
                     {"id": cid, "title": title, "archived_at": _iso(archived_at)}
                     for cid, title, archived_at in memory.campaigns
                 ],
+                "campaigns_next_cursor": memory.campaigns_next_cursor,
                 "posts": [
                     {"post_id": pid, "published_at": _iso(published_at)}
                     for pid, published_at in memory.posts
                 ],
+                "posts_next_cursor": memory.posts_next_cursor,
             }
             for memory in view.memories
+        ],
+        "next_cursor": view.next_cursor,
+    }
+
+
+def serialize_memory_campaigns(view: MemoryCampaignListView) -> dict[str, Any]:
+    """記憶に関連する施策一覧の形式。"""
+    return {
+        "campaigns": [
+            {"id": cid, "title": title, "archived_at": _iso(archived_at)}
+            for cid, title, archived_at in view.campaigns
+        ],
+        "next_cursor": view.next_cursor,
+    }
+
+
+def serialize_memory_posts(view: MemoryPostListView) -> dict[str, Any]:
+    """記憶に関連する公開済み投稿一覧の形式。"""
+    return {
+        "posts": [
+            {"post_id": post_id, "published_at": _iso(published_at)}
+            for post_id, published_at in view.posts
         ],
         "next_cursor": view.next_cursor,
     }

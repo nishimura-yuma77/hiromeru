@@ -7,7 +7,11 @@ from fastapi.responses import JSONResponse
 
 from api.deps import Authenticated, Context, CsrfProtected
 from api.responses import ok
-from api.serializers import serialize_memory_list
+from api.serializers import (
+    serialize_memory_campaigns,
+    serialize_memory_list,
+    serialize_memory_posts,
+)
 from domain.constants import DEFAULT_PAGE_LIMIT, MAX_PAGE_LIMIT
 from services.memory_service import MemoryService
 
@@ -19,12 +23,41 @@ async def list_memories(
     ctx: Context,
     auth: Authenticated,
     query: str | None = None,
+    campaign_id: Annotated[int | None, Query(gt=0)] = None,
     limit: Annotated[int, Query(ge=1, le=MAX_PAGE_LIMIT)] = DEFAULT_PAGE_LIMIT,
     cursor: str | None = None,
 ) -> JSONResponse:
     """長期記憶を、関連する施策と投稿とあわせて返す。"""
-    view = await MemoryService(ctx).list(auth, query=query, limit=limit, cursor=cursor)
+    view = await MemoryService(ctx).list(
+        auth, query=query, campaign_id=campaign_id, limit=limit, cursor=cursor
+    )
     return ok(serialize_memory_list(view))
+
+
+@router.get("/{memory_id}/campaigns")
+async def list_memory_campaigns(
+    memory_id: Annotated[int, Path(gt=0)],
+    ctx: Context,
+    auth: Authenticated,
+    limit: Annotated[int, Query(ge=1, le=MAX_PAGE_LIMIT)] = DEFAULT_PAGE_LIMIT,
+    cursor: str | None = None,
+) -> JSONResponse:
+    """記憶に関連する施策を返す。"""
+    view = await MemoryService(ctx).campaigns(auth, memory_id, limit=limit, cursor=cursor)
+    return ok(serialize_memory_campaigns(view))
+
+
+@router.get("/{memory_id}/posts")
+async def list_memory_posts(
+    memory_id: Annotated[int, Path(gt=0)],
+    ctx: Context,
+    auth: Authenticated,
+    limit: Annotated[int, Query(ge=1, le=MAX_PAGE_LIMIT)] = DEFAULT_PAGE_LIMIT,
+    cursor: str | None = None,
+) -> JSONResponse:
+    """記憶に関連する公開成功済み投稿を返す。"""
+    view = await MemoryService(ctx).posts(auth, memory_id, limit=limit, cursor=cursor)
+    return ok(serialize_memory_posts(view))
 
 
 @router.delete("/{memory_id}")
