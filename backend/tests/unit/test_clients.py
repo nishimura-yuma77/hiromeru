@@ -13,6 +13,7 @@ from clients.errors import (
     XApiRetryableProviderError,
 )
 from clients.fakes import FakeEmbeddingClient, FakeXApiClient
+from clients.web_search import HttpWebSearchProvider, WebSearchProviderError
 from clients.x_api import HttpXApiClient
 from core.config import Settings
 
@@ -325,6 +326,48 @@ async def test_XMetrics通信失敗_timeoutのときRetryableProviderError() -> 
     assert "provider-secret-body" not in str(info.value)
 
 
+async def test_Web検索Providerは認証情報をheaderだけに付け型付き結果を返す() -> None:
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(
+            200,
+            json={
+                "results": [
+                    {"title": "Example", "url": "https://example.com", "snippet": "text"}
+                ]
+            },
+        )
+
+    provider = HttpWebSearchProvider(
+        base_url="https://search.example.com",
+        api_key="provider-secret",
+        timeout_seconds=1,
+        transport=httpx.MockTransport(handler),
+    )
+    rows = await provider.search("masked query", 1)
+
+    assert rows[0].url == "https://example.com"
+    assert seen[0].url == "https://search.example.com/search"
+    assert seen[0].headers["authorization"] == "Bearer provider-secret"
+    assert seen[0].read() == b'{"query":"masked query","limit":1}'
+
+
+async def test_Web検索Providerは不正応答の本文を例外へ含めない() -> None:
+    provider = HttpWebSearchProvider(
+        base_url="https://search.example.com",
+        api_key="provider-secret",
+        timeout_seconds=1,
+        transport=httpx.MockTransport(
+            lambda _request: httpx.Response(500, text="provider-secret-body")
+        ),
+    )
+    with pytest.raises(WebSearchProviderError) as info:
+        await provider.search("query", 1)
+    assert "provider-secret" not in str(info.value)
+
+
 def test_Client_Mode_fakeとrealで実行Clientを切り替える() -> None:
     fake = build_default_context(Settings(auth_cookie_secret=SecretStr(SECRET)))
     real = build_default_context(
@@ -339,6 +382,8 @@ def test_Client_Mode_fakeとrealで実行Clientを切り替える() -> None:
             x_access_token_secret=SecretStr("x-token-secret"),
             ga4_property_id="123456",
             ga4_service_account_json=SecretStr('{"type":"service_account"}'),
+            web_search_base_url="https://search.example.com",
+            web_search_api_key=SecretStr("search-secret"),
         )
     )
 

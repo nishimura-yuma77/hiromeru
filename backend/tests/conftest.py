@@ -12,7 +12,11 @@ from pydantic import SecretStr
 
 from agent_runtime.business_tools import ToolHandlerDependencies, build_default_tool_registry
 from agent_runtime.firewall import FakeAgentFirewall
+from agent_runtime.guardrail import FakeToolResultGuardrail
+from agent_runtime.web_tools import WebToolDependencies, register_web_tools
 from api.main import create_app
+from clients.web_fetch import HttpxPinnedTransport, SafeWebFetcher, SystemResolver
+from clients.web_search import FakeWebSearchProvider
 from core.config import Settings
 from repositories.database import SessionLocal
 from services.auth_service import AuthService
@@ -76,6 +80,23 @@ def ctx(
     agent: FakeAgentRunner,
     compactor: FakeContextCompactor,
 ) -> ServiceContext:
+    registry = build_default_tool_registry(
+        ToolHandlerDependencies(settings, SessionLocal, embedding, clock)
+    )
+    register_web_tools(
+        registry,
+        WebToolDependencies(
+            SessionLocal,
+            FakeWebSearchProvider(),
+            SafeWebFetcher(
+                resolver=SystemResolver(),
+                transport=HttpxPinnedTransport(settings.web_fetch_timeout_seconds),
+                max_bytes=settings.web_fetch_max_bytes,
+                max_redirects=settings.web_fetch_max_redirects,
+            ),
+            uuid.uuid4,
+        ),
+    )
     return ServiceContext(
         settings=settings,
         session_factory=SessionLocal,
@@ -84,10 +105,9 @@ def ctx(
         x_api=x_api,
         agent_runner=agent,
         context_compactor=compactor,
-        tool_registry=build_default_tool_registry(
-            ToolHandlerDependencies(settings, SessionLocal, embedding, clock)
-        ),
+        tool_registry=registry,
         agent_firewall=FakeAgentFirewall(),
+        tool_result_guardrail=FakeToolResultGuardrail(),
         sleep=no_sleep,
         new_uuid=uuid.uuid4,
     )

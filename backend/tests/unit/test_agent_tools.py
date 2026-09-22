@@ -115,7 +115,7 @@ def test_Tool実行設定は正数とTurn境界を検証する(field: str, value
         )
 
 
-def test_既定Registryは9ToolとAgent別allow_listを登録する(ctx: ServiceContext) -> None:
+def test_既定Registryは11ToolとAgent別allow_listを登録する(ctx: ServiceContext) -> None:
     expected = {
         "get_session_items",
         "search_long_term_memory",
@@ -126,6 +126,8 @@ def test_既定Registryは9ToolとAgent別allow_listを登録する(ctx: Service
         "get_post",
         "search_posts",
         "get_marketing_metrics",
+        "web_search",
+        "web_fetch",
     }
     assert {name for name in expected if ctx.tool_registry.get(name) is not None} == expected
     assert ctx.tool_registry.resolve(AgentType.CAMPAIGN_PLANNER, "get_session_items") is None
@@ -139,6 +141,14 @@ def test_既定Registryは9ToolとAgent別allow_listを登録する(ctx: Service
     deletion = ctx.tool_registry.get("delete_long_term_memory")
     assert deletion is not None
     assert all(not spec.retryable for spec in deletion.errors.values())
+    web_search = ctx.tool_registry.get("web_search")
+    web_fetch = ctx.tool_registry.get("web_fetch")
+    assert web_search is not None and web_fetch is not None
+    assert web_search.result_source == AgentContentSource.WEB_SEARCH
+    assert web_fetch.result_source == AgentContentSource.WEB_CONTENT
+    assert web_search.result_context_class == AgentContextClass.UNTRUSTED_DATA
+    assert web_fetch.result_context_class == AgentContextClass.UNTRUSTED_DATA
+    assert web_fetch.errors["WEB_FETCH_FAILED"].retryable is True
 
 
 def test_業務Tool_schemaは重複_XOR_naive日時と型変換を拒否する() -> None:

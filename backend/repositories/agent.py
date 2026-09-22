@@ -888,6 +888,48 @@ class ToolExecutionRepository:
         )
         return await self.terminal_result(turn_id, tool_call.id)
 
+    async def active_search_result(
+        self, *, turn_id: int, search_result_id: str
+    ) -> tuple[int, str] | None:
+        """同じ現在Turnのactive completed web_search ResultからURLを解決する。"""
+        result = (
+            await self._session.execute(
+                select(AgentItem)
+                .join(
+                    ToolExecution,
+                    ToolExecution.tool_call_item_id == AgentItem.related_tool_call_item_id,
+                )
+                .where(
+                    AgentItem.agent_turn_id == turn_id,
+                    AgentItem.item_type == AgentItemType.TOOL_RESULT,
+                    AgentItem.context_status == AgentItemContextStatus.ACTIVE,
+                    ToolExecution.status == ToolExecutionStatus.COMPLETED,
+                    AgentItem.related_tool_call_item_id.in_(
+                        select(AgentItem.id).where(
+                            AgentItem.agent_turn_id == turn_id,
+                            AgentItem.item_type == AgentItemType.TOOL_CALL,
+                            AgentItem.content["name"].as_string() == "web_search",
+                        )
+                    ),
+                )
+            )
+        ).scalars()
+        matched: tuple[int, str] | None = None
+        for item in result:
+            content = item.content
+            data = content.get("data") if content.get("success") is True else None
+            rows = data.get("results") if isinstance(data, dict) else None
+            if not isinstance(rows, list):
+                continue
+            for row in rows:
+                if not isinstance(row, dict) or row.get("search_result_id") != search_result_id:
+                    continue
+                url = row.get("url")
+                if not isinstance(url, str) or matched is not None:
+                    return None
+                matched = (item.id, url)
+        return matched
+
     async def finish(
         self,
         *,
@@ -901,6 +943,9 @@ class ToolExecutionRepository:
         now: datetime,
         event_type: SecurityEventType | None = None,
         detector: SecurityDetector | None = None,
+        quarantine: bool = False,
+        context_override: dict[str, Any] | None = None,
+        tool_name: str | None = None,
     ) -> AgentItem | None:
         """running条件でresult、block event、execution終端化を原子的に追加する。"""
         turn = (
@@ -940,6 +985,8 @@ class ToolExecutionRepository:
         ).scalar_one_or_none()
         if execution_status is None:
             return None
+        if quarantine != (context_override is not None):
+            return None
         item = AgentItem(
             agent_turn_id=turn_id,
             related_tool_call_item_id=tool_call_item_id,
@@ -948,7 +995,14 @@ class ToolExecutionRepository:
             item_type=AgentItemType.TOOL_RESULT,
             context_class=context_class,
             content_source=source,
-            context_status=AgentItemContextStatus.ACTIVE,
+            context_status=(
+                AgentItemContextStatus.QUARANTINED
+                if quarantine
+                else AgentItemContextStatus.ACTIVE
+            ),
+            quarantine_reason="prompt_injection" if quarantine else None,
+            context_override=context_override,
+            quarantined_at=now if quarantine else None,
             content=result,
             created_at=now,
         )
@@ -965,7 +1019,15 @@ class ToolExecutionRepository:
                     source=AgentContentSource.SYSTEM,
                     enforcement=SecurityEnforcement.BLOCKED,
                     summary="Tool execution was blocked by a security control.",
-                    event_metadata={},
+                    event_metadata=(
+                        {
+                            "classification": "prompt_injection",
+                            "tool_name": tool_name,
+                            "source_item_id": item.id,
+                        }
+                        if quarantine
+                        else {}
+                    ),
                     detected_at=now,
                 )
             )

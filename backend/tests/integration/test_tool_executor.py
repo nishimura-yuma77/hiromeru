@@ -7,6 +7,7 @@ from sqlalchemy import select
 
 from agent_runtime.executor import ToolExecutor
 from agent_runtime.firewall import FakeAgentFirewall, FirewallDecision
+from agent_runtime.guardrail import FakeToolResultGuardrail, GuardrailDecision
 from agent_runtime.runner import AgentContext, AgentContextEntry
 from agent_runtime.tools import (
     StrictToolModel,
@@ -369,6 +370,46 @@ async def test_output_schema不正は再試行せず宣言されたtrust分類�
     assert execution.attempt_count == 1
     assert items[-1].content_source == AgentContentSource.WEB_CONTENT
     assert items[-1].context_class == AgentContextClass.UNTRUSTED_DATA
+
+
+async def test_untrusted_resultのGuardrail_blockはrawを隔離し返却とreplayへ出さない(
+    account: Account, ctx: ServiceContext
+) -> None:
+    raw = "RAW-GUARDRAIL-CONTENT"
+    handler = RecordingHandler()
+    handler.output = Output(value=raw)
+    executor, turn_id, _ = await _executor(
+        account,
+        ctx,
+        handler,
+        source=AgentContentSource.WEB_CONTENT,
+        context_class=AgentContextClass.UNTRUSTED_DATA,
+    )
+    guardrail = ctx.tool_result_guardrail
+    assert isinstance(guardrail, FakeToolResultGuardrail)
+    guardrail.decision = GuardrailDecision.BLOCK
+    call = ToolCall(name="sample_tool", stable_key="quarantine", arguments={"text": "x"})
+
+    first = await executor.invoke(call)
+    replay = await executor.invoke(call)
+    items, execution, events = await _rows(ctx, turn_id)
+    result_item = items[-1]
+
+    assert first == replay
+    assert first.error is not None and first.error.code == "TOOL_RESULT_QUARANTINED"
+    assert raw not in repr(first.model_dump())
+    assert result_item.content["data"]["value"] == raw
+    assert raw not in repr(result_item.context_override)
+    assert result_item.context_status == AgentItemContextStatus.QUARANTINED
+    assert execution.status == ToolExecutionStatus.COMPLETED
+    assert events[0].event_type == SecurityEventType.PROMPT_INJECTION
+    assert events[0].detector == SecurityDetector.ORCAROUTER_GUARDRAIL
+    assert events[0].event_metadata == {
+        "classification": "prompt_injection",
+        "tool_name": "sample_tool",
+        "source_item_id": result_item.id,
+    }
+    assert raw not in repr(events[0].event_metadata)
 
 
 async def test_Turn終端との遅延write競合ではResult_Event_Executionを更新しない(

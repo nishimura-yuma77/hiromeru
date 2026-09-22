@@ -3,17 +3,19 @@
 import asyncio
 from contextlib import suppress
 from datetime import datetime
-from typing import Any
+from typing import Any, cast
 
 from pydantic import BaseModel, ValidationError
 
 from agent_runtime.firewall import FirewallDecision, FirewallRequest
+from agent_runtime.guardrail import GuardrailDecision, GuardrailRequest
 from agent_runtime.runner import ActivityStatus, AgentContext, AgentContextEntry, ProgressReporter
 from agent_runtime.tools import (
     ToolCall,
     ToolDefinition,
     ToolDomainError,
     ToolError,
+    ToolPreparation,
     ToolProvenance,
     ToolProvenanceRef,
     ToolResult,
@@ -31,6 +33,7 @@ from domain.enums import (
     SecurityEventType,
     ToolExecutionStatus,
 )
+from models import AgentItem
 from repositories.agent import (
     PreparedToolExecution,
     ToolCallConflictError,
@@ -49,6 +52,7 @@ _ERROR_MESSAGES = {
     "TOOL_TURN_ENDED": "The tool call was cancelled because the turn ended.",
     "TOOL_EXECUTION_IN_PROGRESS": "The same tool call is already running.",
     "TOOL_CALL_CONFLICT": "The tool call key was reused with different input.",
+    "TOOL_RESULT_QUARANTINED": "The tool result was blocked by a security control.",
 }
 
 
@@ -128,7 +132,7 @@ class ToolExecutor:
         if prepared is None:
             return _failure("TOOL_TURN_ENDED")
         if prepared.terminal_result is not None:
-            return ToolResult.model_validate(prepared.terminal_result.content)
+            return self._result_from_item(prepared.terminal_result)
         if not await self._claim(prepared):
             terminal = await self._terminal(prepared)
             return terminal or _failure("TOOL_EXECUTION_IN_PROGRESS")
@@ -138,6 +142,7 @@ class ToolExecutor:
         status: ToolExecutionStatus
         event_type: SecurityEventType | None = None
         detector: SecurityDetector | None = None
+        quarantine = False
         result_source = AgentContentSource.SYSTEM
         result_class = AgentContextClass.CONVERSATION
         if not provenance_valid:
@@ -168,6 +173,22 @@ class ToolExecutor:
             result, status, event_type, detector = await self._run_allowed(
                 context, call, definition, validated_input, prepared
             )
+            if status == ToolExecutionStatus.COMPLETED and result.success and (
+                result_class == AgentContextClass.UNTRUSTED_DATA
+            ):
+                try:
+                    guardrail = await self._ctx.tool_result_guardrail.inspect(
+                        GuardrailRequest(
+                            tool_name=call.name,
+                            content=cast(dict[str, Any], result.data),
+                        )
+                    )
+                except Exception:  # noqa: BLE001 - Guardrail障害はfail closed
+                    guardrail = GuardrailDecision.BLOCK
+                if guardrail == GuardrailDecision.BLOCK:
+                    quarantine = True
+                    event_type = SecurityEventType.PROMPT_INJECTION
+                    detector = SecurityDetector.ORCAROUTER_GUARDRAIL
         saved = await self._finish(
             prepared,
             result,
@@ -176,6 +197,8 @@ class ToolExecutor:
             result_class,
             event_type,
             detector,
+            quarantine=quarantine,
+            tool_name=call.name,
         )
         final_status = (
             "blocked"
@@ -183,7 +206,7 @@ class ToolExecutor:
             else ("succeeded" if status == ToolExecutionStatus.COMPLETED else "failed")
         )
         self._activity_finished(activity_id, final_status)
-        return result if saved else _failure("TOOL_TURN_ENDED")
+        return self._result_from_item(saved) if saved is not None else _failure("TOOL_TURN_ENDED")
 
     async def _run_allowed(
         self,
@@ -211,9 +234,23 @@ class ToolExecutor:
                 SecurityEventType.UNAUTHORIZED_TOOL_CALL,
                 SecurityDetector.APPLICATION,
             )
+        execution_input: Any = validated_input
+        firewall_arguments = mask_json(validated_input.model_dump(mode="json"))
+        prepare = getattr(definition.handler, "prepare", None)
+        if prepare is not None:
+            try:
+                prepared_input = await prepare(context, validated_input)
+                if not isinstance(prepared_input, ToolPreparation):
+                    raise TypeError
+                execution_input = prepared_input.execution_input
+                firewall_arguments = mask_json(prepared_input.masked_arguments)
+            except ToolDomainError as error:
+                return self._domain_failure(definition, error)
+            except Exception:  # noqa: BLE001 - preflight詳細を漏らさない
+                return _failure("TOOL_EXECUTION_FAILED"), ToolExecutionStatus.FAILED, None, None
         request = FirewallRequest(
             tool_name=call.name,
-            masked_arguments=mask_json(validated_input.model_dump(mode="json")),
+            masked_arguments=firewall_arguments,
             agent_type=context.agent_type,
             provenance=call.provenance,
             stable_key=call.stable_key,
@@ -230,15 +267,21 @@ class ToolExecutor:
                 SecurityDetector.ORCAROUTER_FIREWALL,
             )
         result, status = await self._execute_with_retry(
-            context, definition, validated_input, prepared
+            context, definition, execution_input, prepared
         )
-        return result, status, None, None
+        unsafe = result.error is not None and result.error.code == "UNSAFE_URL"
+        return (
+            result,
+            status,
+            SecurityEventType.UNSAFE_EXTERNAL_ACTION if unsafe else None,
+            SecurityDetector.APPLICATION if unsafe else None,
+        )
 
     async def _execute_with_retry(
         self,
         context: TrustedToolContext,
         definition: ToolDefinition,
-        validated_input: BaseModel,
+        validated_input: Any,  # noqa: ANN401 - preflightはTool固有の内部型も返す
         prepared: PreparedToolExecution,
     ) -> tuple[ToolResult, ToolExecutionStatus]:
         for attempt in range(self._ctx.settings.tool_max_attempts):
@@ -356,7 +399,13 @@ class ToolExecutor:
         return (
             _failure(error.code, retryable=spec.retryable, message=spec.message),
             ToolExecutionStatus.BLOCKED if spec.blocked else ToolExecutionStatus.FAILED,
-            SecurityEventType.UNAUTHORIZED_TOOL_CALL if spec.blocked else None,
+            (
+                SecurityEventType.UNSAFE_EXTERNAL_ACTION
+                if error.code == "UNSAFE_URL"
+                else SecurityEventType.UNAUTHORIZED_TOOL_CALL
+            )
+            if spec.blocked
+            else None,
             SecurityDetector.APPLICATION if spec.blocked else None,
         )
 
@@ -393,7 +442,7 @@ class ToolExecutor:
             item = await ToolExecutionRepository(session).terminal_result(
                 self._turn_id, prepared.tool_call.id
             )
-        return ToolResult.model_validate(item.content) if item is not None else None
+        return self._result_from_item(item) if item is not None else None
 
     async def _terminal_by_key(
         self,
@@ -409,7 +458,16 @@ class ToolExecutor:
                 arguments=arguments,
                 provenance=provenance,
             )
-        return ToolResult.model_validate(item.content) if item is not None else None
+        return self._result_from_item(item) if item is not None else None
+
+    @staticmethod
+    def _result_from_item(item: AgentItem) -> ToolResult:
+        content = (
+            item.context_override
+            if item.context_status == AgentItemContextStatus.QUARANTINED
+            else item.content
+        )
+        return ToolResult.model_validate(content)
 
     async def _finish(
         self,
@@ -420,7 +478,13 @@ class ToolExecutor:
         context_class: AgentContextClass,
         event_type: SecurityEventType | None,
         detector: SecurityDetector | None,
-    ) -> bool:
+        *,
+        quarantine: bool = False,
+        tool_name: str | None = None,
+    ) -> AgentItem | None:
+        override = (
+            _failure("TOOL_RESULT_QUARANTINED").model_dump(mode="json") if quarantine else None
+        )
         async with self._ctx.session_factory() as session, session.begin():
             item = await ToolExecutionRepository(session).finish(
                 turn_id=self._turn_id,
@@ -433,8 +497,11 @@ class ToolExecutor:
                 now=self._ctx.clock.now(),
                 event_type=event_type,
                 detector=detector,
+                quarantine=quarantine,
+                context_override=override,
+                tool_name=tool_name,
             )
-            return item is not None
+            return item
 
     def _activity_started(self, name: str, parent_activity_id: str | None) -> str:
         try:

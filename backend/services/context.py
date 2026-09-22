@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from agent_runtime.compactor import ContextCompactor
 from agent_runtime.firewall import AgentFirewall
+from agent_runtime.guardrail import ToolResultGuardrail
 from agent_runtime.runner import AgentRunner
 from agent_runtime.tools import ToolRegistry
 from clients.embedding import EmbeddingClient
@@ -39,5 +40,6 @@ class ServiceContext:
     context_compactor: ContextCompactor
     tool_registry: ToolRegistry
     agent_firewall: AgentFirewall
+    tool_result_guardrail: ToolResultGuardrail
     sleep: Callable[[float], Awaitable[None]]
     new_uuid: Callable[[], uuid.UUID]

@@ -8,9 +8,13 @@ from fastapi import Request
 from agent_runtime.business_tools import ToolHandlerDependencies, build_default_tool_registry
 from agent_runtime.compactor import StubContextCompactor
 from agent_runtime.firewall import DenyAllAgentFirewall
+from agent_runtime.guardrail import DenyAllToolResultGuardrail, FakeToolResultGuardrail
 from agent_runtime.runner import StubAgentRunner
+from agent_runtime.web_tools import WebToolDependencies, register_web_tools
 from clients.embedding import OrcaRouterEmbeddingClient
 from clients.fakes import FakeEmbeddingClient, FakeXApiClient
+from clients.web_fetch import HttpxPinnedTransport, SafeWebFetcher, SystemResolver
+from clients.web_search import FakeWebSearchProvider, HttpWebSearchProvider
 from clients.x_api import HttpXApiClient
 from core.clock import SystemClock
 from core.config import Settings, get_settings
@@ -24,6 +28,8 @@ def build_default_context(settings: Settings | None = None) -> ServiceContext:
     if resolved.external_client_mode == "fake":
         embedding = FakeEmbeddingClient(resolved.embedding_dimensions)
         x_api = FakeXApiClient()
+        web_search = FakeWebSearchProvider()
+        guardrail = FakeToolResultGuardrail()
     else:
         embedding = OrcaRouterEmbeddingClient(
             base_url=resolved.orcarouter_base_url,
@@ -40,9 +46,29 @@ def build_default_context(settings: Settings | None = None) -> ServiceContext:
             access_token_secret=resolved.x_access_token_secret.get_secret_value(),
             timeout_seconds=resolved.x_api_timeout_seconds,
         )
+        web_search = HttpWebSearchProvider(
+            base_url=resolved.web_search_base_url,
+            api_key=resolved.web_search_api_key.get_secret_value(),
+            timeout_seconds=resolved.web_search_timeout_seconds,
+        )
+        guardrail = DenyAllToolResultGuardrail()
     clock = SystemClock()
     registry = build_default_tool_registry(
         ToolHandlerDependencies(resolved, SessionLocal, embedding, clock)
+    )
+    register_web_tools(
+        registry,
+        WebToolDependencies(
+            SessionLocal,
+            web_search,
+            SafeWebFetcher(
+                resolver=SystemResolver(),
+                transport=HttpxPinnedTransport(resolved.web_fetch_timeout_seconds),
+                max_bytes=resolved.web_fetch_max_bytes,
+                max_redirects=resolved.web_fetch_max_redirects,
+            ),
+            uuid.uuid4,
+        ),
     )
     return ServiceContext(
         settings=resolved,
@@ -54,6 +80,7 @@ def build_default_context(settings: Settings | None = None) -> ServiceContext:
         context_compactor=StubContextCompactor(),
         tool_registry=registry,
         agent_firewall=DenyAllAgentFirewall(),
+        tool_result_guardrail=guardrail,
         sleep=asyncio.sleep,
         new_uuid=uuid.uuid4,
     )

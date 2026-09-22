@@ -137,6 +137,14 @@ class ToolHandler(Protocol):
 
 
 @dataclass(frozen=True)
+class ToolPreparation:
+    """Firewall前にDB/URL検証したTool固有入力。"""
+
+    execution_input: Any
+    masked_arguments: dict[str, Any]
+
+
+@dataclass(frozen=True)
 class ToolDefinition:
     """後続Issueが登録するTool定義。"""
 

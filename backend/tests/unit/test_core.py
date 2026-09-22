@@ -36,6 +36,8 @@ def _real_settings(**overrides: object) -> Settings:
         "x_access_token_secret": "x-token-secret",
         "ga4_property_id": "123456",
         "ga4_service_account_json": '{"type":"service_account"}',
+        "web_search_base_url": "https://search.example.com",
+        "web_search_api_key": "search-secret",
     }
     values.update(overrides)
     return Settings.model_validate(values)

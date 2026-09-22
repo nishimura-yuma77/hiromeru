@@ -46,6 +46,14 @@ class Settings(BaseSettings):
     orcarouter_api_key: SecretStr = SecretStr("")
     embedding_timeout_seconds: float = 30.0
 
+    # Web検索Providerと、取得側のSSRF/response上限。
+    web_search_base_url: str = ""
+    web_search_api_key: SecretStr = SecretStr("")
+    web_search_timeout_seconds: float = 15.0
+    web_fetch_timeout_seconds: float = 15.0
+    web_fetch_max_bytes: int = 1_000_000
+    web_fetch_max_redirects: int = 5
+
     # X API。OAuth 1.0a User Context用の4 Credential。
     x_api_base_url: str = "https://api.x.com"
     x_api_key: SecretStr = SecretStr("")
@@ -134,6 +142,8 @@ class Settings(BaseSettings):
                 "X_ACCESS_TOKEN_SECRET": self.x_access_token_secret.get_secret_value(),
                 "GA4_PROPERTY_ID": self.ga4_property_id,
                 "GA4_SERVICE_ACCOUNT_JSON": self.ga4_service_account_json.get_secret_value(),
+                "WEB_SEARCH_BASE_URL": self.web_search_base_url,
+                "WEB_SEARCH_API_KEY": self.web_search_api_key.get_secret_value(),
             }
             missing = [name for name, value in required.items() if not value.strip()]
             if missing:
@@ -193,12 +203,16 @@ class Settings(BaseSettings):
             "TOOL_SESSION_OUTPUT_MAX_BYTES": (self.tool_session_output_max_bytes, 1_000_000),
             "TOOL_MEMORY_CONTENT_MAX_LENGTH": (self.tool_memory_content_max_length, 20_000),
             "TOOL_MEMORY_RELATION_LIMIT": (self.tool_memory_relation_limit, 100),
+            "WEB_FETCH_MAX_BYTES": (self.web_fetch_max_bytes, 10_000_000),
+            "WEB_FETCH_MAX_REDIRECTS": (self.web_fetch_max_redirects, 20),
         }
         invalid = [
             name for name, (value, maximum) in integer_limits.items() if not 0 < value <= maximum
         ]
         if invalid:
             raise ValueError(f"Tool上限は正数かつ合理的な範囲にしてください: {', '.join(invalid)}")
+        if self.web_search_timeout_seconds <= 0 or self.web_fetch_timeout_seconds <= 0:
+            raise ValueError("Web client timeoutは正数にしてください")
 
     def auth_secret(self) -> str:
         """認証Tokenの署名境界でだけ署名鍵を平文として返す。"""
