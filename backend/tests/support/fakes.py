@@ -13,6 +13,7 @@ from agent_runtime.runner import (
     CampaignPlannerOutput,
     ChildRunInput,
     ChildRunOutput,
+    ChildRunResult,
     ContentCreatorOutput,
     ProgressReporter,
 )
@@ -141,7 +142,7 @@ class FakeAgentRunner:
 
     async def run_child(
         self, run_input: ChildRunInput, reporter: ProgressReporter
-    ) -> ChildRunOutput:
+    ) -> ChildRunResult:
         """指定した構造化子出力を返し、入力を記録する。"""
         del reporter
         self.child_inputs.append(run_input)
@@ -155,8 +156,8 @@ class FakeAgentRunner:
             and isinstance(output, CampaignPlannerOutput)
             and output.missing_information is not None
         ):
-            return ContentCreatorOutput(missing_information=output.missing_information)
-        return output
+            output = ContentCreatorOutput(missing_information=output.missing_information)
+        return ChildRunResult(output=output, llm_call_id=None)
 
 
 class FakeContextCompactor:

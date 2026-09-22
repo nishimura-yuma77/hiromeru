@@ -1,5 +1,6 @@
 """アプリケーション設定。環境変数から読み込み、起動時に検証する（BE_STD 10章）。"""
 
+from decimal import Decimal
 from functools import lru_cache
 from typing import Literal, Self
 from urllib.parse import urlsplit
@@ -44,6 +45,8 @@ class Settings(BaseSettings):
     embedding_dimensions: int = EMBEDDING_DIMENSIONS
     orcarouter_base_url: str = ""
     orcarouter_api_key: SecretStr = SecretStr("")
+    orcarouter_firewall_api_key: SecretStr = SecretStr("")
+    agent_model: str = ""
     embedding_timeout_seconds: float = 30.0
 
     # Web検索Providerと、取得側のSSRF/response上限。
@@ -89,6 +92,12 @@ class Settings(BaseSettings):
     tool_memory_content_max_length: int = 4_000
     tool_memory_relation_limit: int = 20
     agent_subagent_max_per_turn: int = 3
+    agent_max_steps: int = 20
+    agent_max_cost_usd: Decimal = Decimal("1.00000000")
+    llm_timeout_seconds: float = 60.0
+    llm_max_output_tokens: int = 4096
+    generation_lookup_attempts: int = 3
+    generation_lookup_backoff_seconds: float = 0.1
     subagent_final_output_max_bytes: int = 64_000
     # Context量は決定論的にserializeしたJSONのUTF-8 byte数で測る。
     agent_context_compaction_threshold_bytes: int = 64_000
@@ -138,6 +147,10 @@ class Settings(BaseSettings):
             required = {
                 "ORCAROUTER_BASE_URL": self.orcarouter_base_url,
                 "ORCAROUTER_API_KEY": self.orcarouter_api_key.get_secret_value(),
+                "ORCAROUTER_FIREWALL_API_KEY": (
+                    self.orcarouter_firewall_api_key.get_secret_value()
+                ),
+                "AGENT_MODEL": self.agent_model,
                 "X_API_KEY": self.x_api_key.get_secret_value(),
                 "X_API_KEY_SECRET": self.x_api_key_secret.get_secret_value(),
                 "X_ACCESS_TOKEN": self.x_access_token.get_secret_value(),
@@ -171,7 +184,7 @@ class Settings(BaseSettings):
         if self.lease_seconds <= _MAX_DURATION_SECONDS:
             raise ValueError("LEASE_SECONDS は300秒より長くしてください")
 
-    def _validate_runtime_limits(self) -> None:
+    def _validate_runtime_limits(self) -> None:  # noqa: PLR0912 - 設定値ごとの明示検証
         """Request全体のTimeoutをVercelの実行上限内に保つ。"""
         if not 0 < self.request_timeout_seconds <= _MAX_DURATION_SECONDS:
             raise ValueError("REQUEST_TIMEOUT_SECONDS は0秒より大きく300秒以下にしてください")
@@ -183,6 +196,16 @@ class Settings(BaseSettings):
             raise ValueError("STALE_TURN_SECONDS はTURN_TIME_LIMIT_SECONDSより大きくしてください")
         if self.tool_max_attempts <= 0:
             raise ValueError("TOOL_MAX_ATTEMPTS は正の整数にしてください")
+        if self.agent_max_steps <= 0 or self.llm_max_output_tokens <= 0:
+            raise ValueError("Agent step/output token上限は正の整数にしてください")
+        if not self.agent_max_cost_usd.is_finite() or self.agent_max_cost_usd <= 0:
+            raise ValueError("AGENT_MAX_COST_USD は正の有限Decimalにしてください")
+        if not 0 < self.llm_timeout_seconds <= self.turn_time_limit_seconds:
+            raise ValueError("LLM_TIMEOUT_SECONDS はTurn上限以下の正数にしてください")
+        if self.generation_lookup_attempts <= 0:
+            raise ValueError("GENERATION_LOOKUP_ATTEMPTS は正の整数にしてください")
+        if self.generation_lookup_backoff_seconds <= 0:
+            raise ValueError("GENERATION_LOOKUP_BACKOFF_SECONDS は正数にしてください")
         if self.tool_retry_backoff_seconds <= 0:
             raise ValueError("TOOL_RETRY_BACKOFF_SECONDS は正数にしてください")
         if not 0 < self.tool_attempt_timeout_seconds <= self.turn_time_limit_seconds:

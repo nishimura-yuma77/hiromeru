@@ -7,9 +7,16 @@ from typing import Any, cast
 
 from pydantic import BaseModel, ValidationError
 
+from agent_runtime.budget import TurnBudget
 from agent_runtime.firewall import FirewallDecision, FirewallRequest
 from agent_runtime.guardrail import GuardrailDecision, GuardrailRequest
-from agent_runtime.runner import ActivityStatus, AgentContext, AgentContextEntry, ProgressReporter
+from agent_runtime.runner import (
+    ActivityStatus,
+    AgentContext,
+    AgentContextEntry,
+    AgentRunError,
+    ProgressReporter,
+)
 from agent_runtime.tools import (
     ToolCall,
     ToolDefinition,
@@ -78,6 +85,7 @@ class ToolExecutor:
         reporter: ProgressReporter,
         agent_context: AgentContext | None = None,
         budget_started_at: datetime | None = None,
+        budget: TurnBudget | None = None,
     ) -> None:
         """認証済みTenantと現在TurnへExecutorを束縛する。"""
         self._ctx = ctx
@@ -88,11 +96,22 @@ class ToolExecutor:
         self._reporter = reporter
         self._agent_context = agent_context or AgentContext((), 0)
         self._budget_started_at = budget_started_at
+        self._budget = budget
+
+    def replace_context(self, context: AgentContext) -> None:
+        """Runnerが再構築したContextでprovenance照合状態を更新する。"""
+        self._agent_context = context
 
     async def invoke(  # noqa: PLR0912, PLR0915 - 永続化から終端保存までの単一境界
-        self, call: ToolCall, parent_activity_id: str | None = None
+        self,
+        call: ToolCall,
+        parent_activity_id: str | None = None,
+        *,
+        origin_llm_call_id: int | None = None,
     ) -> ToolResult:
         """論理Callを一度だけ実行する。"""
+        if self._budget is not None:
+            self._budget.consume_step()
         context = await self._trusted_context()
         if context is None:
             return _failure("TOOL_TURN_ENDED")
@@ -128,7 +147,9 @@ class ToolExecutor:
             return terminal or _failure("TOOL_TURN_ENDED")
 
         try:
-            prepared = await self._prepare(call, persisted_arguments, persisted_provenance)
+            prepared = await self._prepare(
+                call, persisted_arguments, persisted_provenance, origin_llm_call_id
+            )
         except ToolCallConflictError:
             return _failure("TOOL_CALL_CONFLICT")
         if prepared is None:
@@ -226,6 +247,8 @@ class ToolExecutor:
     ]:
         try:
             authorized = await definition.handler.authorize(context, validated_input)
+        except AgentRunError:
+            raise
         except ToolDomainError as error:
             return self._domain_failure(definition, error)
         except Exception:  # noqa: BLE001 - 詳細を外へ出さないpermanent failure
@@ -247,6 +270,8 @@ class ToolExecutor:
                     raise TypeError
                 execution_input = prepared_input.execution_input
                 firewall_arguments = mask_json(prepared_input.masked_arguments)
+            except AgentRunError:
+                raise
             except ToolDomainError as error:
                 return self._domain_failure(definition, error)
             except Exception:  # noqa: BLE001 - preflight詳細を漏らさない
@@ -314,6 +339,8 @@ class ToolExecutor:
                 await self._ctx.sleep(delay)
             except ValidationError:
                 return _failure("TOOL_OUTPUT_INVALID"), ToolExecutionStatus.FAILED
+            except AgentRunError:
+                raise
             except ToolDomainError as error:
                 result, status, _, _ = self._domain_failure(definition, error)
                 return result, status
@@ -344,6 +371,7 @@ class ToolExecutor:
             agent_type=record.agent_type,
             turn_status=record.turn_status,
             turn_started_at=self._budget_started_at or record.started_at,
+            budget=self._budget,
         )
 
     def _validate_provenance(self, refs: tuple[ToolProvenanceRef, ...]) -> bool:
@@ -421,6 +449,7 @@ class ToolExecutor:
         call: ToolCall,
         arguments: dict[str, Any],
         provenance: list[dict[str, Any]],
+        origin_llm_call_id: int | None,
     ) -> PreparedToolExecution | None:
         async with self._ctx.session_factory() as session, session.begin():
             return await ToolExecutionRepository(session).prepare(
@@ -430,6 +459,7 @@ class ToolExecutor:
                 arguments=arguments,
                 provenance=provenance,
                 now=self._ctx.clock.now(),
+                origin_llm_call_id=origin_llm_call_id,
             )
 
     async def _claim(self, prepared: PreparedToolExecution) -> bool:

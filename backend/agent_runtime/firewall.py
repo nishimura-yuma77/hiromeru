@@ -3,6 +3,7 @@
 from enum import StrEnum
 from typing import Any, Protocol
 
+import httpx
 from pydantic import Field
 
 from agent_runtime.tools import StrictToolModel, ToolProvenanceRef
@@ -55,3 +56,40 @@ class FakeAgentFirewall:
         """Requestを記録して設定済み判定を返す。"""
         self.requests.append(request)
         return self.decision
+
+
+class OrcaRouterAgentFirewall:
+    """OrcaRouter gateway-scoped Firewall。障害・未知判定は常にfail closed。"""
+
+    def __init__(self, *, origin: str, api_key: str, timeout_seconds: float) -> None:
+        """接続先と専用credentialを保持する。"""
+        self._url = f"{origin.rstrip('/')}/api/v1/firewall/evaluate"
+        self._api_key = api_key
+        self._timeout = timeout_seconds
+
+    async def inspect(self, request: FirewallRequest) -> FirewallDecision:
+        """allow/auditだけを許可し、それ以外を遮断する。"""
+        try:
+            async with httpx.AsyncClient(timeout=self._timeout, trust_env=False) as client:
+                response = await client.post(
+                    self._url,
+                    headers={"Authorization": f"Bearer {self._api_key}"},
+                    json={
+                        "tool_name": request.tool_name,
+                        "arguments": request.masked_arguments,
+                        "request_id": request.stable_key,
+                    },
+                )
+            if response.status_code != 200:
+                return FirewallDecision.BLOCK
+            body = response.json()
+            verdict = body.get("verdict")
+            if verdict is None and isinstance(body.get("data"), dict):
+                verdict = body["data"].get("verdict")
+            return (
+                FirewallDecision.ALLOW
+                if verdict in {"allow", "audit"}
+                else FirewallDecision.BLOCK
+            )
+        except Exception:  # noqa: BLE001 - Provider詳細を公開せずfail closed
+            return FirewallDecision.BLOCK

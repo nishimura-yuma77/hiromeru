@@ -5,7 +5,8 @@ from dataclasses import asdict
 
 from sqlalchemy import select
 
-from agent_runtime.runner import AgentContext, AgentContextEntry, ContextRole
+from agent_runtime.budget import TurnBudget
+from agent_runtime.runner import AgentContext, AgentContextEntry, AgentRunError, ContextRole
 from domain.enums import AgentItemContextStatus, AgentItemType, AgentTurnStatus, AgentType
 from models import AgentItem, AgentSession, AgentTurn, SecurityEvent
 from repositories.agent import CheckpointBundle, TurnRepository
@@ -84,7 +85,9 @@ class AgentContextBuilder:
         """依存を受け取る。"""
         self._ctx = ctx
 
-    async def build(self, session_id: int, turn_id: int) -> AgentContext:
+    async def build(
+        self, session_id: int, turn_id: int, budget: TurnBudget | None = None
+    ) -> AgentContext:
         """Runnerへ渡すContextを構築する。"""
         async with self._ctx.session_factory() as session:
             repository = TurnRepository(session)
@@ -129,6 +132,8 @@ class AgentContextBuilder:
             ([_checkpoint_entry(checkpoint)] if checkpoint is not None else [])
             + [_item_entry(turn.id, item) for turn, item in compactable]
         )
+        if budget is not None:
+            budget.consume_step()
         try:
             summary = await self._ctx.context_compactor.compact(compact_entries)
             boundary = max((turn for turn, _item in compactable), key=lambda turn: turn.turn_number)
@@ -146,6 +151,8 @@ class AgentContextBuilder:
             new_checkpoint = await self._save_checkpoint(
                 session_id, checkpoint, compactable, summary
             )
+        except AgentRunError:
+            raise
         except Exception as error:
             if estimate > hard_limit:
                 raise ContextCompactionError from error

@@ -30,6 +30,8 @@ def _real_settings(**overrides: object) -> Settings:
         "external_client_mode": "real",
         "orcarouter_base_url": "https://router.example.com/v1",
         "orcarouter_api_key": "router-secret",
+        "orcarouter_firewall_api_key": "firewall-secret",
+        "agent_model": "provider/model",
         "x_api_key": "x-key",
         "x_api_key_secret": "x-key-secret",
         "x_access_token": "x-token",

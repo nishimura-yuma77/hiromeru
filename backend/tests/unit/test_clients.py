@@ -376,6 +376,8 @@ def test_Client_Mode_fakeとrealで実行Clientを切り替える() -> None:
             external_client_mode="real",
             orcarouter_base_url="https://router.example.com/v1",
             orcarouter_api_key=SecretStr("router-key"),
+            orcarouter_firewall_api_key=SecretStr("firewall-key"),
+            agent_model="provider/model",
             x_api_key=SecretStr("x-key"),
             x_api_key_secret=SecretStr("x-key-secret"),
             x_access_token=SecretStr("x-token"),

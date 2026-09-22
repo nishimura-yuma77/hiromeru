@@ -4,11 +4,14 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import StrEnum
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, model_validator
 
 from domain.enums import AgentContentSource, AgentContextClass, AgentTurnStatus, AgentType
+
+if TYPE_CHECKING:
+    from agent_runtime.runner import AgentContext
 
 _TRUSTED_FIELD_NAMES = frozenset(
     {"company_id", "marketer_id", "session_id", "turn_id", "agent_type", "parent_session_id"}
@@ -122,6 +125,7 @@ class TrustedToolContext(StrictToolModel):
     turn_status: AgentTurnStatus
     turn_started_at: datetime
     provenance: tuple[ToolProvenanceRef, ...] = ()
+    budget: Any = Field(default=None, exclude=True)
 
 
 class ToolHandler(Protocol):
@@ -199,6 +203,14 @@ class ToolRegistry:
             return None
         return definition
 
+    def allowed(self, agent_type: AgentType) -> tuple[ToolDefinition, ...]:
+        """指定Agentへ公開できる定義を登録順で返す。"""
+        return tuple(
+            definition
+            for definition in self._definitions.values()
+            if agent_type in definition.allowed_agents
+        )
+
 
 class TransientToolError(Exception):
     """副作用の結果が既知で、安全に再試行できる一時エラー。"""
@@ -207,6 +219,16 @@ class TransientToolError(Exception):
 class ToolInvoker(Protocol):
     """実RunnerがTool Call時に利用するTurn専用境界。"""
 
-    async def invoke(self, call: ToolCall, parent_activity_id: str | None = None) -> ToolResult:
+    async def invoke(
+        self,
+        call: ToolCall,
+        parent_activity_id: str | None = None,
+        *,
+        origin_llm_call_id: int | None = None,
+    ) -> ToolResult:
         """Toolを検証・認可・Firewall検査して実行する。"""
+        ...
+
+    def replace_context(self, context: "AgentContext") -> None:
+        """Tool実行後や隔離後にprovenance照合用Contextを更新する。"""
         ...

@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass
 from datetime import datetime
+from decimal import Decimal
 from typing import Any
 
 from sqlalchemy import and_, exists, func, literal, or_, select, tuple_, update
@@ -26,6 +27,7 @@ from models import (
     AgentSession,
     AgentTurn,
     ApiIdempotencyRequest,
+    LlmCall,
     Marketer,
     SecurityEvent,
     ToolExecution,
@@ -245,6 +247,7 @@ class TurnRepository:
         content: dict[str, Any],
         now: datetime,
         context_class: AgentContextClass = AgentContextClass.CONVERSATION,
+        llm_call_id: int | None = None,
     ) -> AgentItem:
         """アイテムを追記する。同じ `key` が保存済みなら、それを返す（二重保存を防ぐ）。"""
         existing = (
@@ -274,6 +277,7 @@ class TurnRepository:
             content_source=source,
             context_status=AgentItemContextStatus.ACTIVE,
             content=content,
+            llm_call_id=llm_call_id,
             created_at=now,
         )
         self._session.add(item)
@@ -290,6 +294,7 @@ class TurnRepository:
         content: dict[str, Any],
         now: datetime,
         context_class: AgentContextClass = AgentContextClass.CONVERSATION,
+        llm_call_id: int | None = None,
     ) -> AgentItem | None:
         """Turnがrunningの場合だけItemを追記する。終端化との競合では何も書かない。"""
         existing = (
@@ -327,6 +332,7 @@ class TurnRepository:
             content_source=source,
             context_status=AgentItemContextStatus.ACTIVE,
             content=content,
+            llm_call_id=llm_call_id,
             created_at=now,
         )
         self._session.add(item)
@@ -757,6 +763,7 @@ class ToolExecutionRepository:
         arguments: dict[str, Any],
         provenance: list[dict[str, Any]],
         now: datetime,
+        origin_llm_call_id: int | None = None,
     ) -> PreparedToolExecution | None:
         """Running Turnだけにtool_callとpending executionをget-or-createする。"""
         turn = (
@@ -792,6 +799,7 @@ class ToolExecutionRepository:
                     "arguments": arguments,
                     **({"provenance": provenance} if provenance else {}),
                 },
+                llm_call_id=origin_llm_call_id,
                 created_at=now,
             )
             turn.next_item_number += 1
@@ -803,6 +811,8 @@ class ToolExecutionRepository:
             self._require_matching_call(
                 tool_call, name=name, arguments=arguments, provenance=provenance
             )
+            if origin_llm_call_id is not None and tool_call.llm_call_id != origin_llm_call_id:
+                raise ToolCallConflictError
         execution = (
             await self._session.execute(
                 select(ToolExecution).where(ToolExecution.tool_call_item_id == tool_call.id)
@@ -1068,3 +1078,48 @@ class ToolExecutionRepository:
             return None
         await self._session.flush()
         return item
+
+
+class LlmCallRepository:
+    """LLM callをrunning Turn条件で短いTransactionへ保存する。"""
+
+    def __init__(self, session: AsyncSession) -> None:
+        """DB sessionを保持する。"""
+        self._session = session
+
+    async def create_if_running(
+        self,
+        turn_id: int,
+        *,
+        request_id: str | None,
+        input_tokens: int | None,
+        output_tokens: int | None,
+        cost_usd: Decimal | None,
+        response_time_ms: int | None,
+        succeeded: bool,
+        error_code: str | None,
+    ) -> LlmCall | None:
+        """終端化raceでは何も保存しない。Provider本文は引数にも取らない。"""
+        running = (
+            await self._session.execute(
+                select(AgentTurn.id)
+                .where(AgentTurn.id == turn_id, AgentTurn.status == AgentTurnStatus.RUNNING)
+                .with_for_update()
+            )
+        ).scalar_one_or_none()
+        if running is None:
+            return None
+        call = LlmCall(
+            agent_turn_id=turn_id,
+            orcarouter_request_id=request_id,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            cost_usd=cost_usd,
+            response_time_ms=response_time_ms,
+            succeeded=succeeded,
+            error_code=error_code,
+            error_message=None if succeeded else "The model request failed.",
+        )
+        self._session.add(call)
+        await self._session.flush()
+        return call

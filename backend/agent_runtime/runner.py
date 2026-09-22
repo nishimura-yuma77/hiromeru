@@ -6,11 +6,14 @@ OpenAI Agents SDK によるループ（Firewall・Guardrail・子Agent）は、�
 
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Annotated, Any, Literal, Protocol
+from typing import TYPE_CHECKING, Annotated, Any, Literal, Protocol
 
 from pydantic import Field, JsonValue, StringConstraints, model_validator
 
 from agent_runtime.tools import StrictToolModel, ToolInvoker
+
+if TYPE_CHECKING:
+    from agent_runtime.budget import TurnBudget
 from domain.constants import (
     MAX_CAMPAIGN_TEXT_LENGTH,
     MAX_CAMPAIGN_TITLE_LENGTH,
@@ -67,13 +70,23 @@ class AgentRunInput:
     message: str
     context: AgentContext
     tools: ToolInvoker
+    budget: "TurnBudget | None" = None
 
 
 @dataclass(frozen=True)
 class AgentRunOutput:
-    """Agentの最終回答。"""
+    """最終回答またはterminal tool完了。"""
 
-    reply: str
+    reply: str | None
+    llm_call_id: int | None = None
+    terminal: bool = False
+
+    def __post_init__(self) -> None:
+        """排他的な終端形を検証する。"""
+        if (self.reply is None) == (not self.terminal):
+            raise ValueError("reply and terminal completion must be exclusive")
+        if self.reply is not None and not self.reply.strip():
+            raise ValueError("reply must not be empty")
 
 
 _ProposalText = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
@@ -153,6 +166,15 @@ class ChildRunInput:
     context: AgentContext
     tools: ToolInvoker
     parent_started_at: datetime
+    budget: "TurnBudget | None" = None
+
+
+@dataclass(frozen=True)
+class ChildRunResult:
+    """子Agentの検証済み出力と生成元call。"""
+
+    output: ChildRunOutput
+    llm_call_id: int | None
 
 
 class AgentRunError(Exception):
@@ -191,7 +213,7 @@ class AgentRunner(Protocol):
 
     async def run_child(
         self, run_input: ChildRunInput, reporter: ProgressReporter
-    ) -> ChildRunOutput:
+    ) -> ChildRunResult:
         """構造化された子Agentの最終結果だけを返す。"""
         ...
 
@@ -206,10 +228,12 @@ class StubAgentRunner:
 
     async def run_child(
         self, run_input: ChildRunInput, reporter: ProgressReporter
-    ) -> ChildRunOutput:
+    ) -> ChildRunResult:
         """実SDK未接続時は、追加情報が必要な構造化結果を返す。"""
         del reporter
         missing = ("実行可能な子Agentが設定されていません。",)
         if run_input.agent_type == AgentType.CAMPAIGN_PLANNER:
-            return CampaignPlannerOutput(missing_information=missing)
-        return ContentCreatorOutput(missing_information=missing)
+            output: ChildRunOutput = CampaignPlannerOutput(missing_information=missing)
+        else:
+            output = ContentCreatorOutput(missing_information=missing)
+        return ChildRunResult(output=output, llm_call_id=None)

@@ -128,6 +128,14 @@ PreviewとProductionには、接続先を環境ごとに分離して次を設定
 | `EXTERNAL_CLIENT_MODE` | Preview・Productionは`real`。ローカル開発・テストは`fake` |
 | `ORCAROUTER_BASE_URL` | OrcaRouter APIのBase URL |
 | `ORCAROUTER_API_KEY` | OrcaRouter APIの認証鍵 |
+| `ORCAROUTER_FIREWALL_API_KEY` | Agent Firewall専用のgateway-scoped認証鍵 |
+| `AGENT_MODEL` | Chat Completionsで使う明示的なモデル名 |
+| `AGENT_MAX_STEPS` | 親Turnと子Agentで共有する論理step上限。既定20 |
+| `AGENT_MAX_COST_USD` | 親Turn単位の確定USD cost上限。既定1.00000000 |
+| `LLM_TIMEOUT_SECONDS` | 1回のLLM request timeout。既定60秒 |
+| `LLM_MAX_OUTPUT_TOKENS` | 1回のLLM最大出力token。既定4096 |
+| `GENERATION_LOOKUP_ATTEMPTS` | 確定cost取得のbounded retry回数。既定3 |
+| `GENERATION_LOOKUP_BACKOFF_SECONDS` | 確定cost取得retryの基準待機秒。既定0.1 |
 | `X_API_KEY` | X APIのConsumer Key |
 | `X_API_KEY_SECRET` | X APIのConsumer Secret |
 | `X_ACCESS_TOKEN` | 環境固定XアカウントのUser Access Token |
@@ -137,7 +145,7 @@ PreviewとProductionには、接続先を環境ごとに分離して次を設定
 
 PreviewとProductionは起動時にこれらの必須設定を検証し、Productionでは`CRON_SECRET`も必須です。FakeまたはMockの外部API Clientを明示的に使う開発・テスト環境だけは、OrcaRouter、X、GA4の実Credentialを省略できます。Secret値をBuild log、Runtime log、Response、Frontend環境変数へ出力しないでください。
 
-XのOAuth 1.0a Client、GA4 Client、実Agent Runnerの実装は、それぞれIssue #18、#33、#31で行います。本節の設定は先に起動時検証とClient切替の契約を固定するものです。
+実Agent RunnerはOrcaRouter Chat Completionsを使用し、SDK tracingを無効化したうえで履歴、Tool loop、budget、永続化をアプリケーションが管理します。
 
 ## CI
 

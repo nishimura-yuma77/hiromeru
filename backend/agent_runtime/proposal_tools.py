@@ -11,6 +11,7 @@ from sqlalchemy.orm import aliased
 
 from agent_runtime.executor import ToolExecutor
 from agent_runtime.runner import (
+    AgentRunError,
     CampaignPlannerOutput,
     CampaignProposal,
     ChildRunInput,
@@ -276,9 +277,10 @@ class _RunChildHandler(_ParentHandler):
             reporter=_NullReporter(),
             agent_context=child_context,
             budget_started_at=context.turn_started_at,
+            budget=context.budget,
         )
         try:
-            raw = await self._ctx.agent_runner.run_child(
+            child_result = await self._ctx.agent_runner.run_child(
                 ChildRunInput(
                     agent_type=self.agent_type,
                     session_id=record.session_id,
@@ -291,9 +293,20 @@ class _RunChildHandler(_ParentHandler):
                     context=child_context,
                     tools=child_executor,
                     parent_started_at=context.turn_started_at,
+                    budget=context.budget,
                 ),
                 _NullReporter(),
             )
+            raw = child_result.output
+        except AgentRunError as error:
+            await self._fail_child(record.turn_id)
+            if error.code in {
+                "TURN_TIME_LIMIT_EXCEEDED",
+                "TURN_STEP_LIMIT_EXCEEDED",
+                "TURN_COST_LIMIT_EXCEEDED",
+            }:
+                raise
+            _raise("SUBAGENT_FAILED")
         except Exception:  # noqa: BLE001 - 子Runnerの内部詳細を親へ公開しない
             await self._fail_child(record.turn_id)
             _raise("SUBAGENT_FAILED")
@@ -331,6 +344,7 @@ class _RunChildHandler(_ParentHandler):
                 source=AgentContentSource.AGENT_OUTPUT,
                 content=cast(dict[str, Any], mask_json(output.model_dump(mode="json"))),
                 now=now,
+                llm_call_id=child_result.llm_call_id,
             )
             if item is not None:
                 completed = await turns.finish_turn(

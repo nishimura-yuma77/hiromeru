@@ -37,6 +37,15 @@ class DenyAllToolResultGuardrail:
         return GuardrailDecision.BLOCK
 
 
+class DeferredToolResultGuardrail:
+    """OrcaRouterの次回Chat input guardrailへ未信頼Result検査を委譲する。"""
+
+    async def inspect(self, request: GuardrailRequest) -> GuardrailDecision:
+        """次回モデル入力で検査されるため、この境界では隔離しない。"""
+        del request
+        return GuardrailDecision.ALLOW
+
+
 class FakeToolResultGuardrail:
     """テスト・fake mode用の記録可能なGuardrail。"""
 
