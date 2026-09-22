@@ -17,6 +17,8 @@ from domain.enums import (
     ToolExecutionStatus,
 )
 from models import (
+    AgentContextCheckpoint,
+    AgentContextCheckpointItem,
     AgentItem,
     AgentSession,
     AgentTurn,
@@ -34,6 +36,19 @@ class TurnBundle:
     items: list[AgentItem]
     notices: list[SecurityEvent]
     is_approval: bool
+
+
+@dataclass(frozen=True)
+class CheckpointBundle:
+    """有効Checkpointと境界、要約元Item ID。"""
+
+    checkpoint: AgentContextCheckpoint
+    through_turn_number: int
+    source_item_ids: tuple[int, ...]
+
+
+class InvalidCheckpointSourcesError(ValueError):
+    """Checkpointのsource Itemが許可された親Session・Turn境界に属さない。"""
 
 
 class SessionRepository:
@@ -236,6 +251,249 @@ class TurnRepository:
         self._session.add(item)
         await self._session.flush()
         return item
+
+    async def append_item_if_running(
+        self,
+        turn_id: int,
+        *,
+        key: str,
+        item_type: AgentItemType,
+        source: AgentContentSource,
+        content: dict[str, Any],
+        now: datetime,
+        context_class: AgentContextClass = AgentContextClass.CONVERSATION,
+    ) -> AgentItem | None:
+        """Turnがrunningの場合だけItemを追記する。終端化との競合では何も書かない。"""
+        existing = (
+            await self._session.execute(
+                select(AgentItem)
+                .join(AgentTurn, AgentTurn.id == AgentItem.agent_turn_id)
+                .where(
+                    AgentItem.agent_turn_id == turn_id,
+                    AgentItem.idempotency_key == key,
+                    AgentTurn.status == AgentTurnStatus.RUNNING,
+                )
+            )
+        ).scalar_one_or_none()
+        if existing is not None:
+            return existing
+        number = (
+            await self._session.execute(
+                update(AgentTurn)
+                .where(
+                    AgentTurn.id == turn_id,
+                    AgentTurn.status == AgentTurnStatus.RUNNING,
+                )
+                .values(next_item_number=AgentTurn.next_item_number + 1)
+                .returning(AgentTurn.next_item_number - 1)
+            )
+        ).scalar_one_or_none()
+        if number is None:
+            return None
+        item = AgentItem(
+            agent_turn_id=turn_id,
+            item_number=number,
+            idempotency_key=key,
+            item_type=item_type,
+            context_class=context_class,
+            content_source=source,
+            context_status=AgentItemContextStatus.ACTIVE,
+            content=content,
+            created_at=now,
+        )
+        self._session.add(item)
+        await self._session.flush()
+        return item
+
+    async def latest_checkpoint(
+        self, session_id: int, *, before_turn_number: int
+    ) -> CheckpointBundle | None:
+        """現在Turnより前にある最新の有効Checkpointを返す。"""
+        row = (
+            await self._session.execute(
+                select(AgentContextCheckpoint, AgentTurn.turn_number)
+                .join(AgentTurn, AgentTurn.id == AgentContextCheckpoint.compacted_through_turn_id)
+                .where(
+                    AgentContextCheckpoint.session_id == session_id,
+                    AgentContextCheckpoint.invalidated_at.is_(None),
+                    AgentTurn.turn_number < before_turn_number,
+                )
+                .order_by(
+                    AgentContextCheckpoint.created_at.desc(),
+                    AgentContextCheckpoint.id.desc(),
+                )
+                .limit(1)
+            )
+        ).one_or_none()
+        if row is None:
+            return None
+        checkpoint, turn_number = row
+        source_ids = tuple(
+            (
+                await self._session.execute(
+                    select(AgentContextCheckpointItem.item_id)
+                    .where(AgentContextCheckpointItem.checkpoint_id == checkpoint.id)
+                    .order_by(AgentContextCheckpointItem.item_id)
+                )
+            ).scalars()
+        )
+        return CheckpointBundle(checkpoint, turn_number, source_ids)
+
+    async def completed_context_items(
+        self,
+        session_id: int,
+        *,
+        after_turn_number: int = 0,
+        before_turn_number: int,
+    ) -> list[tuple[AgentTurn, AgentItem]]:
+        """Checkpoint境界と現在Turnの間にある完了Itemを会話順で返す。"""
+        stmt = (
+            select(AgentTurn, AgentItem)
+            .join(AgentItem, AgentItem.agent_turn_id == AgentTurn.id)
+            .where(
+                AgentTurn.session_id == session_id,
+                AgentTurn.status == AgentTurnStatus.COMPLETED,
+                AgentTurn.turn_number > after_turn_number,
+                AgentTurn.turn_number < before_turn_number,
+            )
+            .order_by(AgentTurn.turn_number, AgentItem.item_number)
+        )
+        return list((await self._session.execute(stmt)).tuples())
+
+    async def current_user_item(self, turn_id: int) -> AgentItem | None:
+        """現在のrunning Turnのuser inputを1件取得する。"""
+        stmt = (
+            select(AgentItem)
+            .join(AgentTurn, AgentTurn.id == AgentItem.agent_turn_id)
+            .where(
+                AgentTurn.id == turn_id,
+                AgentTurn.status == AgentTurnStatus.RUNNING,
+                AgentItem.item_type == AgentItemType.USER_MESSAGE,
+            )
+            .order_by(AgentItem.item_number)
+            .limit(1)
+        )
+        return (await self._session.execute(stmt)).scalar_one_or_none()
+
+    async def recent_security_events(
+        self, session_id: int, *, before_turn_number: int, turn_limit: int = 5
+    ) -> list[SecurityEvent]:
+        """現在Turnより前の直近Turnに属するSecurity Eventを返す。"""
+        recent_turns = (
+            select(AgentTurn.id)
+            .where(
+                AgentTurn.session_id == session_id,
+                AgentTurn.turn_number < before_turn_number,
+            )
+            .order_by(AgentTurn.turn_number.desc())
+            .limit(turn_limit)
+            .subquery()
+        )
+        stmt = (
+            select(SecurityEvent)
+            .join(AgentTurn, AgentTurn.id == SecurityEvent.agent_turn_id)
+            .where(SecurityEvent.agent_turn_id.in_(select(recent_turns.c.id)))
+            .order_by(AgentTurn.turn_number, SecurityEvent.detected_at, SecurityEvent.id)
+        )
+        return list((await self._session.execute(stmt)).scalars())
+
+    async def create_checkpoint(
+        self,
+        session_id: int,
+        through_turn_id: int,
+        *,
+        summary: str,
+        source_item_ids: tuple[int, ...],
+        now: datetime,
+    ) -> AgentContextCheckpoint:
+        """source境界を検証し、Checkpointと中間行を同じTransactionへ追加する。"""
+        boundary_number = (
+            await self._session.execute(
+                select(AgentTurn.turn_number)
+                .join(AgentSession, AgentSession.id == AgentTurn.session_id)
+                .where(
+                    AgentTurn.id == through_turn_id,
+                    AgentTurn.session_id == session_id,
+                    AgentTurn.status == AgentTurnStatus.COMPLETED,
+                    AgentSession.agent == AgentType.PARENT,
+                    AgentSession.parent_session_id.is_(None),
+                )
+            )
+        ).scalar_one_or_none()
+        unique_ids = tuple(dict.fromkeys(source_item_ids))
+        if boundary_number is None or not unique_ids:
+            raise InvalidCheckpointSourcesError
+        valid_count = (
+            await self._session.execute(
+                select(func.count(AgentItem.id))
+                .join(AgentTurn, AgentTurn.id == AgentItem.agent_turn_id)
+                .join(AgentSession, AgentSession.id == AgentTurn.session_id)
+                .where(
+                    AgentItem.id.in_(unique_ids),
+                    AgentTurn.session_id == session_id,
+                    AgentTurn.status == AgentTurnStatus.COMPLETED,
+                    AgentTurn.turn_number <= boundary_number,
+                    AgentSession.agent == AgentType.PARENT,
+                    AgentSession.parent_session_id.is_(None),
+                )
+            )
+        ).scalar_one()
+        if valid_count != len(unique_ids):
+            raise InvalidCheckpointSourcesError
+        checkpoint = AgentContextCheckpoint(
+            session_id=session_id,
+            compacted_through_turn_id=through_turn_id,
+            summary=summary,
+            created_at=now,
+        )
+        self._session.add(checkpoint)
+        await self._session.flush()
+        self._session.add_all(
+            AgentContextCheckpointItem(checkpoint_id=checkpoint.id, item_id=item_id)
+            for item_id in unique_ids
+        )
+        await self._session.flush()
+        return checkpoint
+
+    async def quarantine_item(
+        self,
+        item_id: int,
+        *,
+        reason: str,
+        context_override: dict[str, Any],
+        now: datetime,
+    ) -> bool:
+        """Itemを隔離し、そのItemをsourceに持つ有効Checkpointを同時に無効化する。"""
+        quarantined = (
+            await self._session.execute(
+                update(AgentItem)
+                .where(
+                    AgentItem.id == item_id,
+                    AgentItem.context_status == AgentItemContextStatus.ACTIVE,
+                )
+                .values(
+                    context_status=AgentItemContextStatus.QUARANTINED,
+                    quarantine_reason=reason,
+                    context_override=context_override,
+                    quarantined_at=now,
+                )
+                .returning(AgentItem.id)
+            )
+        ).scalar_one_or_none()
+        if quarantined is None:
+            return False
+        checkpoint_ids = select(AgentContextCheckpointItem.checkpoint_id).where(
+            AgentContextCheckpointItem.item_id == item_id
+        )
+        await self._session.execute(
+            update(AgentContextCheckpoint)
+            .where(
+                AgentContextCheckpoint.id.in_(checkpoint_ids),
+                AgentContextCheckpoint.invalidated_at.is_(None),
+            )
+            .values(invalidated_at=now, invalidation_reason=reason)
+        )
+        return True
 
     async def finish_turn(
         self,

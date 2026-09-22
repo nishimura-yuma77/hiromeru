@@ -16,7 +16,14 @@ from repositories.database import SessionLocal
 from services.auth_service import AuthService
 from services.context import ServiceContext
 from tests.support.client import Account
-from tests.support.fakes import FakeAgentRunner, FakeEmbedding, FakeXApi, FixedClock, no_sleep
+from tests.support.fakes import (
+    FakeAgentRunner,
+    FakeContextCompactor,
+    FakeEmbedding,
+    FakeXApi,
+    FixedClock,
+    no_sleep,
+)
 
 ORIGIN = "http://localhost:3000"
 PASSWORD = "correct-horse-battery"
@@ -43,6 +50,11 @@ def agent() -> FakeAgentRunner:
 
 
 @pytest.fixture
+def compactor() -> FakeContextCompactor:
+    return FakeContextCompactor()
+
+
+@pytest.fixture
 def settings() -> Settings:
     return Settings(
         auth_cookie_secret=SecretStr("test-secret-test-secret-test-secret-0123456789"),
@@ -60,6 +72,7 @@ def ctx(
     embedding: FakeEmbedding,
     x_api: FakeXApi,
     agent: FakeAgentRunner,
+    compactor: FakeContextCompactor,
 ) -> ServiceContext:
     return ServiceContext(
         settings=settings,
@@ -68,6 +81,7 @@ def ctx(
         embedding=embedding,
         x_api=x_api,
         agent_runner=agent,
+        context_compactor=compactor,
         sleep=no_sleep,
         new_uuid=uuid.uuid4,
     )

@@ -5,12 +5,36 @@ OpenAI Agents SDK によるループ（Firewall・Guardrail・子Agent）は、�
 """
 
 from dataclasses import dataclass
-from typing import Literal, Protocol
+from typing import Any, Literal, Protocol
 
 STUB_REPLY = "（スタブ応答）Agentの実行は未実装です。メッセージは履歴へ保存されました。"
 
 ActivityKind = Literal["tool", "subagent"]
 ActivityStatus = Literal["succeeded", "failed", "blocked"]
+ContextEntryKind = Literal["checkpoint", "item", "security_notice"]
+ContextRole = Literal["system", "user", "assistant", "tool"]
+
+
+@dataclass(frozen=True)
+class AgentContextEntry:
+    """DB表現から分離した、Runnerへ渡す順序付きContext要素。"""
+
+    kind: ContextEntryKind
+    role: ContextRole
+    content: dict[str, Any]
+    turn_id: int | None = None
+    item_id: int | None = None
+    item_type: str | None = None
+    context_class: str | None = None
+    content_source: str | None = None
+
+
+@dataclass(frozen=True)
+class AgentContext:
+    """再構築済みのContextと、その決定論的な容量見積もり。"""
+
+    entries: tuple[AgentContextEntry, ...]
+    estimated_utf8_bytes: int
 
 
 @dataclass(frozen=True)
@@ -22,6 +46,7 @@ class AgentRunInput:
     marketer_id: int
     company_id: int
     message: str
+    context: AgentContext
 
 
 @dataclass(frozen=True)

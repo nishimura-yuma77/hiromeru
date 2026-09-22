@@ -5,6 +5,7 @@ import uuid
 
 from fastapi import Request
 
+from agent_runtime.compactor import StubContextCompactor
 from agent_runtime.runner import StubAgentRunner
 from clients.embedding import OrcaRouterEmbeddingClient
 from clients.fakes import FakeEmbeddingClient, FakeXApiClient
@@ -44,6 +45,7 @@ def build_default_context(settings: Settings | None = None) -> ServiceContext:
         embedding=embedding,
         x_api=x_api,
         agent_runner=StubAgentRunner(),
+        context_compactor=StubContextCompactor(),
         sleep=asyncio.sleep,
         new_uuid=uuid.uuid4,
     )

@@ -230,6 +230,22 @@ class AgentContextCheckpoint(Base):
     created_at: Mapped[datetime] = created_at_column()
 
 
+class AgentContextCheckpointItem(Base):
+    """Checkpointの要約元になったItem。"""
+
+    __tablename__ = "agent_context_checkpoint_items"
+    __table_args__ = (Index("ix_checkpoint_items_item", "item_id"),)
+
+    checkpoint_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("agent_context_checkpoints.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    item_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("agent_items.id", ondelete="RESTRICT"), primary_key=True
+    )
+
+
 class SecurityEvent(Base):
     """1ターン内で検出した追記専用の監査記録。"""
 

@@ -72,6 +72,9 @@ class Settings(BaseSettings):
     message_max_length: int = 4000
     turn_time_limit_seconds: float = 200.0
     stale_turn_seconds: float = 330.0
+    # Context量は決定論的にserializeしたJSONのUTF-8 byte数で測る。
+    agent_context_compaction_threshold_bytes: int = 64_000
+    agent_context_hard_limit_bytes: int = 128_000
     # API_DESIGN 2.3: Lease は maxDuration（300秒）より長くする。
     lease_seconds: float = 330.0
 
@@ -152,6 +155,15 @@ class Settings(BaseSettings):
         """Request全体のTimeoutをVercelの実行上限内に保つ。"""
         if not 0 < self.request_timeout_seconds <= _MAX_DURATION_SECONDS:
             raise ValueError("REQUEST_TIMEOUT_SECONDS は0秒より大きく300秒以下にしてください")
+        if self.agent_context_compaction_threshold_bytes <= 0:
+            raise ValueError("AGENT_CONTEXT_COMPACTION_THRESHOLD_BYTES は正数にしてください")
+        if self.agent_context_hard_limit_bytes <= 0:
+            raise ValueError("AGENT_CONTEXT_HARD_LIMIT_BYTES は正数にしてください")
+        if self.agent_context_compaction_threshold_bytes >= self.agent_context_hard_limit_bytes:
+            raise ValueError(
+                "AGENT_CONTEXT_COMPACTION_THRESHOLD_BYTES は"
+                " AGENT_CONTEXT_HARD_LIMIT_BYTES 未満にしてください"
+            )
 
     def auth_secret(self) -> str:
         """認証Tokenの署名境界でだけ署名鍵を平文として返す。"""

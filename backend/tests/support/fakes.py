@@ -6,7 +6,7 @@ import random
 import uuid
 from datetime import UTC, datetime, timedelta
 
-from agent_runtime.runner import AgentRunInput, AgentRunOutput, ProgressReporter
+from agent_runtime.runner import AgentContextEntry, AgentRunInput, AgentRunOutput, ProgressReporter
 from clients.errors import EmbeddingError, XApiOutcomeUnknownError, XApiRejectedError
 from clients.x_api import XPostResult
 from domain.constants import EMBEDDING_DIMENSIONS
@@ -122,3 +122,18 @@ class FakeAgentRunner:
         if self.error is not None:
             raise self.error
         return AgentRunOutput(reply=self.reply)
+
+
+class FakeContextCompactor:
+    """Context圧縮のFake。入力を記録し、成功・失敗を制御できる。"""
+
+    def __init__(self) -> None:
+        self.summary = "圧縮済みの会話"
+        self.error: Exception | None = None
+        self.inputs: list[tuple[AgentContextEntry, ...]] = []
+
+    async def compact(self, entries: tuple[AgentContextEntry, ...]) -> str:
+        self.inputs.append(entries)
+        if self.error is not None:
+            raise self.error
+        return self.summary

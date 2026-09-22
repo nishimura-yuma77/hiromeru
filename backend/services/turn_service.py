@@ -15,6 +15,7 @@ from domain.constants import SESSION_TITLE_LENGTH
 from domain.enums import AgentContentSource, AgentItemType, AgentTurnStatus
 from domain.requests import MessageRequest
 from repositories.agent import SessionRepository, TurnRepository
+from services.agent_context import AgentContextBuilder, ContextCompactionError
 from services.context import AuthContext, ServiceContext
 from services.turn_view import TurnViewLoader
 from services.validation import BodyLoader, parse_json_object, validate_model
@@ -121,21 +122,27 @@ class TurnService:
         """
         error_code: str | None = None
         reply: str | None = None
-        run_input = AgentRunInput(
-            prepared.session_id,
-            prepared.turn_id,
-            prepared.auth.marketer_id,
-            prepared.auth.company_id,
-            prepared.message,
-        )
         elapsed = (self._ctx.clock.now() - prepared.started_at).total_seconds()
         remaining = max(0.0, self._ctx.settings.turn_time_limit_seconds - elapsed)
         try:
             async with asyncio.timeout(remaining):
+                context = await AgentContextBuilder(self._ctx).build(
+                    prepared.session_id, prepared.turn_id
+                )
+                run_input = AgentRunInput(
+                    session_id=prepared.session_id,
+                    turn_id=prepared.turn_id,
+                    marketer_id=prepared.auth.marketer_id,
+                    company_id=prepared.auth.company_id,
+                    message=prepared.message,
+                    context=context,
+                )
                 output = await self._ctx.agent_runner.run(run_input, reporter)
             reply = output.reply
         except TimeoutError:
             error_code = "TURN_TIME_LIMIT_EXCEEDED"
+        except ContextCompactionError:
+            error_code = "CONTEXT_COMPACTION_FAILED"
         except AgentRunError as error:
             error_code = error.code if error.code in ERROR_SPECS else "AGENT_EXECUTION_FAILED"
         except Exception as error:  # noqa: BLE001 - Agent実行の失敗はTurnの failed として保存する
@@ -150,12 +157,9 @@ class TurnService:
         async with self._ctx.session_factory() as session, session.begin():
             turns = TurnRepository(session)
             if error_code is None:
-                # 更新は status = running を条件とする。中断として復旧済みなら何も書き込まない。
-                finished = await turns.finish_turn(
-                    prepared.turn_id, status=AgentTurnStatus.COMPLETED, now=now
-                )
-                if finished and reply is not None:
-                    await turns.append_item(
+                # 回答を先に追記し、最後にTurnを終端化する。どちらもrunningを条件とする。
+                if reply is not None:
+                    appended = await turns.append_item_if_running(
                         prepared.turn_id,
                         key="assistant-message",
                         item_type=AgentItemType.ASSISTANT_MESSAGE,
@@ -163,6 +167,10 @@ class TurnService:
                         content={"text": mask_text(reply)},
                         now=now,
                     )
+                    if appended is not None:
+                        await turns.finish_turn(
+                            prepared.turn_id, status=AgentTurnStatus.COMPLETED, now=now
+                        )
             else:
                 status = (
                     AgentTurnStatus.BLOCKED

@@ -129,7 +129,7 @@ def test_empty_database_upgrades_to_head(empty_database: str) -> None:
             "WHERE schemaname = 'public' AND tablename LIKE 'api_list_snapshot%'"
         ).fetchall()
 
-    assert revision == ("0002",)
+    assert revision == ("0003",)
     assert {row[0] for row in tables} == {"api_list_snapshots", "api_list_snapshot_items"}
 
 
@@ -198,6 +198,31 @@ def test_catalog_has_expected_constraints_indexes_and_fk_actions(seeded_database
     assert constraints["api_list_snapshot_items_snapshot_id_fkey"][1] == "c"
     assert {row[0] for row in counters} == {"attempt_count", "memory_attempt_count"}
     assert all(nullable == "NO" and default.startswith("0") for _, nullable, default in counters)
+
+
+def test_checkpoint_source_table_has_expected_schema(seeded_database: str) -> None:
+    with psycopg.connect(_psycopg_url(seeded_database)) as connection:
+        indexes = dict(
+            connection.execute(
+                "SELECT indexname, indexdef FROM pg_indexes "
+                "WHERE schemaname = 'public' "
+                "AND tablename = 'agent_context_checkpoint_items'"
+            ).fetchall()
+        )
+        constraints = {
+            row[0]: (row[1], row[2])
+            for row in connection.execute(
+                "SELECT c.conname, pg_get_constraintdef(c.oid), c.confdeltype "
+                "FROM pg_constraint c JOIN pg_class t ON t.oid = c.conrelid "
+                "WHERE t.relname = 'agent_context_checkpoint_items'"
+            ).fetchall()
+        }
+
+    primary_key = constraints["agent_context_checkpoint_items_pkey"][0]
+    assert "checkpoint_id" in primary_key and "item_id" in primary_key
+    assert "(item_id)" in indexes["ix_checkpoint_items_item"]
+    foreign_keys = [value[1] for name, value in constraints.items() if name.endswith("_fkey")]
+    assert sorted(foreign_keys) == ["c", "r"]
 
 
 def test_snapshot_delete_cascades_items(seeded_database: str) -> None:

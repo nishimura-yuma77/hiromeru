@@ -248,6 +248,18 @@ def test_設定_ProductionだけCron_Secretを必須にする() -> None:
         ({"lease_seconds": 300}, "LEASE_SECONDS"),
         ({"request_timeout_seconds": 0}, "REQUEST_TIMEOUT_SECONDS"),
         ({"request_timeout_seconds": 300.1}, "REQUEST_TIMEOUT_SECONDS"),
+        (
+            {"agent_context_compaction_threshold_bytes": 0},
+            "AGENT_CONTEXT_COMPACTION_THRESHOLD_BYTES",
+        ),
+        ({"agent_context_hard_limit_bytes": 0}, "AGENT_CONTEXT_HARD_LIMIT_BYTES"),
+        (
+            {
+                "agent_context_compaction_threshold_bytes": 100,
+                "agent_context_hard_limit_bytes": 100,
+            },
+            "AGENT_CONTEXT_COMPACTION_THRESHOLD_BYTES",
+        ),
     ],
 )
 def test_設定_Cron上限とLease境界を検証する(overrides: dict[str, object], message: str) -> None:
