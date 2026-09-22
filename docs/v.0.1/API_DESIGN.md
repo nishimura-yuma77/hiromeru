@@ -8,7 +8,7 @@ Agentは`propose_campaign`と`propose_x_post`で編集可能な内容を提案�
 ### 1.1 章の構成
 | 章 | 内容 | 主な利用画面 |
 | --- | --- | --- |
-| 2 | 共通仕様（入力検証、冪等性、承認監査、Response、認証とCSRF、認証API、Turnの同時実行、運用向けエンドポイント） | 全画面 |
+| 2 | 共通仕様（入力検証、冪等性、承認監査、Response、認証とCSRF、認証API、Turnの同時実行、運用向けエンドポイント、外部連携） | 全画面 |
 | 3 | X投稿API | SC-02 |
 | 4 | 施策API（承認による登録・更新、直接編集） | SC-02、SC-05 |
 | 5 | Agent会話API（Turn、Session、履歴） | SC-02 |
@@ -41,8 +41,8 @@ Agentは`propose_campaign`と`propose_x_post`で編集可能な内容を提案�
 | 11 | `GET` | `/api/v1/agent-sessions/{session_id}/turns/{turn_id}` | Turn取得 | Turnの状態と表示対象のItemを返す（応答を受け取れなかった場合の確認、実行中Turnの終了待ち） | SC-02 | 5.4 |
 | 12 | `GET` | `/api/v1/agent-sessions` | Session一覧取得 | 自分の親Sessionを、最終更新日時の新しい順に返す | SC-02、SC-05、SC-09 | 5.5 |
 | 13 | `GET` | `/api/v1/agent-sessions/{session_id}` | Session履歴取得 | Sessionの情報とTurnの履歴を返す | SC-02 | 5.6 |
-| 14 | `GET` | `/api/v1/campaigns` | 施策一覧取得 | 施策を新しい順、または意味検索で返す（計測の集計、流入率を含む） | SC-04、SC-06、SC-02（投稿フォームの対象施策） | 6.2 |
-| 15 | `GET` | `/api/v1/campaigns/{campaign_id}` | 施策詳細取得 | 施策の全項目と、紐づく投稿・記憶、計測の集計を返す | SC-05、SC-06 | 6.3 |
+| 14 | `GET` | `/api/v1/campaigns` | 施策一覧取得 | 施策を新しい順、または意味検索で返す（計測の集計、流入率を含む） | SC-04、SC-06、SC-09、SC-02（投稿フォームの対象施策） | 6.2 |
+| 15 | `GET` | `/api/v1/campaigns/{campaign_id}` | 施策詳細取得 | 施策の全項目と、紐づく投稿・記憶、計測の集計を返す | SC-05、SC-06、SC-09 | 6.3 |
 | 16 | `GET` | `/api/v1/posts` | 投稿一覧取得 | 公開済み投稿を、絞り込み・意味検索・並び替え付きで返す（計測の状態と値を含む） | SC-06 | 6.4 |
 | 17 | `GET` | `/api/v1/posts/{post_id}` | 投稿詳細取得 | 公開済み投稿の内容、対象施策、UTM、計測結果を返す | SC-07 | 6.5 |
 | 18 | `GET` | `/api/v1/metrics` | 計測結果集計取得 | 全体のサマリーと施策ごとの計測結果を集計して返す（流入率を含む） | SC-08 | 6.6 |
@@ -346,6 +346,27 @@ DBへの接続を確認する。
 
 - 認証を必要としないため、接続先、例外の内容、バージョンなどの内部情報を返さない
 - OpenAPIのドキュメント（`/api/docs`、`/api/openapi.json`）は開発向けであり、本書のAPI契約に含めない。本番での公開の可否は決めていない
+
+### 2.12 X・GA4外部連携
+
+v0.1では、デプロイ環境ごとに1つのXアカウントと1つのGA4 Propertyへ接続する。認証済みマーケターの会社によって接続先を切り替えず、接続設定をDB、FrontendまたはAgent履歴へ保存・返却しない。
+
+| 環境変数・Secret | 用途 | 機密情報 |
+| --- | --- | :---: |
+| `X_API_KEY` | X APIのConsumer Key | ○ |
+| `X_API_KEY_SECRET` | X APIのConsumer Secret | ○ |
+| `X_ACCESS_TOKEN` | 固定XアカウントのUser Access Token | ○ |
+| `X_ACCESS_TOKEN_SECRET` | 固定XアカウントのUser Access Token Secret | ○ |
+| `GA4_PROPERTY_ID` | 固定GA4 PropertyのID | × |
+| `GA4_SERVICE_ACCOUNT_JSON` | GA4 Data APIを呼び出すService Account認証情報 | ○ |
+
+- X投稿にはOAuth 1.0a User Contextを使用し、3.1の`POST /2/tweets`を呼び出す
+- X投稿PV数は、投稿から1週間後の定期処理で`GET /2/tweets/{x_post_id}?tweet.fields=public_metrics`を呼び出し、`public_metrics.impression_count`から取得する
+- GA4流入ユーザー数は、同じ定期処理でGA4 Data APIの`properties/{GA4_PROPERTY_ID}:runReport`を呼び出す。Metricは`activeUsers`とし、`sessionManualSource = x`、`sessionManualMedium = social`、`sessionManualCampaignName = utm_campaign`、`sessionManualAdContent = utm_content`で対象投稿を識別する
+- 定期処理は取得した実測値を`post_metrics.x_pv_count`と`post_metrics.landing_user_count`へ保存する。Productionで固定値へ置き換えない
+- 外部API Clientは`docs/backend/CODING_STANDARDS.md`の6.2、8.3、10章に従い、サーバー側の`clients`へ実装する。認証情報をLLMへ渡さず、ログ、Response、Agent履歴へ出力しない
+- 開発・テストではClientのインターフェースをFakeまたはMockへ差し替え、固定した計測値を返してよい。X APIとGA4 Data APIを実際に呼び出さない
+- 本節の必須設定は型付き設定クラスで起動時に検証する。ただし、外部API ClientをFakeまたはMockへ差し替える環境では実Credentialを必須としない
 
 ## 3. X投稿API
 
@@ -1525,7 +1546,8 @@ Request Bodyは持たない。
 - 削除は`agent_memories`の行を条件にするため、同時に届いた複数のRequestのうち、削除できるのは1つだけである。他は`404 MEMORY_NOT_FOUND`となる
 
 #### 再送
-- 冪等性キーを持たないため、成功したRequestの再送は`404 MEMORY_NOT_FOUND`になる。Responseを受け取れなかった場合、UIは記憶の一覧を再取得し、対象の記憶がなければ、削除済みとして扱う（`404`を受けた場合も同じ）
+- 冪等性キーを持たないため、成功したRequestの再送は`404 MEMORY_NOT_FOUND`になる。Responseを受け取れなかった場合、検索・ページングされた一覧で対象が見つからないことは削除の証明にならないため、UIは一覧の不在だけで成功と判定しない
+- Response不明後は、確認済みの同じ`memory_id`に対して、利用者の「削除結果を確定する」操作で同じDELETEを再送できる。`200`ならそのRequestで削除済み、`404 MEMORY_NOT_FOUND`なら以前のRequestまたは別の操作ですでに削除済みとして、どちらも削除完了として扱う。IDは再利用しないため、同じIDの別の記憶を削除することはない。自動再送は行わない
 - 削除に失敗した（`500`）Requestは、そのまま再送できる
 
 #### `delete_long_term_memory`との関係
