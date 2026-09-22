@@ -43,7 +43,7 @@ async def _approval_counts(session_id: int) -> tuple[int, int]:
 
 
 async def _short_timeout_client(
-    account: Account, ctx: ServiceContext, timeout_seconds: float = 0.05
+    account: Account, ctx: ServiceContext, timeout_seconds: float = 1.0
 ) -> AsyncClient:
     ctx.settings.request_timeout_seconds = timeout_seconds
     return AsyncClient(
@@ -226,11 +226,12 @@ async def test_Request_Timeout_X送信中断後は同じキーで結果不明へ
             json=body,
             headers={"Idempotency-Key": key},
         )
+    assert x_api.started.is_set()
+    x_api.gate.set()
     in_progress = await account.publish_post(session_id, body, key)
     clock.advance(331)
     recovered = await account.publish_post(session_id, body, key)
 
-    assert x_api.started.is_set()
     assert timed_out.status_code == 504
     assert timed_out.content == b""
     assert in_progress.status_code == 409
