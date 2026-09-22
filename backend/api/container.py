@@ -16,7 +16,8 @@ from agent_runtime.real_runner import RealAgentRunner
 from agent_runtime.runner import StubAgentRunner
 from agent_runtime.web_tools import WebToolDependencies, register_web_tools
 from clients.embedding import OrcaRouterEmbeddingClient
-from clients.fakes import FakeEmbeddingClient, FakeXApiClient
+from clients.fakes import FakeEmbeddingClient, FakeGa4Client, FakeXApiClient
+from clients.ga4 import GoogleServiceAccountTokenProvider, HttpGa4Client
 from clients.web_fetch import HttpxPinnedTransport, SafeWebFetcher, SystemResolver
 from clients.web_search import FakeWebSearchProvider, HttpWebSearchProvider
 from clients.x_api import HttpXApiClient
@@ -32,6 +33,7 @@ def build_default_context(settings: Settings | None = None) -> ServiceContext:
     if resolved.external_client_mode == "fake":
         embedding = FakeEmbeddingClient(resolved.embedding_dimensions)
         x_api = FakeXApiClient()
+        ga4 = FakeGa4Client()
         web_search = FakeWebSearchProvider()
         guardrail = FakeToolResultGuardrail()
         firewall = DenyAllAgentFirewall()
@@ -50,6 +52,13 @@ def build_default_context(settings: Settings | None = None) -> ServiceContext:
             access_token=resolved.x_access_token.get_secret_value(),
             access_token_secret=resolved.x_access_token_secret.get_secret_value(),
             timeout_seconds=resolved.x_api_timeout_seconds,
+        )
+        ga4 = HttpGa4Client(
+            property_id=resolved.ga4_property_id,
+            token_provider=GoogleServiceAccountTokenProvider(
+                resolved.ga4_service_account_json.get_secret_value()
+            ),
+            timeout_seconds=resolved.ga4_timeout_seconds,
         )
         web_search = HttpWebSearchProvider(
             base_url=resolved.web_search_base_url,
@@ -87,6 +96,7 @@ def build_default_context(settings: Settings | None = None) -> ServiceContext:
         clock=clock,
         embedding=embedding,
         x_api=x_api,
+        ga4=ga4,
         agent_runner=StubAgentRunner(),
         context_compactor=StubContextCompactor(),
         tool_registry=registry,

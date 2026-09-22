@@ -12,7 +12,8 @@ from clients.errors import (
     XApiRejectedError,
     XApiRetryableProviderError,
 )
-from clients.fakes import FakeEmbeddingClient, FakeXApiClient
+from clients.fakes import FakeEmbeddingClient, FakeGa4Client, FakeXApiClient
+from clients.ga4 import HttpGa4Client
 from clients.web_search import HttpWebSearchProvider, WebSearchProviderError
 from clients.x_api import HttpXApiClient
 from core.config import Settings
@@ -391,5 +392,7 @@ def test_Client_Mode_fakeとrealで実行Clientを切り替える() -> None:
 
     assert isinstance(fake.embedding, FakeEmbeddingClient)
     assert isinstance(fake.x_api, FakeXApiClient)
+    assert isinstance(fake.ga4, FakeGa4Client)
     assert isinstance(real.embedding, OrcaRouterEmbeddingClient)
     assert isinstance(real.x_api, HttpXApiClient)
+    assert isinstance(real.ga4, HttpGa4Client)

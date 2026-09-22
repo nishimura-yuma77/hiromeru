@@ -18,6 +18,7 @@ from agent_runtime.runner import (
     ProgressReporter,
 )
 from clients.errors import EmbeddingError, XApiOutcomeUnknownError, XApiRejectedError
+from clients.ga4 import Ga4ReportQuery
 from clients.x_api import XPostResult
 from domain.constants import EMBEDDING_DIMENSIONS
 from domain.enums import AgentType
@@ -100,6 +101,19 @@ class FakeXApi:
         """設定したMetrics値を返す。"""
         del x_post_id
         return self.impression_count
+
+
+class FakeGa4:
+    """GA4 Data APIの代替。Queryを記録し、設定した値を返す。"""
+
+    def __init__(self) -> None:
+        self.calls: list[Ga4ReportQuery] = []
+        self.active_users = 0
+
+    async def get_active_users(self, query: Ga4ReportQuery) -> int:
+        """Queryを記録して固定値を返す。"""
+        self.calls.append(query)
+        return self.active_users
 
 
 async def no_sleep(_seconds: float) -> None:

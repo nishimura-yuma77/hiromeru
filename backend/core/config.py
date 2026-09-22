@@ -65,9 +65,10 @@ class Settings(BaseSettings):
     x_access_token_secret: SecretStr = SecretStr("")
     x_api_timeout_seconds: float = 30.0
 
-    # GA4 Data API。Client本体はIssue #33で実装する。
+    # GA4 Data API。
     ga4_property_id: str = ""
     ga4_service_account_json: SecretStr = SecretStr("")
+    ga4_timeout_seconds: float = 30.0
 
     # Vercel Cron。Endpoint本体はIssue #35で実装する。
     cron_secret: SecretStr = SecretStr("")
@@ -241,8 +242,12 @@ class Settings(BaseSettings):
         ]
         if invalid:
             raise ValueError(f"Tool上限は正数かつ合理的な範囲にしてください: {', '.join(invalid)}")
-        if self.web_search_timeout_seconds <= 0 or self.web_fetch_timeout_seconds <= 0:
-            raise ValueError("Web client timeoutは正数にしてください")
+        if (
+            self.web_search_timeout_seconds <= 0
+            or self.web_fetch_timeout_seconds <= 0
+            or self.ga4_timeout_seconds <= 0
+        ):
+            raise ValueError("External client timeoutは正数にしてください")
 
     def auth_secret(self) -> str:
         """認証Tokenの署名境界でだけ署名鍵を平文として返す。"""

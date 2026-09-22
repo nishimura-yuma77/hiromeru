@@ -27,6 +27,7 @@ from tests.support.fakes import (
     FakeAgentRunner,
     FakeContextCompactor,
     FakeEmbedding,
+    FakeGa4,
     FakeXApi,
     FixedClock,
     no_sleep,
@@ -49,6 +50,11 @@ def embedding() -> FakeEmbedding:
 @pytest.fixture
 def x_api() -> FakeXApi:
     return FakeXApi()
+
+
+@pytest.fixture
+def ga4() -> FakeGa4:
+    return FakeGa4()
 
 
 @pytest.fixture
@@ -78,6 +84,7 @@ def ctx(
     clock: FixedClock,
     embedding: FakeEmbedding,
     x_api: FakeXApi,
+    ga4: FakeGa4,
     agent: FakeAgentRunner,
     compactor: FakeContextCompactor,
 ) -> ServiceContext:
@@ -104,6 +111,7 @@ def ctx(
         clock=clock,
         embedding=embedding,
         x_api=x_api,
+        ga4=ga4,
         agent_runner=agent,
         context_compactor=compactor,
         tool_registry=registry,
