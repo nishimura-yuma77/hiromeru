@@ -2,10 +2,10 @@
 
 from datetime import UTC, datetime
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 
 from domain.enums import PostMetricStatus
-from models import AgentMemory, MemoryCampaign, MemoryPost, Post, PostMetric
+from models import AgentMemory, Campaign, MemoryCampaign, MemoryPost, Post, PostMetric
 from repositories.database import SessionLocal
 from tests.support.fakes import vector_for
 
@@ -37,6 +37,14 @@ async def complete_metrics(post_id: int, *, x_pv_count: int, landing_user_count:
         metric.x_pv_count = x_pv_count
         metric.landing_user_count = landing_user_count
         metric.measured_at = datetime.now(UTC)
+
+
+async def archive_campaign(campaign_id: int, archived_at: datetime) -> None:
+    """API未実装のCampaign Archive状態を作る。"""
+    async with SessionLocal() as session, session.begin():
+        await session.execute(
+            update(Campaign).where(Campaign.id == campaign_id).values(archived_at=archived_at)
+        )
 
 
 async def post_ids_of_campaign(campaign_id: int) -> list[int]:

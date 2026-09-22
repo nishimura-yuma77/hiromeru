@@ -89,6 +89,7 @@ class CampaignRepository:
                 Campaign.id == campaign_id,
                 Campaign.company_id == company_id,
                 Campaign.updated_at == expected_updated_at,
+                Campaign.archived_at.is_(None),
             )
             .values(
                 title=content.title,

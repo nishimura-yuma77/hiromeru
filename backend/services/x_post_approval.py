@@ -92,6 +92,8 @@ class XPostApprovalService:
             self._validate_post_length(request, tracking)
             await self._require_campaign(ctx, request.campaign_id)
             embedding = await self._embed(request.body)
+            # X API呼び出しの直前にも再確認し、Embedding生成中のArchive Raceを閉じる。
+            await self._require_campaign(ctx, request.campaign_id)
         except AppError as error:
             return await self._fail(ctx, error, ApiIdempotencyStatus.FAILED)
         return await self._post_to_x(ctx, request, tracking, embedding)
@@ -144,8 +146,11 @@ class XPostApprovalService:
 
     async def _require_campaign(self, ctx: ExecutionContext, campaign_id: int) -> None:
         async with self._ctx.session_factory() as session:
-            if await CampaignRepository(session).get(ctx.auth.company_id, campaign_id) is None:
+            campaign = await CampaignRepository(session).get(ctx.auth.company_id, campaign_id)
+            if campaign is None:
                 raise AppError("CAMPAIGN_NOT_FOUND")
+            if campaign.archived_at is not None:
+                raise AppError("CAMPAIGN_ARCHIVED")
 
     async def _embed(self, body: str) -> list[float]:
         """URLを除去した本文からEmbeddingを生成する。失敗した場合はXへ投稿しない。"""

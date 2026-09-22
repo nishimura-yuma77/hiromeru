@@ -41,6 +41,7 @@ ERROR_SPECS: Final[dict[str, tuple[int, bool]]] = {
     "TURN_INTERRUPTED": (500, True),
     # 施策・投稿・記憶
     "CAMPAIGN_NOT_FOUND": (404, False),
+    "CAMPAIGN_ARCHIVED": (409, False),
     "CAMPAIGN_CONFLICT": (409, False),
     "INVALID_CAMPAIGN": (422, False),
     "CAMPAIGN_SAVE_FAILED": (500, True),
@@ -78,6 +79,7 @@ DEFAULT_MESSAGES: Final[dict[str, str]] = {
     "AGENT_EXECUTION_FAILED": "Agentの実行を継続できませんでした。",
     "TURN_INTERRUPTED": "処理が中断されました。同じ依頼を再送してください。",
     "CAMPAIGN_NOT_FOUND": "施策が見つかりません。",
+    "CAMPAIGN_ARCHIVED": "Archive済みの施策は変更できません。",
     "CAMPAIGN_CONFLICT": "施策が別の操作で更新されています。最新の内容を確認してください。",
     "INVALID_CAMPAIGN": "施策の内容が条件を満たしていません。",
     "CAMPAIGN_SAVE_FAILED": "施策を保存できませんでした。",

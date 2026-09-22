@@ -7,6 +7,7 @@ from models import AgentTurn, Campaign
 from repositories.database import SessionLocal
 from tests.conftest import AccountFactory
 from tests.support.client import Account, campaign_body
+from tests.support.db import archive_campaign
 from tests.support.fakes import FakeEmbedding, FixedClock
 
 
@@ -77,6 +78,57 @@ async def test_上書きの競合_expected_updated_atが古いとき409_CAMPAIGN
     error = response.json()["error"]
     assert error["code"] == "CAMPAIGN_CONFLICT"
     assert error["agent_turn_id"] is not None
+
+
+async def test_上書き_Archive済みCampaignは409を保存して同じキーで再返却する(
+    account: Account, embedding: FakeEmbedding, clock: FixedClock
+) -> None:
+    session_id = await account.create_session()
+    created = (await account.upsert_campaign(session_id, campaign_body())).json()["data"]
+    await archive_campaign(created["id"], clock.now())
+    embedding.calls.clear()
+    key = str(uuid.uuid4())
+    body = campaign_body(
+        id=created["id"], expected_updated_at=created["created_at"], title="更新されない"
+    )
+
+    first = await account.upsert_campaign(session_id, body, key)
+    replay = await account.upsert_campaign(session_id, body, key)
+    detail = await account.client.get(f"/api/v1/campaigns/{created['id']}")
+
+    assert first.status_code == 409
+    assert first.json()["error"]["code"] == "CAMPAIGN_ARCHIVED"
+    assert first.json()["error"]["retryable"] is False
+    assert first.json()["error"]["agent_turn_id"] is not None
+    assert replay.json() == first.json()
+    assert embedding.calls == []
+    assert detail.json()["data"]["campaign"]["title"] == campaign_body()["title"]
+
+
+async def test_上書き_Embedding生成中にArchiveされたらCASで更新せず競合を保存する(
+    account: Account, embedding: FakeEmbedding, clock: FixedClock
+) -> None:
+    session_id = await account.create_session()
+    created = (await account.upsert_campaign(session_id, campaign_body())).json()["data"]
+    gate = asyncio.Event()
+    embedding.block_next = gate
+    key = str(uuid.uuid4())
+    body = campaign_body(
+        id=created["id"], expected_updated_at=created["created_at"], title="更新されない"
+    )
+    running = asyncio.create_task(account.upsert_campaign(session_id, body, key))
+    await asyncio.wait_for(embedding.blocked.wait(), 5)
+    await archive_campaign(created["id"], clock.now())
+    gate.set()
+
+    response = await running
+    replay = await account.upsert_campaign(session_id, body, key)
+    detail = await account.client.get(f"/api/v1/campaigns/{created['id']}")
+
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "CAMPAIGN_CONFLICT"
+    assert replay.json() == response.json()
+    assert detail.json()["data"]["campaign"]["title"] == campaign_body()["title"]
 
 
 async def test_他社の施策の上書き_idが他社のとき404_CAMPAIGN_NOT_FOUND(
