@@ -72,6 +72,9 @@ class Settings(BaseSettings):
     message_max_length: int = 4000
     turn_time_limit_seconds: float = 200.0
     stale_turn_seconds: float = 330.0
+    tool_max_attempts: int = 3
+    tool_retry_backoff_seconds: float = 0.25
+    tool_attempt_timeout_seconds: float = 30.0
     # Context量は決定論的にserializeしたJSONのUTF-8 byte数で測る。
     agent_context_compaction_threshold_bytes: int = 64_000
     agent_context_hard_limit_bytes: int = 128_000
@@ -155,6 +158,22 @@ class Settings(BaseSettings):
         """Request全体のTimeoutをVercelの実行上限内に保つ。"""
         if not 0 < self.request_timeout_seconds <= _MAX_DURATION_SECONDS:
             raise ValueError("REQUEST_TIMEOUT_SECONDS は0秒より大きく300秒以下にしてください")
+        if not 0 < self.turn_time_limit_seconds < self.request_timeout_seconds:
+            raise ValueError(
+                "TURN_TIME_LIMIT_SECONDS は0秒より大きく"
+                "REQUEST_TIMEOUT_SECONDS未満にしてください"
+            )
+        if self.stale_turn_seconds <= self.turn_time_limit_seconds:
+            raise ValueError("STALE_TURN_SECONDS はTURN_TIME_LIMIT_SECONDSより大きくしてください")
+        if self.tool_max_attempts <= 0:
+            raise ValueError("TOOL_MAX_ATTEMPTS は正の整数にしてください")
+        if self.tool_retry_backoff_seconds <= 0:
+            raise ValueError("TOOL_RETRY_BACKOFF_SECONDS は正数にしてください")
+        if not 0 < self.tool_attempt_timeout_seconds <= self.turn_time_limit_seconds:
+            raise ValueError(
+                "TOOL_ATTEMPT_TIMEOUT_SECONDS は0秒より大きく"
+                "TURN_TIME_LIMIT_SECONDS以下にしてください"
+            )
         if self.agent_context_compaction_threshold_bytes <= 0:
             raise ValueError("AGENT_CONTEXT_COMPACTION_THRESHOLD_BYTES は正数にしてください")
         if self.agent_context_hard_limit_bytes <= 0:

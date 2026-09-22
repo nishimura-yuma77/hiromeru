@@ -7,6 +7,7 @@ import asyncio
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
+from agent_runtime.executor import ToolExecutor
 from agent_runtime.runner import AgentRunError, AgentRunInput, ProgressReporter
 from core.errors import DEFAULT_MESSAGES, ERROR_SPECS, AppError, FieldError
 from core.logging import get_logger, safe_error_text
@@ -136,6 +137,14 @@ class TurnService:
                     company_id=prepared.auth.company_id,
                     message=prepared.message,
                     context=context,
+                    tools=ToolExecutor(
+                        self._ctx,
+                        marketer_id=prepared.auth.marketer_id,
+                        company_id=prepared.auth.company_id,
+                        session_id=prepared.session_id,
+                        turn_id=prepared.turn_id,
+                        reporter=reporter,
+                    ),
                 )
                 output = await self._ctx.agent_runner.run(run_input, reporter)
             reply = output.reply

@@ -7,6 +7,8 @@ OpenAI Agents SDK によるループ（Firewall・Guardrail・子Agent）は、�
 from dataclasses import dataclass
 from typing import Any, Literal, Protocol
 
+from agent_runtime.tools import ToolInvoker
+
 STUB_REPLY = "（スタブ応答）Agentの実行は未実装です。メッセージは履歴へ保存されました。"
 
 ActivityKind = Literal["tool", "subagent"]
@@ -47,6 +49,7 @@ class AgentRunInput:
     company_id: int
     message: str
     context: AgentContext
+    tools: ToolInvoker
 
 
 @dataclass(frozen=True)

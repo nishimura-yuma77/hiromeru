@@ -7,7 +7,9 @@ from dataclasses import dataclass
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from agent_runtime.compactor import ContextCompactor
+from agent_runtime.firewall import AgentFirewall
 from agent_runtime.runner import AgentRunner
+from agent_runtime.tools import ToolRegistry
 from clients.embedding import EmbeddingClient
 from clients.x_api import XApiClient
 from core.clock import Clock
@@ -35,5 +37,7 @@ class ServiceContext:
     x_api: XApiClient
     agent_runner: AgentRunner
     context_compactor: ContextCompactor
+    tool_registry: ToolRegistry
+    agent_firewall: AgentFirewall
     sleep: Callable[[float], Awaitable[None]]
     new_uuid: Callable[[], uuid.UUID]
