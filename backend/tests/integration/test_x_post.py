@@ -246,6 +246,24 @@ async def test_結果不明_Xの結果を確定できないとき504で保存済
     assert await _post_count(campaign_id) == 0
 
 
+async def test_結果不明_X送信開始後に想定外の例外が起きても再投稿可能な内部Errorにしない(
+    account: Account, x_api: FakeXApi
+) -> None:
+    session_id = await account.create_session()
+    campaign_id = await account.create_campaign(session_id)
+    x_api.outcome = "unexpected"
+    key = str(uuid.uuid4())
+
+    first = await account.publish_post(session_id, post_body(campaign_id), key)
+    second = await account.publish_post(session_id, post_body(campaign_id), key)
+
+    assert first.status_code == second.status_code == 504
+    assert first.json()["error"]["code"] == "X_POST_OUTCOME_UNKNOWN"
+    assert first.json()["error"]["retryable"] is False
+    assert second.json() == first.json()
+    assert len(x_api.calls) == 1
+
+
 async def test_冪等性_成功後に同じキーで再送しても同じ応答でXへ再投稿しない(
     account: Account, x_api: FakeXApi
 ) -> None:

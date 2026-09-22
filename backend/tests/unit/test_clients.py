@@ -146,12 +146,28 @@ async def test_X投稿拒否_4xxのとき拒否として扱い再試行しない
 
     def handler(_request: httpx.Request) -> httpx.Response:
         calls.append(1)
-        return httpx.Response(status)
+        return httpx.Response(status, json={"title": "Rejected", "detail": "not created"})
 
     with pytest.raises(XApiRejectedError) as info:
         await _x_client(httpx.MockTransport(handler)).post("本文")
 
     assert info.value.retryable is (status == 429)
+    assert len(calls) == 1
+
+
+@pytest.mark.parametrize("response", [httpx.Response(400), httpx.Response(408)])
+async def test_X投稿結果不明_構造化されていない4xxと408は結果不明として扱う(
+    response: httpx.Response,
+) -> None:
+    calls: list[int] = []
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        calls.append(1)
+        return response
+
+    with pytest.raises(XApiOutcomeUnknownError):
+        await _x_client(httpx.MockTransport(handler)).post("本文")
+
     assert len(calls) == 1
 
 

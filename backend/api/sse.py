@@ -79,10 +79,14 @@ def format_event(event: str, data: dict[str, Any]) -> bytes:
 
 
 async def _run_turn(
-    service: TurnService, prepared: PreparedTurn, queue: asyncio.Queue[_Event | None]
+    service: TurnService,
+    prepared: PreparedTurn,
+    queue: asyncio.Queue[_Event | None],
+    deadline: float | None,
 ) -> None:
     try:
-        view = await service.execute(prepared, SseReporter(queue))
+        async with asyncio.timeout_at(deadline):
+            view = await service.execute(prepared, SseReporter(queue))
         queue.put_nowait(("turn_finished", serialize_turn(view)))
     except Exception as error:  # noqa: BLE001 - タスクの例外は回収し、ストリームを閉じる
         # Turnは running のまま残る。復旧判定時間の経過後に TURN_INTERRUPTED で終了する。
@@ -91,10 +95,12 @@ async def _run_turn(
         queue.put_nowait(None)
 
 
-async def stream_turn(service: TurnService, prepared: PreparedTurn) -> AsyncIterator[bytes]:
+async def stream_turn(
+    service: TurnService, prepared: PreparedTurn, deadline: float | None = None
+) -> AsyncIterator[bytes]:
     """`turn_started` から `turn_finished` までのSSEを返す。15秒ごとにkeep-aliveを送る。"""
     queue: asyncio.Queue[_Event | None] = asyncio.Queue()
-    task = asyncio.create_task(_run_turn(service, prepared, queue))
+    task = asyncio.create_task(_run_turn(service, prepared, queue, deadline))
     _running_tasks.add(task)
     task.add_done_callback(_running_tasks.discard)
     yield format_event(

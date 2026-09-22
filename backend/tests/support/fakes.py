@@ -80,6 +80,8 @@ class FakeXApi:
             raise XApiRejectedError(self.rejected_status)
         if self.outcome == "unknown":
             raise XApiOutcomeUnknownError("fake unknown")
+        if self.outcome == "unexpected":
+            raise RuntimeError("fake unexpected")
         self._counter += 1
         return XPostResult(x_post_id=f"x-{id(self)}-{self._counter}")
 

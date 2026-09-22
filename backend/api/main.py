@@ -3,7 +3,7 @@
 from fastapi import FastAPI
 
 from api.exception_handlers import register_exception_handlers
-from api.middleware import AuthCookieMiddleware, RequestContextMiddleware
+from api.middleware import AuthCookieMiddleware, RequestContextMiddleware, RequestTimeoutMiddleware
 from api.routers import approvals, auth, campaigns, health, memories, posts, sessions
 from core.config import get_settings
 from core.logging import configure_logging
@@ -36,6 +36,9 @@ def create_app(context: ServiceContext | None = None) -> FastAPI:
         application.include_router(router)
     # 後に追加したものが外側になる。request_id を最も外側で付与する。
     application.add_middleware(AuthCookieMiddleware)
+    application.add_middleware(
+        RequestTimeoutMiddleware, timeout_seconds=settings.request_timeout_seconds
+    )
     application.add_middleware(RequestContextMiddleware)
     return application
 

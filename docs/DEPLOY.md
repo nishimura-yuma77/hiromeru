@@ -28,6 +28,22 @@ Vercel MarketplaceからNeonを追加し、Vercelプロジェクトへ接続し�
 
 Neonが`postgresql://`形式で発行するURLは、アプリケーション内で`postgresql+psycopg://`へ変換されます。
 
+### Preview Branch Cleanup
+
+Neon Freeは1プロジェクトにつき10ブランチまでです。Vercel Managed Integrationが作成するPreviewブランチは、GitブランチやPRではなくVercel Preview Deploymentの削除に連動して削除されます。不要なDeploymentが残ると`Resource provisioning failed`で新しいPreviewを作成できなくなります。
+
+`.github/workflows/cleanup-preview.yml`は、同一リポジトリ内のPRが閉じられたとき、そのheadブランチに対応するVercel Preview Deploymentを削除します。Production DeploymentとFork元のブランチは対象にしません。Deploymentの削除により、Neon側のPreviewブランチ削除も発火します。
+
+Repository settingsへ次を設定してください。
+
+| 種別 | 名前 | 値 |
+| --- | --- | --- |
+| Actions secret | `VERCEL_PREVIEW_CLEANUP_TOKEN` | Vercelで発行した`hiromeru`プロジェクト限定Token |
+| Actions variable | `VERCEL_PROJECT_ID` | Vercel Project ID |
+| Actions variable | `VERCEL_TEAM_ID` | Vercel Team ID |
+
+TokenはVercel DashboardのAccount Settingsから発行し、リポジトリやログへ値を保存しないでください。Secretが未設定の場合、Cleanup Workflowは設定漏れを見逃さないよう失敗します。
+
 ## Production Migration
 
 DB migrationはVercelの自動デプロイでは実行しません。複数のDeploymentから同時にmigrationが動くことを避けるため、GitHub Actionsから手動実行します。

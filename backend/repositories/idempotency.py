@@ -217,8 +217,10 @@ class IdempotencyRepository:
             .where(
                 ApiIdempotencyRequest.id == row.id,
                 ApiIdempotencyRequest.status == ApiIdempotencyStatus.PROCESSING,
+                ApiIdempotencyRequest.operation == ApiOperation.PUBLISH_X_POST,
                 ApiIdempotencyRequest.execution_token == row.execution_token,
                 ApiIdempotencyRequest.lease_expires_at <= now,
+                ApiIdempotencyRequest.external_effect_started_at.is_not(None),
                 ApiIdempotencyRequest.external_result.is_(None),
             )
             .values(

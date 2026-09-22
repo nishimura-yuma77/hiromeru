@@ -1,12 +1,14 @@
 """リクエストBodyの解析と検証。"""
 
 import json
-from collections.abc import Iterable, Mapping
+from collections.abc import Awaitable, Callable, Iterable, Mapping
 from typing import Any
 
 from pydantic import BaseModel, ValidationError
 
 from core.errors import AppError, FieldError, FieldErrorCode
+
+type BodyLoader = Callable[[], Awaitable[bytes]]
 
 _FIELD_LABELS = {
     "email": "メールアドレス",

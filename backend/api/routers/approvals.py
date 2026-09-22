@@ -6,6 +6,7 @@ from fastapi import APIRouter, Header, Path, Request
 from fastapi.responses import JSONResponse
 
 from api.deps import Context, CsrfProtected
+from api.request_body import read_json_body
 from services.approval import ApprovalOutcome
 from services.campaign_approval import CampaignApprovalService
 from services.x_post_approval import XPostApprovalService
@@ -35,7 +36,7 @@ async def publish_x_post(
 ) -> JSONResponse:
     """最終承認済みの投稿内容をXへ投稿する。`Idempotency-Key` 必須。"""
     outcome = await XPostApprovalService(ctx).publish(
-        auth, session_id, await request.body(), idempotency_key
+        auth, session_id, lambda: read_json_body(request), idempotency_key
     )
     return _respond(outcome)
 
@@ -53,6 +54,6 @@ async def upsert_campaign(
     `Idempotency-Key` 必須。
     """
     outcome = await CampaignApprovalService(ctx).upsert(
-        auth, session_id, await request.body(), idempotency_key
+        auth, session_id, lambda: read_json_body(request), idempotency_key
     )
     return _respond(outcome)

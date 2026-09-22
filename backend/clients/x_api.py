@@ -32,7 +32,7 @@ class HttpXApiClient:
     """X APIを呼ぶ薄いクライアント。
 
     副作用のある呼び出しのため、自動で再試行しない（BE_STD 8.3）。
-    4xx は投稿の失敗が確定、5xx・タイムアウト・通信エラー・不正な応答は結果不明として扱う。
+    構造化された4xxは投稿の失敗が確定、Timeout・通信エラー・不正な応答は結果不明とする。
     """
 
     def __init__(
@@ -66,7 +66,10 @@ class HttpXApiClient:
         except (httpx.TimeoutException, httpx.TransportError):
             raise XApiOutcomeUnknownError("X APIの結果を確定できませんでした") from None
         if 400 <= response.status_code < 500:
-            raise XApiRejectedError(response.status_code)
+            is_unambiguous = response.status_code != httpx.codes.REQUEST_TIMEOUT
+            if is_unambiguous and _is_structured_error(response):
+                raise XApiRejectedError(response.status_code)
+            raise XApiOutcomeUnknownError("X APIのエラー応答を解釈できませんでした")
         if response.status_code not in (httpx.codes.CREATED, httpx.codes.OK):
             raise XApiOutcomeUnknownError(
                 f"X APIが想定外の応答を返しました ({response.status_code})"
@@ -78,3 +81,19 @@ class HttpXApiClient:
         if not isinstance(x_post_id, str) or not x_post_id:
             raise XApiOutcomeUnknownError("X APIの応答に投稿IDがありません")
         return XPostResult(x_post_id=x_post_id)
+
+
+def _is_structured_error(response: httpx.Response) -> bool:
+    """Xが投稿未作成を明示したと判断できる構造化Errorか。"""
+    try:
+        body = response.json()
+    except ValueError:
+        return False
+    if not isinstance(body, dict):
+        return False
+    errors = body.get("errors")
+    return bool(
+        (isinstance(errors, list) and errors)
+        or isinstance(body.get("title"), str)
+        or isinstance(body.get("detail"), str)
+    )

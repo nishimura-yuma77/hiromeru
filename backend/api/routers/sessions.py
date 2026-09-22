@@ -6,6 +6,8 @@ from fastapi import APIRouter, Path, Query, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from api.deps import Authenticated, Context, CsrfProtected
+from api.middleware import REQUEST_DEADLINE_KEY
+from api.request_body import read_json_body
 from api.responses import ok
 from api.serializers import (
     serialize_history,
@@ -70,10 +72,10 @@ async def send_message(
 ) -> JSONResponse | StreamingResponse:
     """ユーザーのメッセージで親AgentのTurnを実行する。`Accept` によりJSONまたはSSEで返す。"""
     service = TurnService(ctx)
-    prepared = await service.begin(auth, session_id, await request.body())
+    prepared = await service.begin(auth, session_id, lambda: read_json_body(request))
     if "text/event-stream" in request.headers.get("accept", ""):
         return StreamingResponse(
-            stream_turn(service, prepared),
+            stream_turn(service, prepared, request.scope.get(REQUEST_DEADLINE_KEY)),
             media_type="text/event-stream",
             headers={"Cache-Control": "no-cache, no-transform", "X-Accel-Buffering": "no"},
         )
