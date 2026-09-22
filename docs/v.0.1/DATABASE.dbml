@@ -194,7 +194,7 @@ Ref: campaigns.created_by_marketer_id > marketers.id [delete: restrict]
 
 Table campaign_embeddings {
   campaign_id bigint [pk, note: '【施策ID】']
-  embedding vector(1536) [not null, note: '【施策埋め込みベクトル】ターゲット像、実施背景、施策目的、施策内容を正規化したテキストから生成する。HNSWコサイン距離インデックス（vector_cosine_ops）をSQL migrationで追加する。']
+  embedding vector(1536) [not null, note: '【施策埋め込みベクトル】施策タイトル、ターゲット像、実施背景、施策目的、施策内容を正規化したテキストから生成する。HNSWコサイン距離インデックス（vector_cosine_ops）をSQL migrationで追加する。']
   content_hash varchar(64) [not null, note: '【埋め込み元ハッシュ】正規化した埋め込み元テキストのSHA-256。内容が変わっていない場合の再生成を防ぐ。']
   created_at timestamptz [not null, default: `now()`, note: '【作成日時】']
   updated_at timestamptz [not null, default: `now()`, note: '【更新日時】']
@@ -203,7 +203,7 @@ Table campaign_embeddings {
     content_hash
   }
 
-  Note: '施策の意味検索に使用する1対1の検索Projection。施策のタイトルは埋め込み元に含めない。埋め込みを生成してからDBトランザクションを開始し、施策と本レコードを同じトランザクションで保存・更新する。'
+  Note: '施策の意味検索に使用する1対1の検索Projection。施策のタイトルを含む検索用テキストから埋め込みを生成してからDBトランザクションを開始し、施策と本レコードを同じトランザクションで保存・更新する。'
 }
 
 Ref: campaign_embeddings.campaign_id > campaigns.id [delete: cascade]

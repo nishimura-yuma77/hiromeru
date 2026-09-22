@@ -334,7 +334,7 @@ flowchart TD
     METRICS --> END_OK([施策・類似度・評価概要を返す])
 ```
 
-検索結果は類似度順に返し、`title`はEmbedding対象に含めない。主な失敗は`INVALID_ARGUMENT`、`EMBEDDING_FAILED`、`CAMPAIGN_SEARCH_FAILED`。
+検索結果は類似度順に返す。検索用Embeddingには`title`も含め、利用者が一覧に表示された施策名から検索できるようにする。主な失敗は`INVALID_ARGUMENT`、`EMBEDDING_FAILED`、`CAMPAIGN_SEARCH_FAILED`。
 
 ### `propose_campaign`
 **利用Agent:** 親エージェント
@@ -587,7 +587,7 @@ flowchart TD
 
 - IDによる施策取得は`get_campaign`、自然言語による類似施策検索は`search_campaigns`を使用する
 - 意味検索では実行主体が所属する会社の施策だけを対象とし、類似度上位の施策と関連する評価指標を返す
-- 検索用テキストは`target_profile`、`background`、`objective`、`plan`から構築し、表示用の`title`は含めない
+- 検索用テキストは`title`、`target_profile`、`background`、`objective`、`plan`から構築する
 - 候補案のEmbeddingは検索時だけ一時的に生成し、人間が承認するまでDBへ保存しない
 - 類似度だけで施策案を自動拒否せず、ユーザーの依頼、過去の実績、再実施の価値をLLMが考慮する
 - 施策upsert APIの新規作成ではEmbeddingを先に生成し、`campaigns`と`campaign_embeddings`を同じDBトランザクションで保存する

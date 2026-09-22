@@ -1223,7 +1223,7 @@ Response: `200 OK`
 }
 ```
 
-- 意味検索の対象は`campaign_embeddings`とする。検索用テキストは`target_profile`、`background`、`objective`、`plan`から作り、`title`は含めない（`AGENT_DESIGN.md`）
+- 意味検索の対象は`campaign_embeddings`とする。検索用テキストは`title`、`target_profile`、`background`、`objective`、`plan`から作る（`AGENT_DESIGN.md`）
 - 一覧では、`target_profile`、`background`、`plan`を返さない。全項目は施策の取得（6.3）で返す
 - `archived_at`がNULLの施策だけを返す。MVPには施策のアーカイブ操作がないため（9章の非対象を参照）、現在はすべての施策が対象になる。SC-06の絞り込みと投稿フォームの対象施策の選択（`SCREEN_DESIGN.md`の6.11）は、この一覧を`query`で検索して使う
 
