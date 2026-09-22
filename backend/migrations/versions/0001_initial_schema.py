@@ -10,9 +10,8 @@ from collections.abc import Sequence
 
 import pgvector.sqlalchemy
 import sqlalchemy as sa
-from sqlalchemy.dialects import postgresql
-
 from alembic import op
+from sqlalchemy.dialects import postgresql
 
 revision: str = "0001"
 down_revision: str | Sequence[str] | None = None

@@ -53,6 +53,9 @@ ignore = [
 [tool.ruff.lint.pydocstyle]
 convention = "google"
 
+[tool.ruff.lint.isort]
+known-third-party = ["alembic"]
+
 [tool.ruff.lint.per-file-ignores]
 "**/__init__.py" = ["D104"]
 # 自動生成のマイグレーションはdocstringと型注釈を要求しない。

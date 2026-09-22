@@ -50,3 +50,14 @@ async def logout(ctx: Context) -> JSONResponse:
 async def me(auth: Authenticated) -> JSONResponse:
     """ログイン中のマーケターの情報を返す。`csrf_token` は返さない。"""
     return ok({"marketer_id": auth.marketer_id, "email": auth.email})
+
+
+@router.post("/csrf")
+async def reissue_csrf(request: Request, ctx: Context, auth: Authenticated) -> JSONResponse:
+    """認証とOriginを検証し、現在のマーケター用CSRF Tokenを再発行する。"""
+    verify_origin(request, ctx)
+    token = issue_csrf_token(ctx.settings.session_secret, auth.marketer_id)
+    response = ok({"csrf_token": token})
+    response.headers["Cache-Control"] = "no-store"
+    response.headers.append("set-cookie", csrf_cookie(ctx.settings, token))
+    return response
