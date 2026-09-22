@@ -30,7 +30,7 @@ def _field_name(location: tuple[int | str, ...]) -> str | None:
     parts = [str(part) for part in location]
     if len(parts) > 1 and parts[0] in ("body", "path", "query"):
         parts = parts[1:]
-    return ".".join(parts) or None
+    return ".".join(parts).replace("\x00", "[NUL]") or None
 
 
 def _field_error(

@@ -64,9 +64,12 @@ def test_マスク_通常の文章と年月日と価格は変えない() -> None
 
 
 def test_マスク_JSONを再帰的に処理し文字列以外は変えない() -> None:
-    value = {"a": ["taro@example.com", 1, None], "b": {"c": "ok"}}
+    value = {"a": ["taro@example.com", 1, None], "b": {"c\x00key": "ok\x00value"}}
 
-    assert mask_json(value) == {"a": ["[EMAIL]", 1, None], "b": {"c": "ok"}}
+    assert mask_json(value) == {
+        "a": ["[EMAIL]", 1, None],
+        "b": {"c[NUL]key": "ok[NUL]value"},
+    }
 
 
 def test_リクエストハッシュ_キー順と空白の違いでは変わらない() -> None:
