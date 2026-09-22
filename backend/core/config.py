@@ -88,6 +88,8 @@ class Settings(BaseSettings):
     tool_session_output_max_bytes: int = 64_000
     tool_memory_content_max_length: int = 4_000
     tool_memory_relation_limit: int = 20
+    agent_subagent_max_per_turn: int = 3
+    subagent_final_output_max_bytes: int = 64_000
     # Context量は決定論的にserializeしたJSONのUTF-8 byte数で測る。
     agent_context_compaction_threshold_bytes: int = 64_000
     agent_context_hard_limit_bytes: int = 128_000
@@ -203,6 +205,11 @@ class Settings(BaseSettings):
             "TOOL_SESSION_OUTPUT_MAX_BYTES": (self.tool_session_output_max_bytes, 1_000_000),
             "TOOL_MEMORY_CONTENT_MAX_LENGTH": (self.tool_memory_content_max_length, 20_000),
             "TOOL_MEMORY_RELATION_LIMIT": (self.tool_memory_relation_limit, 100),
+            "AGENT_SUBAGENT_MAX_PER_TURN": (self.agent_subagent_max_per_turn, 100),
+            "SUBAGENT_FINAL_OUTPUT_MAX_BYTES": (
+                self.subagent_final_output_max_bytes,
+                1_000_000,
+            ),
             "WEB_FETCH_MAX_BYTES": (self.web_fetch_max_bytes, 10_000_000),
             "WEB_FETCH_MAX_REDIRECTS": (self.web_fetch_max_redirects, 20),
         }

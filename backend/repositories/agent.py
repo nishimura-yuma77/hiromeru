@@ -59,6 +59,7 @@ class TurnBundle:
     items: list[AgentItem]
     notices: list[SecurityEvent]
     is_approval: bool
+    completed_tool_call_ids: frozenset[int] = frozenset()
 
 
 @dataclass(frozen=True)
@@ -661,8 +662,26 @@ class TurnRepository:
                 )
             ).scalars()
         )
+        completed_tool_call_ids = frozenset(
+            (
+                await self._session.execute(
+                    select(ToolExecution.tool_call_item_id).where(
+                        ToolExecution.tool_call_item_id.in_(
+                            select(AgentItem.id).where(AgentItem.agent_turn_id.in_(ids))
+                        ),
+                        ToolExecution.status == ToolExecutionStatus.COMPLETED,
+                    )
+                )
+            ).scalars()
+        )
         return [
-            TurnBundle(turn, items[turn.id], notices[turn.id], turn.id in approval_ids)
+            TurnBundle(
+                turn,
+                items[turn.id],
+                notices[turn.id],
+                turn.id in approval_ids,
+                completed_tool_call_ids,
+            )
             for turn in turns
         ]
 

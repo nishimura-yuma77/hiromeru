@@ -6,10 +6,20 @@ import random
 import uuid
 from datetime import UTC, datetime, timedelta
 
-from agent_runtime.runner import AgentContextEntry, AgentRunInput, AgentRunOutput, ProgressReporter
+from agent_runtime.runner import (
+    AgentContextEntry,
+    AgentRunInput,
+    AgentRunOutput,
+    CampaignPlannerOutput,
+    ChildRunInput,
+    ChildRunOutput,
+    ContentCreatorOutput,
+    ProgressReporter,
+)
 from clients.errors import EmbeddingError, XApiOutcomeUnknownError, XApiRejectedError
 from clients.x_api import XPostResult
 from domain.constants import EMBEDDING_DIMENSIONS
+from domain.enums import AgentType
 
 
 class FixedClock:
@@ -107,6 +117,12 @@ class FakeAgentRunner:
         self.activities: list[tuple[str, str]] = []
         self.started = asyncio.Event()
         self.inputs: list[AgentRunInput] = []
+        self.child_output: ChildRunOutput = CampaignPlannerOutput(
+            missing_information=("追加情報が必要です。",)
+        )
+        self.child_error: Exception | None = None
+        self.child_gate: asyncio.Event | None = None
+        self.child_inputs: list[ChildRunInput] = []
 
     async def run(self, run_input: AgentRunInput, reporter: ProgressReporter) -> AgentRunOutput:
         """指定どおりに動作する。"""
@@ -122,6 +138,25 @@ class FakeAgentRunner:
         if self.error is not None:
             raise self.error
         return AgentRunOutput(reply=self.reply)
+
+    async def run_child(
+        self, run_input: ChildRunInput, reporter: ProgressReporter
+    ) -> ChildRunOutput:
+        """指定した構造化子出力を返し、入力を記録する。"""
+        del reporter
+        self.child_inputs.append(run_input)
+        if self.child_gate is not None:
+            await self.child_gate.wait()
+        if self.child_error is not None:
+            raise self.child_error
+        output = self.child_output
+        if (
+            run_input.agent_type == AgentType.CONTENT_CREATOR
+            and isinstance(output, CampaignPlannerOutput)
+            and output.missing_information is not None
+        ):
+            return ContentCreatorOutput(missing_information=output.missing_information)
+        return output
 
 
 class FakeContextCompactor:

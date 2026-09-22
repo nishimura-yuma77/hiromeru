@@ -9,6 +9,7 @@ from agent_runtime.business_tools import ToolHandlerDependencies, build_default_
 from agent_runtime.compactor import StubContextCompactor
 from agent_runtime.firewall import DenyAllAgentFirewall
 from agent_runtime.guardrail import DenyAllToolResultGuardrail, FakeToolResultGuardrail
+from agent_runtime.proposal_tools import register_proposal_tools
 from agent_runtime.runner import StubAgentRunner
 from agent_runtime.web_tools import WebToolDependencies, register_web_tools
 from clients.embedding import OrcaRouterEmbeddingClient
@@ -70,7 +71,7 @@ def build_default_context(settings: Settings | None = None) -> ServiceContext:
             uuid.uuid4,
         ),
     )
-    return ServiceContext(
+    context = ServiceContext(
         settings=resolved,
         session_factory=SessionLocal,
         clock=clock,
@@ -84,6 +85,8 @@ def build_default_context(settings: Settings | None = None) -> ServiceContext:
         sleep=asyncio.sleep,
         new_uuid=uuid.uuid4,
     )
+    register_proposal_tools(context)
+    return context
 
 
 def get_service_context(request: Request) -> ServiceContext:

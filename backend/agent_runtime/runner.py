@@ -5,14 +5,23 @@ OpenAI Agents SDK によるループ（Firewall・Guardrail・子Agent）は、�
 """
 
 from dataclasses import dataclass
-from typing import Any, Literal, Protocol
+from datetime import datetime
+from typing import Annotated, Any, Literal, Protocol
 
-from agent_runtime.tools import ToolInvoker
+from pydantic import Field, JsonValue, StringConstraints, model_validator
+
+from agent_runtime.tools import StrictToolModel, ToolInvoker
+from domain.constants import (
+    MAX_CAMPAIGN_TEXT_LENGTH,
+    MAX_CAMPAIGN_TITLE_LENGTH,
+    MAX_LANDING_URL_LENGTH,
+)
 from domain.enums import (
     AgentContentSource,
     AgentContextClass,
     AgentItemContextStatus,
     AgentItemType,
+    AgentType,
 )
 
 STUB_REPLY = "（スタブ応答）Agentの実行は未実装です。メッセージは履歴へ保存されました。"
@@ -67,6 +76,85 @@ class AgentRunOutput:
     reply: str
 
 
+_ProposalText = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
+_CampaignTitle = Annotated[
+    str,
+    StringConstraints(strip_whitespace=True, min_length=1, max_length=MAX_CAMPAIGN_TITLE_LENGTH),
+]
+_CampaignText = Annotated[
+    str,
+    StringConstraints(strip_whitespace=True, min_length=1, max_length=MAX_CAMPAIGN_TEXT_LENGTH),
+]
+
+
+class CampaignProposal(StrictToolModel):
+    """施策立案子Agentが返す施策案。時刻はアプリケーションが注入する。"""
+
+    id: int | None = Field(default=None, gt=0)
+    title: _CampaignTitle
+    target_profile: _CampaignText
+    background: _CampaignText
+    objective: _CampaignText
+    plan: _CampaignText
+
+
+class XPostProposal(StrictToolModel):
+    """コンテンツ制作子Agentが返す投稿案。"""
+
+    campaign_id: int = Field(gt=0)
+    body: _ProposalText
+    landing_url: Annotated[
+        str,
+        StringConstraints(strip_whitespace=True, min_length=1, max_length=MAX_LANDING_URL_LENGTH),
+    ]
+
+
+class CampaignPlannerOutput(StrictToolModel):
+    """施策立案子Agentの排他的な最終出力。"""
+
+    proposal: CampaignProposal | None = None
+    missing_information: tuple[_ProposalText, ...] | None = Field(default=None, min_length=1)
+
+    @model_validator(mode="after")
+    def _xor(self) -> "CampaignPlannerOutput":
+        if (self.proposal is None) == (self.missing_information is None):
+            raise ValueError("proposal and missing_information must be exclusive")
+        return self
+
+
+class ContentCreatorOutput(StrictToolModel):
+    """コンテンツ制作子Agentの排他的な最終出力。"""
+
+    proposal: XPostProposal | None = None
+    missing_information: tuple[_ProposalText, ...] | None = Field(default=None, min_length=1)
+
+    @model_validator(mode="after")
+    def _xor(self) -> "ContentCreatorOutput":
+        if (self.proposal is None) == (self.missing_information is None):
+            raise ValueError("proposal and missing_information must be exclusive")
+        return self
+
+
+type ChildRunOutput = CampaignPlannerOutput | ContentCreatorOutput
+
+
+@dataclass(frozen=True)
+class ChildRunInput:
+    """使い捨て子Agentの、認証済みかつ親budgetへ束縛された入力。"""
+
+    agent_type: AgentType
+    session_id: int
+    turn_id: int
+    parent_session_id: int
+    parent_turn_id: int
+    marketer_id: int
+    company_id: int
+    request: dict[str, JsonValue]
+    context: AgentContext
+    tools: ToolInvoker
+    parent_started_at: datetime
+
+
 class AgentRunError(Exception):
     """Agentの実行を継続できない。`code` は API_DESIGN 10章のエラーコード。"""
 
@@ -101,6 +189,12 @@ class AgentRunner(Protocol):
         """
         ...
 
+    async def run_child(
+        self, run_input: ChildRunInput, reporter: ProgressReporter
+    ) -> ChildRunOutput:
+        """構造化された子Agentの最終結果だけを返す。"""
+        ...
+
 
 class StubAgentRunner:
     """固定応答を返す仮のAgent。"""
@@ -109,3 +203,13 @@ class StubAgentRunner:
         """固定応答を返す。"""
         del run_input, reporter
         return AgentRunOutput(reply=STUB_REPLY)
+
+    async def run_child(
+        self, run_input: ChildRunInput, reporter: ProgressReporter
+    ) -> ChildRunOutput:
+        """実SDK未接続時は、追加情報が必要な構造化結果を返す。"""
+        del reporter
+        missing = ("実行可能な子Agentが設定されていません。",)
+        if run_input.agent_type == AgentType.CAMPAIGN_PLANNER:
+            return CampaignPlannerOutput(missing_information=missing)
+        return ContentCreatorOutput(missing_information=missing)

@@ -6,10 +6,17 @@ from agent_runtime.business_tools import (
     GetSessionItemsInput,
     SearchCampaignsInput,
 )
+from agent_runtime.proposal_tools import (
+    ProposeCampaignInput,
+    ProposeXPostInput,
+    RunCampaignPlannerOutput,
+)
+from agent_runtime.runner import CampaignProposal
 from agent_runtime.tools import (
     StrictToolModel,
     ToolCall,
     ToolDefinition,
+    ToolErrorSpec,
     ToolRegistry,
     ToolRegistryError,
     ToolResult,
@@ -44,6 +51,7 @@ def _definition(**changes: object) -> ToolDefinition:
         "allowed_agents": frozenset({AgentType.PARENT}),
         "result_source": AgentContentSource.DATABASE,
         "result_context_class": AgentContextClass.CONVERSATION,
+        "errors": {"INVALID_ARGUMENT": ToolErrorSpec("invalid")},
     }
     values.update(changes)
     return ToolDefinition(**values)  # type: ignore[arg-type]
@@ -115,7 +123,7 @@ def test_Tool実行設定は正数とTurn境界を検証する(field: str, value
         )
 
 
-def test_既定Registryは11ToolとAgent別allow_listを登録する(ctx: ServiceContext) -> None:
+def test_既定Registryは15ToolとAgent別allow_listを登録する(ctx: ServiceContext) -> None:
     expected = {
         "get_session_items",
         "search_long_term_memory",
@@ -128,6 +136,10 @@ def test_既定Registryは11ToolとAgent別allow_listを登録する(ctx: Servic
         "get_marketing_metrics",
         "web_search",
         "web_fetch",
+        "run_campaign_planner",
+        "run_content_creator",
+        "propose_campaign",
+        "propose_x_post",
     }
     assert {name for name in expected if ctx.tool_registry.get(name) is not None} == expected
     assert ctx.tool_registry.resolve(AgentType.CAMPAIGN_PLANNER, "get_session_items") is None
@@ -149,6 +161,14 @@ def test_既定Registryは11ToolとAgent別allow_listを登録する(ctx: Servic
     assert web_search.result_context_class == AgentContextClass.UNTRUSTED_DATA
     assert web_fetch.result_context_class == AgentContextClass.UNTRUSTED_DATA
     assert web_fetch.errors["WEB_FETCH_FAILED"].retryable is True
+    planner = ctx.tool_registry.get("run_campaign_planner")
+    creator = ctx.tool_registry.get("run_content_creator")
+    propose_campaign = ctx.tool_registry.get("propose_campaign")
+    propose_post = ctx.tool_registry.get("propose_x_post")
+    assert planner is not None and planner.uses_remaining_turn_time is True
+    assert creator is not None and creator.uses_remaining_turn_time is True
+    assert propose_campaign is not None and propose_campaign.terminal is True
+    assert propose_post is not None and propose_post.terminal is True
 
 
 def test_業務Tool_schemaは重複_XOR_naive日時と型変換を拒否する() -> None:
@@ -163,4 +183,40 @@ def test_業務Tool_schemaは重複_XOR_naive日時と型変換を拒否する()
     with pytest.raises(ValidationError):
         SearchCampaignsInput.model_validate(
             {"query": "x", "limit": 1, "created_from": "2026-01-01T00:00:00"}
+        )
+
+
+def test_子出力と提案入力はXOR_strict_時刻注入を検証する() -> None:
+    proposal = {
+        "id": None,
+        "title": "採用施策",
+        "target_profile": "経験者",
+        "background": "応募減少",
+        "objective": "応募増加",
+        "plan": "働き方を訴求",
+    }
+    parsed = CampaignProposal.model_validate(proposal)
+    assert RunCampaignPlannerOutput(
+        child_session_id=1, proposal=parsed
+    ).proposal == parsed
+    with pytest.raises(ValidationError):
+        RunCampaignPlannerOutput(child_session_id=1)
+    with pytest.raises(ValidationError):
+        RunCampaignPlannerOutput(
+            child_session_id=1,
+            proposal=parsed,
+            missing_information=("対象",),
+        )
+    with pytest.raises(ValidationError):
+        ProposeCampaignInput.model_validate({**proposal, "expected_updated_at": None})
+    with pytest.raises(ValidationError):
+        ProposeCampaignInput.model_validate({**proposal, "source_result_item_id": 1})
+    with pytest.raises(ValidationError):
+        ProposeXPostInput.model_validate(
+            {
+                "campaign_id": 1,
+                "body": "本文",
+                "landing_url": "https://example.com",
+                "source_result_item_id": 1,
+            }
         )

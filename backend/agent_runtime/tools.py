@@ -156,6 +156,9 @@ class ToolDefinition:
     result_source: AgentContentSource
     result_context_class: AgentContextClass
     errors: Mapping[str, ToolErrorSpec] = field(default_factory=dict)
+    terminal: bool = False
+    input_error_code: str = "INVALID_ARGUMENT"
+    uses_remaining_turn_time: bool = False
 
 
 class ToolRegistryError(ValueError):

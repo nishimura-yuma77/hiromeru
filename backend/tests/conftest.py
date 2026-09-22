@@ -13,6 +13,7 @@ from pydantic import SecretStr
 from agent_runtime.business_tools import ToolHandlerDependencies, build_default_tool_registry
 from agent_runtime.firewall import FakeAgentFirewall
 from agent_runtime.guardrail import FakeToolResultGuardrail
+from agent_runtime.proposal_tools import register_proposal_tools
 from agent_runtime.web_tools import WebToolDependencies, register_web_tools
 from api.main import create_app
 from clients.web_fetch import HttpxPinnedTransport, SafeWebFetcher, SystemResolver
@@ -97,7 +98,7 @@ def ctx(
             uuid.uuid4,
         ),
     )
-    return ServiceContext(
+    context = ServiceContext(
         settings=settings,
         session_factory=SessionLocal,
         clock=clock,
@@ -111,6 +112,8 @@ def ctx(
         sleep=no_sleep,
         new_uuid=uuid.uuid4,
     )
+    register_proposal_tools(context)
+    return context
 
 
 @pytest.fixture

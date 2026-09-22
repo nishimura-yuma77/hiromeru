@@ -77,6 +77,7 @@ class ToolExecutor:
         turn_id: int,
         reporter: ProgressReporter,
         agent_context: AgentContext | None = None,
+        budget_started_at: datetime | None = None,
     ) -> None:
         """認証済みTenantと現在TurnへExecutorを束縛する。"""
         self._ctx = ctx
@@ -86,6 +87,7 @@ class ToolExecutor:
         self._turn_id = turn_id
         self._reporter = reporter
         self._agent_context = agent_context or AgentContext((), 0)
+        self._budget_started_at = budget_started_at
 
     async def invoke(  # noqa: PLR0912, PLR0915 - 永続化から終端保存までの単一境界
         self, call: ToolCall, parent_activity_id: str | None = None
@@ -156,10 +158,11 @@ class ToolExecutor:
             event_type = SecurityEventType.UNAUTHORIZED_TOOL_CALL
             detector = SecurityDetector.APPLICATION
         elif input_error or validated_input is None:
-            invalid = definition.errors.get("INVALID_ARGUMENT")
+            input_code = definition.input_error_code
+            invalid = definition.errors.get(input_code)
             result = (
                 _failure(
-                    "INVALID_ARGUMENT",
+                    input_code,
                     retryable=invalid.retryable,
                     message=invalid.message,
                 )
@@ -288,7 +291,11 @@ class ToolExecutor:
             remaining = self._remaining(context.turn_started_at)
             if remaining <= 0 or not await self._increment_attempt(prepared):
                 return _failure("TOOL_TURN_ENDED"), ToolExecutionStatus.CANCELLED
-            timeout = min(self._ctx.settings.tool_attempt_timeout_seconds, remaining)
+            timeout = (
+                remaining
+                if definition.uses_remaining_turn_time
+                else min(self._ctx.settings.tool_attempt_timeout_seconds, remaining)
+            )
             try:
                 async with asyncio.timeout(timeout):
                     raw_output = await definition.handler.execute(context, validated_input)
@@ -336,7 +343,7 @@ class ToolExecutor:
             turn_id=self._turn_id,
             agent_type=record.agent_type,
             turn_status=record.turn_status,
-            turn_started_at=record.started_at,
+            turn_started_at=self._budget_started_at or record.started_at,
         )
 
     def _validate_provenance(self, refs: tuple[ToolProvenanceRef, ...]) -> bool:

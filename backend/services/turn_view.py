@@ -2,6 +2,9 @@
 
 from typing import Any
 
+from pydantic import ValidationError
+
+from agent_runtime.proposal_tools import ProposeCampaignOutput, ProposeXPostOutput
 from core.errors import DEFAULT_MESSAGES, ERROR_SPECS
 from domain.constants import SECURITY_NOTICES_LIMIT
 from domain.enums import AgentItemType, AgentTurnStatus
@@ -29,15 +32,41 @@ def _approval_item(item: AgentItem, *, completed: bool) -> tuple[str, dict[str, 
     return None
 
 
-def _chat_item(item: AgentItem, *, completed: bool) -> tuple[str, dict[str, Any]] | None:
+def _chat_item(
+    item: AgentItem,
+    *,
+    completed: bool,
+    tool_names: dict[int, str],
+    completed_tool_call_ids: frozenset[int],
+) -> tuple[str, dict[str, Any]] | None:
     """`chat` Turnのアイテムを表示形式へ変換する。表示しないアイテムは None。
 
-    tool_call・tool_result（提案を含む）は、Agent実行の実装後に対応する（フェーズ1の対象外）。
+    成功した終端提案Toolだけを表示用proposalへ投影する。
     """
     if item.item_type == AgentItemType.USER_MESSAGE:
         return "user_message", {"text": item.content.get("text", "")}
     if item.item_type == AgentItemType.ASSISTANT_MESSAGE and completed:
         return "assistant_message", {"text": item.content.get("text", "")}
+    related = item.related_tool_call_item_id
+    if (
+        completed
+        and item.item_type == AgentItemType.TOOL_RESULT
+        and related is not None
+        and related in completed_tool_call_ids
+        and item.content.get("success") is True
+        and isinstance(item.content.get("data"), dict)
+    ):
+        definitions = {
+            "propose_campaign": ("campaign_proposal", ProposeCampaignOutput),
+            "propose_x_post": ("x_post_proposal", ProposeXPostOutput),
+        }
+        projected = definitions.get(tool_names.get(related, ""))
+        if projected is not None:
+            try:
+                content = projected[1].model_validate(item.content["data"])
+            except ValidationError:
+                return None
+            return projected[0], content.model_dump(mode="json")
     return None
 
 
@@ -50,11 +79,22 @@ def build_turn_view(bundle: TurnBundle) -> TurnView:
     turn = bundle.turn
     completed = turn.status == AgentTurnStatus.COMPLETED
     items: list[TurnItemView] = []
+    tool_names = {
+        item.id: name
+        for item in bundle.items
+        if item.item_type == AgentItemType.TOOL_CALL
+        and isinstance((name := item.content.get("name")), str)
+    }
     for item in bundle.items:
         converted = (
             _approval_item(item, completed=completed)
             if bundle.is_approval
-            else _chat_item(item, completed=completed)
+            else _chat_item(
+                item,
+                completed=completed,
+                tool_names=tool_names,
+                completed_tool_call_ids=bundle.completed_tool_call_ids,
+            )
         )
         if converted is not None:
             items.append(
