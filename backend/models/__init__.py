@@ -18,6 +18,7 @@ from models.idempotency import ApiIdempotencyRequest
 from models.identity import Company, Marketer, User
 from models.memory import AgentMemory, MemoryCampaign, MemoryPost
 from models.post import Post, PostEmbedding, PostMetric, PostTrackingLink
+from models.snapshot import ApiListSnapshot, ApiListSnapshotItem
 
 __all__ = [
     "AgentContextCheckpoint",
@@ -26,6 +27,8 @@ __all__ = [
     "AgentSession",
     "AgentTurn",
     "ApiIdempotencyRequest",
+    "ApiListSnapshot",
+    "ApiListSnapshotItem",
     "Base",
     "Campaign",
     "CampaignEmbedding",
