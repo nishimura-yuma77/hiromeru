@@ -52,7 +52,7 @@
 | Web フレームワーク | FastAPI |
 | フォーマッタ・Linter | `ruff`（format と lint を統一） |
 | 型チェック | `pyright`（`strict` モードを推奨） |
-| テスト | `pytest` + `pytest-asyncio` + `pytest-cov` |
+| テスト | `pytest` + `pytest-asyncio` |
 | 設定の置き場所 | `pyproject.toml` に集約する |
 | 実行環境 | Vercel Functions（Python）（17 章） |
 | DB | Neon（PostgreSQL + pgvector）（17.2） |
@@ -139,7 +139,6 @@ backend/
   agent_runtime/  # Agent、Tool、Context構築（SDKの import 名 `agents` と衝突させないための名前）
   core/           # 設定、ログ、エラー基底、時刻・ID生成などの共通部品
 tests/
-  unit/
   integration/
 migrations/
 ```
@@ -265,7 +264,7 @@ class AppError(Exception):
 | Web | FastAPI。非同期処理が必要なルーターは `async def`、不要なルーターは `def` |
 | DB | SQLAlchemy 2.0 の非同期API（`AsyncEngine`、`AsyncSession`）+ psycopg（v3）の非同期接続 |
 | 外部API | `httpx.AsyncClient` |
-| テスト | 非同期のコードは `pytest-asyncio`、同期のコードは通常の `pytest`（14 章） |
+| テスト | API結合テストを`pytest` + `pytest-asyncio`で実行する（14章） |
 
 - 必須: **非同期を使う場合は、5 分（300 秒）のタイムアウトを設ける。** 理由は、Vercel Functions の Hobby プランでは 1 回の実行が最大 300 秒（`maxDuration`）で打ち切られ、こちらの応答を返せないためである（17.1）。
   - 非同期の処理全体を `asyncio.timeout` で囲み、上限は 300 秒とする。値は定数（例: `ASYNC_TIMEOUT_SECONDS = 300`）として 1 か所に定義する。
@@ -321,36 +320,40 @@ class AppError(Exception):
 
 ## 14. テスト
 
-- テストフレームワークは `pytest` とし、非同期のコードのテストは `pytest-asyncio` で実行する。同期の純粋関数のテストは、通常の `def` のテストとして書く。`pyproject.toml` で `asyncio_mode = "auto"` を指定する。
-- 必須: API のテストは `httpx.AsyncClient`（`ASGITransport`）でアプリを直接呼ぶ。カバレッジの計測は `pytest-cov` を使う。
-- 必須: 新しい機能とバグ修正には、テストを付ける。バグ修正は、まず再現するテストを書く。
+v0.1では実装時間を優先し、各APIについて、代表的な正常系を1件通す結合テストだけを必須とする。
+
+- テストフレームワークは`pytest`とし、非同期APIのテストは`pytest-asyncio`で実行する。`pyproject.toml`で`asyncio_mode = "auto"`を指定する。
+- 必須: APIのテストは`httpx.AsyncClient`（`ASGITransport`）でアプリを直接呼ぶ。
+- 必須: HTTP MethodとPathの組み合わせごとに、成功Responseを返す正常系の結合テストを1件作成する。
+- 必須: Browser向けAPI、Health API、Cron APIを含む、実装したすべてのEndpointを対象にする。
+- 必須: Path Parameterが異なるだけのRequestは同じAPIとして扱い、Testを増やさない。
+- 必須: JSONとSSEなど複数の成功形式があるAPIは、Frontendが通常使用する形式を1件だけ確認する。
+- 必須: APIの追加または成功時の振る舞いを変更した場合は、対応する正常系Testを追加または更新する。
 - 必須: **テストのメソッド名（関数名）は `test_<テスト観点>_<変数とテスト仕様>` の形に固定する。**
-  - `<テスト観点>`: 何を確かめるテストかを、具体的な日本語で書く（例: `投稿の公開エラー処理`、`会社間の分離`）。この部分に `_` は使わず、日本語を続けて書く。
+  - `<テスト観点>`: 何を確かめるテストかを、APIの論理名を使って具体的な日本語で書く。この部分に`_`は使わず、日本語を続けて書く。
   - `<変数とテスト仕様>`: 条件になる変数（コード上の名前をそのまま `snake_case` で書く）と、期待する結果（テスト仕様）を書く。変数の値や状態と、期待する結果の両方が分かるようにする。
   - 例:
-    - `test_投稿の公開エラー処理_x_apiがタイムアウトのときX_POST_UNRESOLVEDを返す`
-    - `test_会社間の分離_company_idが他社のcampaign_idなら404を返す`
-    - `test_UTMの組み立て_utm_contentが空のときパラメータを付けない`
+    - `test_ログイン_emailとpasswordが正しいとき200とcookieを返す`
+    - `test_施策詳細取得_campaign_idが自社の施策のとき200と施策を返す`
+    - `test_X投稿公開_requestが正しいとき201と投稿結果を返す`
   - 「動作する」「正常」のような曖昧な語だけの名前にしない。名前だけで、何が失敗したのか分かるようにする。
   - Python は日本語の識別子を使えるので、名前を日本語のまま書く。1 行は 100 文字以内に収める（全角文字は 2 文字分で数えられる）。`ruff` で非 ASCII の名前や関数名の大文字小文字を検査するルール（`N802`、`PLC2401`）を有効にしている場合は、テストのファイルを対象から外す。
-- 必須: テストは、準備（Arrange）・実行（Act）・検証（Assert）の順に書く。1 つのテストで検証する内容は 1 つにする。
+- 必須: テストは、準備（Arrange）・実行（Act）・検証（Assert）の順に書く。1つのTestで、対象APIのStatus、Response、主要な永続化または外部作用をまとめて確認してよい。
 - 必須: テストは互いに独立させ、実行順に依存させない。
 - 必須: **外部APIを実際に呼ばない。** X、GA4、OrcaRouter、Embedding は、フェイクまたはモックへ差し替える。LLMの応答も固定のフェイクを使う。
 - 必須: 時刻と乱数・ID生成は固定できる形にし、テストで固定する。
 - 必須: DBを使うテストは、本番と同じ種類のDB（PostgreSQL + pgvector）で実行する。SQLite などで代用しない。テスト用DBは Docker Compose で用意する（pgvector 入りの PostgreSQL イメージを使う）。
-- 必須: 次のケースは必ずテストする。
-  - 異常系（入力不正、外部APIの失敗、タイムアウト）
-  - 境界値（文字数の上限、空、0件）
-  - **会社間の分離**（他社のデータを取得・更新できない）
-  - 二重実行（同じリクエストの再送で二重に処理されない）
-- 推奨: テストの種類とディレクトリ:
+- 必須: API結合テストは`tests/integration/`へ配置する。
 
-| 種類 | 対象 | 置き場所 |
-| --- | --- | --- |
-| 単体 | `domain`、`services`（依存はフェイク） | `tests/unit/` |
-| 結合 | `repositories` + DB、API のエンドポイント | `tests/integration/` |
+次のTestはv0.1では必須としない。必要性が生じた場合に追加してよいが、網羅を求めない。
 
-- カバレッジの目標は、新規コードの行カバレッジ 80% とする。数値よりも、上記の必須ケースの網羅を優先する。
+- `domain`、`services`、`repositories`などのUnit Test
+- 異常系、入力不正、外部API失敗、TimeoutのTest
+- 境界値、空、0件のTest
+- 会社間分離、認可、CSRFの失敗を確認するTest
+- 冪等性、二重実行、競合、並行実行のTest
+- Code Coverageの計測と目標設定
+
 - 禁止: テストの中で、本番の認証情報や、実在する個人情報を使うこと。
 
 ---
@@ -404,7 +407,7 @@ class AppError(Exception):
 - 外部API呼び出しの、タイムアウトと再試行の方針が守られているか。
 - ログに機密情報が出ていないか。
 - トランザクションの境界が正しいか（外部API呼び出しを含んでいないか）。
-- テストに、異常系と境界値が含まれているか。
+- 追加・変更した各APIに、代表的な正常系の結合テストが1件あるか。
 
 ---
 
@@ -434,11 +437,11 @@ class AppError(Exception):
   - セッション単位の advisory lock（`pg_advisory_lock`）。トランザクション単位（`pg_advisory_xact_lock`）は使ってよい
   - `SET` / `RESET`、`LISTEN` / `NOTIFY`、SQL レベルの `PREPARE` / `DEALLOCATE`
   - `PRESERVE ROWS` / `DELETE ROWS` の一時テーブル
-- 必須: prepared statement は、ドライバ（psycopg）のプロトコルレベルのものだけを使う。プール経由で問題なく動くことを、結合テストで確認する。
+- 必須: prepared statement は、ドライバ（psycopg）のプロトコルレベルのものだけを使う。各APIの正常系結合テストをプール経由で実行する環境では、その通常利用の範囲で動作を確認する。
 - 必須: `SET LOCAL`（`hnsw.ef_search` の変更など）を使う場合は、プール経由で動くことを確認してから使う。【要検証】
 - 必須: SQLAlchemy の接続プールは **`NullPool`（プールなし）を既定** とする。Vercel の関数は複数のインスタンスが並行して動き、凍結・再利用されるため、アプリケーション側に古い接続を残さず、接続のプールは Neon 側（PgBouncer）に任せる。トランザクションごとに接続を開くため、待ち時間が数十ミリ秒増える。
 - 推奨: 実測で接続の待ち時間が問題になった場合だけ、小さなプール（例: `pool_size=5`、`max_overflow=0`、`pool_pre_ping=True`、`pool_recycle=300`）へ切り替える。切り替えは、計測結果を添えた PR で行う。
-- 推奨: 結合テストの一部を、PgBouncer（transaction モード）経由で実行する。
+- 推奨: 各APIの正常系結合テストは、可能な範囲でPgBouncer（transactionモード）経由で実行する。
 
 ### 17.3 OpenAI Agents SDK と OrcaRouter
 
@@ -462,7 +465,7 @@ class AppError(Exception):
 - [ ] 外部API呼び出しにタイムアウトがあり、トランザクションの外にある
 - [ ] 例外を握りつぶしていない。エラーメッセージに内部情報を含めていない
 - [ ] ログに機密情報を出していない
-- [ ] 異常系・境界値・会社間分離のテストがある
+- [ ] 追加・変更した各APIに、代表的な正常系の結合テストが1件ある
 - [ ] Neon のプール経由で使えない機能（セッション単位の advisory lock、`SET` など）を使っていない
 - [ ] 非同期にしたのは非同期処理が必要な部分だけで、I/O を伴わない純粋な処理は同期関数（`def`）になっている。非同期処理に 300 秒のタイムアウトがある
 - [ ] テストのメソッド名が `test_<テスト観点>_<変数とテスト仕様>` の形になっている
@@ -493,7 +496,7 @@ class AppError(Exception):
 | 16 | マイグレーションのツール・適用方法 | Alembic・手動 |
 | 17 | 埋め込みモデルと次元数 | `openai/text-embedding-3-small`（OrcaRouter 経由）・1536 次元 |
 | 18 | テスト用DBの用意方法 | Docker Compose |
-| 19 | カバレッジの目標 | 新規コードの行 80% |
+| 19 | 必須Testの範囲 | 各APIにつき代表的な正常系の結合テスト1件。Coverage目標は設けない |
 | 20 | パスワードのハッシュ方式 | argon2 |
 | 21 | コミットメッセージの形式 | 種別プレフィックス（英語 6 種）＋日本語の要約 |
 | 22 | PR の承認人数 | 1 人以上 |
@@ -519,6 +522,6 @@ class AppError(Exception):
 
 | 項目 | 備考 |
 | --- | --- |
-| Neon のプール経由での動作確認（17.2） | `SET LOCAL` と prepared statement は結合テストで確認する |
+| Neon のプール経由での動作確認（17.2） | `SET LOCAL`は採用時に確認する。prepared statementは各APIの正常系結合テストで通常利用の範囲を確認する |
 | Agent Firewall の評価 API の形式（17.3） | 実装時に OrcaRouter の API リファレンスで確認する |
 | SDK と自前ループの境界（17.3） | `AGENT_DESIGN.md` に、SDK に任せる範囲と自前の範囲の対応表を追加する |
