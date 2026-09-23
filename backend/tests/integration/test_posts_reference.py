@@ -1,11 +1,27 @@
+import uuid
+from datetime import timedelta
 from urllib.parse import quote
 
+import pytest
 from httpx import AsyncClient
+from sqlalchemy import func, select, update
 
+from core.config import Settings
+from domain.enums import ApiIdempotencyStatus, PostMetricStatus
 from domain.search_text import build_post_search_text
+from models import (
+    ApiIdempotencyRequest,
+    ApiListSnapshot,
+    ApiListSnapshotItem,
+    Campaign,
+    Post,
+    PostMetric,
+)
+from repositories.database import SessionLocal
+from services.snapshot_paging import issue_snapshot_cursor, read_snapshot_cursor
 from tests.conftest import AccountFactory
 from tests.support.client import Account, post_body
-from tests.support.db import complete_metrics, insert_memory
+from tests.support.db import archive_campaign, complete_metrics, insert_memory
 from tests.support.fakes import FixedClock
 
 
@@ -36,12 +52,13 @@ async def test_一覧_公開日時の降順が既定で他社の投稿を含め�
     posts = response.json()["data"]["posts"]
     assert [p["post_id"] for p in posts] == [second, first]
     assert posts[0]["campaign_id"] == campaign_id
+    assert posts[0]["campaign_archived_at"] is None
     assert posts[0]["metrics"]["status"] == "pending"
     assert posts[0]["similarity"] is None
 
 
 async def test_一覧のページング_公開日時のkeysetで重複なく取得できる(
-    account: Account, clock: FixedClock
+    account: Account, clock: FixedClock, settings: Settings
 ) -> None:
     session_id = await account.create_session()
     campaign_id = await account.create_campaign(session_id)
@@ -51,10 +68,19 @@ async def test_一覧のページング_公開日時のkeysetで重複なく取�
     page2 = (
         await account.client.get(f"/api/v1/posts?limit=2&cursor={quote(page1['next_cursor'])}")
     ).json()["data"]
+    parsed = read_snapshot_cursor(settings.auth_secret(), "posts", page1["next_cursor"])
+    async with SessionLocal() as session:
+        stored_count = await session.scalar(
+            select(func.count())
+            .select_from(ApiListSnapshotItem)
+            .where(ApiListSnapshotItem.snapshot_id == parsed.snapshot_id)
+        )
 
     assert [p["post_id"] for p in page1["posts"]] == [ids[2], ids[1]]
     assert [p["post_id"] for p in page2["posts"]] == [ids[0]]
     assert page2["next_cursor"] is None
+    assert set(page1) == {"posts", "next_cursor"}
+    assert stored_count == 3
 
 
 async def test_PV順の並び替え_未計測をnullsLastにしkeysetで続きを取得できる(
@@ -81,6 +107,109 @@ async def test_PV順の並び替え_未計測をnullsLastにしkeysetで続き�
     assert [p["post_id"] for p in page2["posts"]] == [unmeasured]
 
 
+async def test_Snapshot_Page間で元データの追加除外順序と表示値が変わっても固定される(
+    account: Account, clock: FixedClock
+) -> None:
+    session_id = await account.create_session()
+    campaign_id = await account.create_campaign(session_id)
+    low = await _publish(account, session_id, campaign_id, "低PV", clock)
+    middle = await _publish(account, session_id, campaign_id, "中PV", clock)
+    high = await _publish(account, session_id, campaign_id, "高PV", clock)
+    await complete_metrics(low, x_pv_count=100, landing_user_count=10)
+    await complete_metrics(middle, x_pv_count=200, landing_user_count=20)
+    await complete_metrics(high, x_pv_count=300, landing_user_count=30)
+
+    page1 = (await account.client.get("/api/v1/posts?sort=x_pv_count&limit=1")).json()["data"]
+    added = await _publish(account, session_id, campaign_id, "Snapshot後", clock)
+    await complete_metrics(added, x_pv_count=2000, landing_user_count=200)
+    archived_at = clock.now()
+    async with SessionLocal() as session, session.begin():
+        await session.execute(
+            update(PostMetric)
+            .where(PostMetric.post_id == low)
+            .values(x_pv_count=1000, landing_user_count=100)
+        )
+        await session.execute(
+            update(Campaign)
+            .where(Campaign.id == campaign_id)
+            .values(title="変更後の施策", archived_at=archived_at)
+        )
+        request_id = await session.scalar(
+            select(Post.api_idempotency_request_id).where(Post.id == middle)
+        )
+        await session.execute(
+            update(ApiIdempotencyRequest)
+            .where(ApiIdempotencyRequest.id == request_id)
+            .values(status=ApiIdempotencyStatus.FAILED)
+        )
+
+    page2 = (
+        await account.client.get(
+            f"/api/v1/posts?sort=x_pv_count&limit=1&cursor={quote(page1['next_cursor'])}"
+        )
+    ).json()["data"]
+    page3 = (
+        await account.client.get(
+            f"/api/v1/posts?sort=x_pv_count&limit=1&cursor={quote(page2['next_cursor'])}"
+        )
+    ).json()["data"]
+
+    assert [
+        page1["posts"][0]["post_id"],
+        page2["posts"][0]["post_id"],
+        page3["posts"][0]["post_id"],
+    ] == [
+        high,
+        middle,
+        low,
+    ]
+    assert page2["posts"][0]["campaign_title"] == "春の新規フォロワー獲得"
+    assert page2["posts"][0]["campaign_archived_at"] is None
+    assert page3["posts"][0]["metrics"]["x_pv_count"] == 100
+    assert page3["next_cursor"] is None
+
+
+@pytest.mark.parametrize(
+    ("order", "expected_names"),
+    [
+        ("desc", ["高PV", "低PV", "失敗", "未計測"]),
+        ("asc", ["低PV", "高PV", "失敗", "未計測"]),
+    ],
+)
+async def test_PV順_completedだけを値ありとしfailed部分値とpendingを末尾に置く(
+    account: Account, clock: FixedClock, order: str, expected_names: list[str]
+) -> None:
+    session_id = await account.create_session()
+    campaign_id = await account.create_campaign(session_id)
+    ids = {
+        name: await _publish(account, session_id, campaign_id, name, clock)
+        for name in ("低PV", "高PV", "未計測", "失敗")
+    }
+    await complete_metrics(ids["低PV"], x_pv_count=10, landing_user_count=1)
+    await complete_metrics(ids["高PV"], x_pv_count=500, landing_user_count=5)
+    async with SessionLocal() as session, session.begin():
+        await session.execute(
+            update(PostMetric)
+            .where(PostMetric.post_id == ids["失敗"])
+            .values(
+                status=PostMetricStatus.FAILED,
+                x_pv_count=9999,
+                landing_user_count=999,
+                measured_at=clock.now(),
+            )
+        )
+
+    response = await account.client.get(f"/api/v1/posts?sort=x_pv_count&order={order}")
+    posts = response.json()["data"]["posts"]
+
+    by_id = {post_id: name for name, post_id in ids.items()}
+    assert [by_id[post["post_id"]] for post in posts] == expected_names
+    failed = next(post for post in posts if post["post_id"] == ids["失敗"])
+    assert failed["metrics"]["x_pv_count"] is None
+    assert failed["metrics"]["landing_user_count"] is None
+    assert failed["metrics"]["measured_at"] is None
+
+
 async def test_並び替えの指定不正_sortが未定義のとき400(account: Account) -> None:
     response = await account.client.get("/api/v1/posts?sort=unknown")
 
@@ -102,6 +231,135 @@ async def test_カーソルの取り違え_別の並び順のcursorのとき400(
     )
 
     assert response.status_code == 400
+
+
+async def test_Snapshotカーソル_条件変更改ざん別所有者期限切れを400で拒否する(
+    account: Account,
+    new_account: AccountFactory,
+    clock: FixedClock,
+) -> None:
+    session_id = await account.create_session()
+    campaign_id = await account.create_campaign(session_id)
+    other_campaign = await account.create_campaign(session_id, title="別施策")
+    await _publish(account, session_id, campaign_id, "1件目", clock)
+    await _publish(account, session_id, campaign_id, "2件目", clock)
+    first = await account.client.get(f"/api/v1/posts?campaign_id={campaign_id}&limit=1")
+    cursor = first.json()["data"]["next_cursor"]
+
+    changed_conditions = [
+        f"campaign_id={other_campaign}",
+        f"campaign_id={campaign_id}&published_from=2000-01-01T00%3A00%3A00Z",
+        f"campaign_id={campaign_id}&sort=x_pv_count",
+        f"campaign_id={campaign_id}&order=asc",
+    ]
+    for conditions in changed_conditions:
+        response = await account.client.get(
+            f"/api/v1/posts?{conditions}&limit=1&cursor={quote(cursor)}"
+        )
+        assert response.status_code == 400
+        assert response.json()["error"]["code"] == "INVALID_ARGUMENT"
+
+    replacement = "A" if cursor[-1] != "A" else "B"
+    tampered = await account.client.get(
+        f"/api/v1/posts?campaign_id={campaign_id}&cursor={quote(cursor[:-1] + replacement)}"
+    )
+    other = await new_account()
+    cross_owner = await other.client.get(
+        f"/api/v1/posts?campaign_id={campaign_id}&cursor={quote(cursor)}"
+    )
+    clock.advance(30 * 60)
+    expired = await account.client.get(
+        f"/api/v1/posts?campaign_id={campaign_id}&cursor={quote(cursor)}"
+    )
+
+    assert tampered.status_code == 400
+    assert cross_owner.status_code == 400
+    assert expired.status_code == 400
+
+
+async def test_Snapshotカーソル_一覧種別と位置が不正な署名済みcursorも400で拒否する(
+    account: Account, clock: FixedClock, settings: Settings
+) -> None:
+    session_id = await account.create_session()
+    campaign_id = await account.create_campaign(session_id)
+    await _publish(account, session_id, campaign_id, "1件目", clock)
+    await _publish(account, session_id, campaign_id, "2件目", clock)
+    first = (await account.client.get("/api/v1/posts?limit=1")).json()["data"]
+    parsed = read_snapshot_cursor(settings.auth_secret(), "posts", first["next_cursor"])
+    wrong_resource = issue_snapshot_cursor(
+        settings.auth_secret(),
+        "metrics",
+        parsed.snapshot_id,
+        parsed.position,
+        parsed.filter_hash,
+        parsed.sort,
+        parsed.order,
+    )
+    invalid_position = issue_snapshot_cursor(
+        settings.auth_secret(),
+        "posts",
+        parsed.snapshot_id,
+        0,
+        parsed.filter_hash,
+        parsed.sort,
+        parsed.order,
+    )
+    out_of_range = issue_snapshot_cursor(
+        settings.auth_secret(),
+        "posts",
+        parsed.snapshot_id,
+        parsed.position + 999,
+        parsed.filter_hash,
+        parsed.sort,
+        parsed.order,
+    )
+
+    resource_response = await account.client.get(f"/api/v1/posts?cursor={quote(wrong_resource)}")
+    position_response = await account.client.get(f"/api/v1/posts?cursor={quote(invalid_position)}")
+    range_response = await account.client.get(f"/api/v1/posts?cursor={quote(out_of_range)}")
+
+    assert resource_response.status_code == 400
+    assert position_response.status_code == 400
+    assert range_response.status_code == 400
+
+
+async def test_SnapshotCleanup_先頭Pageで期限切れを100件まで削除しItemもCascadeする(
+    account: Account, clock: FixedClock
+) -> None:
+    expired_ids = [uuid.uuid4() for _ in range(101)]
+    async with SessionLocal() as session, session.begin():
+        session.add_all(
+            ApiListSnapshot(
+                id=snapshot_id,
+                marketer_id=account.marketer_id,
+                resource="posts",
+                filter_hash="a" * 64,
+                created_at=clock.now() - timedelta(hours=2),
+                expires_at=clock.now() - timedelta(hours=1),
+            )
+            for snapshot_id in expired_ids
+        )
+        session.add_all(
+            ApiListSnapshotItem(snapshot_id=snapshot_id, position=0, item={"id": index})
+            for index, snapshot_id in enumerate(expired_ids)
+        )
+
+    response = await account.client.get("/api/v1/posts")
+
+    async with SessionLocal() as session:
+        expired_count = await session.scalar(
+            select(func.count())
+            .select_from(ApiListSnapshot)
+            .where(ApiListSnapshot.id.in_(expired_ids))
+        )
+        expired_item_count = await session.scalar(
+            select(func.count())
+            .select_from(ApiListSnapshotItem)
+            .where(ApiListSnapshotItem.snapshot_id.in_(expired_ids))
+        )
+    assert response.status_code == 200
+    assert expired_count == 1
+    assert expired_item_count == 1
 
 
 async def test_施策での絞り込み_campaign_idを指定したとき該当施策の投稿だけを返す(
@@ -126,13 +384,28 @@ async def test_意味検索_queryに近い投稿がsimilarity付きで先頭に�
     target = await _publish(account, session_id, campaign_id, "検索されたい投稿", clock)
     await _publish(account, session_id, campaign_id, "関係のない投稿", clock)
 
+    async with SessionLocal() as session:
+        before = await session.scalar(
+            select(func.count())
+            .select_from(ApiListSnapshot)
+            .where(ApiListSnapshot.marketer_id == account.marketer_id)
+        )
     response = await account.client.get(
         f"/api/v1/posts?query={quote(build_post_search_text('検索されたい投稿'))}"
     )
+    async with SessionLocal() as session:
+        after = await session.scalar(
+            select(func.count())
+            .select_from(ApiListSnapshot)
+            .where(ApiListSnapshot.marketer_id == account.marketer_id)
+        )
 
-    posts = response.json()["data"]["posts"]
+    data = response.json()["data"]
+    posts = data["posts"]
     assert posts[0]["post_id"] == target
     assert posts[0]["similarity"] > 0.99
+    assert data["next_cursor"] is None
+    assert after == before
 
 
 async def test_公開範囲の指定_published_toより後の投稿を含めない(
@@ -162,9 +435,48 @@ async def test_詳細_UTM付きURLと計測状況と施策を返す(account: Acc
     data = response.json()["data"]
     assert data["post"]["body"] == "詳細の投稿"
     assert data["campaign"]["id"] == campaign_id
+    assert data["campaign"]["archived_at"] is None
     assert data["tracking"]["landing_url"] == "https://example.com/lp"
     assert data["tracking"]["tracked_url"].startswith("https://example.com/lp?")
     assert data["metrics"]["status"] == "pending"
+
+
+async def test_Archive済み施策の投稿と計測と記憶を各参照結果に保持する(
+    account: Account, clock: FixedClock
+) -> None:
+    session_id = await account.create_session()
+    campaign_id = await account.create_campaign(session_id)
+    post_id = await _publish(account, session_id, campaign_id, "Archive前の投稿", clock)
+    await complete_metrics(post_id, x_pv_count=100, landing_user_count=20)
+    memory_id = await insert_memory(
+        account.company_id,
+        "Archive前の記憶",
+        campaign_ids=(campaign_id,),
+        post_ids=(post_id,),
+    )
+    archived_at = clock.now().isoformat().replace("+00:00", "Z")
+    await archive_campaign(campaign_id, clock.now())
+
+    post_list = (await account.client.get("/api/v1/posts")).json()["data"]["posts"]
+    post_detail = (await account.client.get(f"/api/v1/posts/{post_id}")).json()["data"]
+    metrics = (await account.client.get("/api/v1/metrics")).json()["data"]
+    memories = (await account.client.get("/api/v1/memories")).json()["data"]["memories"]
+
+    assert [post["post_id"] for post in post_list] == [post_id]
+    assert post_list[0]["campaign_archived_at"] == archived_at
+    assert post_detail["campaign"]["archived_at"] == archived_at
+    assert metrics["summary"]["post_count"] == 1
+    assert metrics["campaigns"][0]["id"] == campaign_id
+    assert metrics["campaigns"][0]["archived_at"] == archived_at
+    assert [memory["id"] for memory in memories] == [memory_id]
+    assert memories[0]["campaigns"] == [
+        {
+            "id": campaign_id,
+            "title": "春の新規フォロワー獲得",
+            "archived_at": archived_at,
+        }
+    ]
+    assert memories[0]["posts"][0]["post_id"] == post_id
 
 
 async def test_詳細_他社の投稿のとき404_POST_NOT_FOUND(
@@ -213,6 +525,7 @@ async def test_計測結果集計_期間内の完了件数とlanding_rateを施�
     assert data["summary"]["x_pv_count"] == 200
     assert data["summary"]["landing_rate"] == 0.2
     assert data["campaigns"][0]["id"] == campaign_id
+    assert data["campaigns"][0]["archived_at"] is None
 
 
 async def test_計測結果集計_投稿がないとき0件でlanding_rateはnull(account: Account) -> None:
@@ -236,6 +549,7 @@ async def test_記憶一覧_自社の記憶だけを関連付きで返す(
     memories = response.json()["data"]["memories"]
     assert [m["id"] for m in memories] == [mine]
     assert memories[0]["campaigns"][0]["id"] == campaign_id
+    assert memories[0]["campaigns"][0]["archived_at"] is None
     assert memories[0]["similarity"] is None
 
 

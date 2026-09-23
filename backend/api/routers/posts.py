@@ -58,11 +58,15 @@ async def get_metrics(
     auth: Authenticated,
     published_from: str | None = None,
     published_to: str | None = None,
+    limit: Annotated[int, Query(ge=1, le=MAX_PAGE_LIMIT)] = DEFAULT_PAGE_LIMIT,
+    cursor: str | None = None,
 ) -> JSONResponse:
     """全体のサマリーと、施策ごとの計測結果を集計して返す。"""
     view = await MetricsService(ctx).report(
         auth,
         published_from=parse_query_datetime(published_from, "published_from"),
         published_to=parse_query_datetime(published_to, "published_to"),
+        limit=limit,
+        cursor=cursor,
     )
     return ok(serialize_metrics_report(view))

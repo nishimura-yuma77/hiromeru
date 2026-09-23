@@ -66,6 +66,17 @@ class TurnItemView:
 
 
 @dataclass(frozen=True)
+class ApprovalStateView:
+    """Credentialや外部結果本文を含まないApproval Turnの復旧状態。"""
+
+    operation: str
+    status: str
+    external_effect_started: bool
+    external_succeeded: bool
+    recovery: str | None
+
+
+@dataclass(frozen=True)
 class TurnView:
     """5.1のTurn。"""
 
@@ -74,6 +85,7 @@ class TurnView:
     kind: str
     status: str
     error: TurnErrorView | None
+    approval_state: ApprovalStateView | None
     started_at: datetime | None
     completed_at: datetime | None
     security_notices: list[SecurityNoticeView] = field(default_factory=list)
@@ -98,6 +110,7 @@ class CampaignListItemView:
     objective: str
     created_at: datetime
     updated_at: datetime
+    archived_at: datetime | None
     similarity: float | None
     metrics_summary: MetricsSummary
 
@@ -122,6 +135,7 @@ class CampaignView:
     plan: str
     created_at: datetime
     updated_at: datetime
+    archived_at: datetime | None
 
 
 @dataclass(frozen=True)
@@ -170,6 +184,7 @@ class PostListItemView:
     post_id: int
     campaign_id: int
     campaign_title: str
+    campaign_archived_at: datetime | None
     body: str
     x_post_id: str
     published_at: datetime
@@ -207,6 +222,7 @@ class PostDetailView:
     published_at: datetime
     campaign_id: int
     campaign_title: str
+    campaign_archived_at: datetime | None
     tracking: TrackingView
     metrics: MetricsView
 
@@ -217,6 +233,7 @@ class CampaignMetricsView:
 
     id: int
     title: str
+    archived_at: datetime | None
     summary: MetricsSummary
 
 
@@ -228,6 +245,7 @@ class MetricsReportView:
     published_to: datetime | None
     summary: MetricsSummary
     campaigns: list[CampaignMetricsView]
+    next_cursor: str | None
 
 
 @dataclass(frozen=True)
@@ -237,8 +255,10 @@ class MemoryView:
     id: int
     content: str
     similarity: float | None
-    campaigns: list[tuple[int, str]]
+    campaigns: list[tuple[int, str, datetime | None]]
+    campaigns_next_cursor: str | None
     posts: list[tuple[int, datetime]]
+    posts_next_cursor: str | None
 
 
 @dataclass(frozen=True)
@@ -246,4 +266,20 @@ class MemoryListView:
     """記憶一覧。"""
 
     memories: list[MemoryView]
+    next_cursor: str | None
+
+
+@dataclass(frozen=True)
+class MemoryCampaignListView:
+    """記憶に関連する施策の一覧。"""
+
+    campaigns: list[tuple[int, str, datetime | None]]
+    next_cursor: str | None
+
+
+@dataclass(frozen=True)
+class MemoryPostListView:
+    """記憶に関連する公開済み投稿の一覧。"""
+
+    posts: list[tuple[int, datetime]]
     next_cursor: str | None

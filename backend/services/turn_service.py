@@ -7,6 +7,8 @@ import asyncio
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
+from agent_runtime.budget import TurnBudget
+from agent_runtime.executor import ToolExecutor
 from agent_runtime.runner import AgentRunError, AgentRunInput, ProgressReporter
 from core.errors import DEFAULT_MESSAGES, ERROR_SPECS, AppError, FieldError
 from core.logging import get_logger, safe_error_text
@@ -15,6 +17,7 @@ from domain.constants import SESSION_TITLE_LENGTH
 from domain.enums import AgentContentSource, AgentItemType, AgentTurnStatus
 from domain.requests import MessageRequest
 from repositories.agent import SessionRepository, TurnRepository
+from services.agent_context import AgentContextBuilder, ContextCompactionError
 from services.context import AuthContext, ServiceContext
 from services.turn_view import TurnViewLoader
 from services.validation import BodyLoader, parse_json_object, validate_model
@@ -121,47 +124,84 @@ class TurnService:
         """
         error_code: str | None = None
         reply: str | None = None
-        run_input = AgentRunInput(
-            prepared.session_id,
-            prepared.turn_id,
-            prepared.auth.marketer_id,
-            prepared.auth.company_id,
-            prepared.message,
-        )
+        llm_call_id: int | None = None
+        terminal = False
         elapsed = (self._ctx.clock.now() - prepared.started_at).total_seconds()
         remaining = max(0.0, self._ctx.settings.turn_time_limit_seconds - elapsed)
         try:
+            budget = TurnBudget(
+                started_at=prepared.started_at,
+                clock=self._ctx.clock,
+                time_limit_seconds=self._ctx.settings.turn_time_limit_seconds,
+                max_steps=self._ctx.settings.agent_max_steps,
+                max_cost_usd=self._ctx.settings.agent_max_cost_usd,
+            )
             async with asyncio.timeout(remaining):
+                context = await AgentContextBuilder(self._ctx).build(
+                    prepared.session_id, prepared.turn_id, budget
+                )
+                run_input = AgentRunInput(
+                    session_id=prepared.session_id,
+                    turn_id=prepared.turn_id,
+                    marketer_id=prepared.auth.marketer_id,
+                    company_id=prepared.auth.company_id,
+                    message=prepared.message,
+                    context=context,
+                    tools=ToolExecutor(
+                        self._ctx,
+                        marketer_id=prepared.auth.marketer_id,
+                        company_id=prepared.auth.company_id,
+                        session_id=prepared.session_id,
+                        turn_id=prepared.turn_id,
+                        reporter=reporter,
+                        agent_context=context,
+                        budget=budget,
+                    ),
+                    budget=budget,
+                )
                 output = await self._ctx.agent_runner.run(run_input, reporter)
             reply = output.reply
+            llm_call_id = output.llm_call_id
+            terminal = output.terminal
         except TimeoutError:
             error_code = "TURN_TIME_LIMIT_EXCEEDED"
+        except ContextCompactionError:
+            error_code = "CONTEXT_COMPACTION_FAILED"
         except AgentRunError as error:
             error_code = error.code if error.code in ERROR_SPECS else "AGENT_EXECUTION_FAILED"
         except Exception as error:  # noqa: BLE001 - Agent実行の失敗はTurnの failed として保存する
             _log.error("agent_execution_failed", error=safe_error_text(error))
             error_code = "AGENT_EXECUTION_FAILED"
-        return await self._finish(prepared, reply, error_code)
+        return await self._finish(prepared, reply, error_code, llm_call_id, terminal)
 
     async def _finish(
-        self, prepared: PreparedTurn, reply: str | None, error_code: str | None
+        self,
+        prepared: PreparedTurn,
+        reply: str | None,
+        error_code: str | None,
+        llm_call_id: int | None,
+        terminal: bool,
     ) -> TurnView:
         now = self._ctx.clock.now()
         async with self._ctx.session_factory() as session, session.begin():
             turns = TurnRepository(session)
             if error_code is None:
-                # 更新は status = running を条件とする。中断として復旧済みなら何も書き込まない。
-                finished = await turns.finish_turn(
-                    prepared.turn_id, status=AgentTurnStatus.COMPLETED, now=now
-                )
-                if finished and reply is not None:
-                    await turns.append_item(
+                # 回答を先に追記し、最後にTurnを終端化する。どちらもrunningを条件とする。
+                if reply is not None:
+                    appended = await turns.append_item_if_running(
                         prepared.turn_id,
                         key="assistant-message",
                         item_type=AgentItemType.ASSISTANT_MESSAGE,
                         source=AgentContentSource.AGENT_OUTPUT,
                         content={"text": mask_text(reply)},
                         now=now,
+                        llm_call_id=llm_call_id,
+                    )
+                else:
+                    appended = terminal
+                if appended:
+                    await turns.finish_turn(
+                        prepared.turn_id, status=AgentTurnStatus.COMPLETED, now=now
                     )
             else:
                 status = (
@@ -180,3 +220,8 @@ class TurnService:
         if view is None:  # 作成済みのTurnが消えることはないため、到達しない。
             raise AppError("INTERNAL_ERROR")
         return view
+
+    async def fail_running(self, prepared: PreparedTurn, error_code: str) -> TurnView:
+        """SSE外側の失敗で残ったrunning Turnを即時終端化し、現在のProjectionを返す。"""
+        code = error_code if error_code in ERROR_SPECS else "AGENT_EXECUTION_FAILED"
+        return await self._finish(prepared, None, code, None, False)

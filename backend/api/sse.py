@@ -10,11 +10,12 @@ from collections.abc import AsyncIterator
 from typing import Any
 
 from agent_runtime.runner import ActivityKind, ActivityStatus
-from api.serializers import serialize_turn
+from api.serializers import serialize_turn, serialize_turn_projection
 from core.logging import get_logger, safe_error_text
 from domain.constants import SSE_KEEP_ALIVE_SECONDS
 from domain.timefmt import format_utc
 from services.turn_service import PreparedTurn, TurnService
+from services.views import TurnView
 
 _log = get_logger(__name__)
 type _Event = tuple[str, dict[str, Any]]
@@ -84,15 +85,26 @@ async def _run_turn(
     queue: asyncio.Queue[_Event | None],
     deadline: float | None,
 ) -> None:
+    view: TurnView | None = None
     try:
         async with asyncio.timeout_at(deadline):
             view = await service.execute(prepared, SseReporter(queue))
-        queue.put_nowait(("turn_finished", serialize_turn(view)))
-    except Exception as error:  # noqa: BLE001 - タスクの例外は回収し、ストリームを閉じる
-        # Turnは running のまま残る。復旧判定時間の経過後に TURN_INTERRUPTED で終了する。
+    except TimeoutError:
+        view = await asyncio.shield(service.fail_running(prepared, "TURN_TIME_LIMIT_EXCEEDED"))
+    except asyncio.CancelledError:
+        await asyncio.shield(service.fail_running(prepared, "AGENT_EXECUTION_FAILED"))
+        raise
+    except Exception as error:  # noqa: BLE001 - stream開始後は固定Errorへ変換する
         _log.error("turn_stream_failed", error=safe_error_text(error))
-    finally:
-        queue.put_nowait(None)
+        view = await asyncio.shield(service.fail_running(prepared, "AGENT_EXECUTION_FAILED"))
+    assert view is not None  # noqa: S101 - 上の全経路で確定する内部不変条件
+    try:
+        payload = serialize_turn(view)
+    except Exception as error:  # noqa: BLE001 - Serializer障害でも終端Eventを保証する
+        _log.error("turn_stream_serialize_failed", error=safe_error_text(error))
+        payload = serialize_turn_projection(view)
+    queue.put_nowait(("turn_finished", payload))
+    queue.put_nowait(None)
 
 
 async def stream_turn(

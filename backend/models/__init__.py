@@ -5,6 +5,7 @@ Alembic が全テーブルを認識できるよう、ここで全モデルを読
 
 from models.agent import (
     AgentContextCheckpoint,
+    AgentContextCheckpointItem,
     AgentItem,
     AgentSession,
     AgentTurn,
@@ -22,6 +23,7 @@ from models.snapshot import ApiListSnapshot, ApiListSnapshotItem
 
 __all__ = [
     "AgentContextCheckpoint",
+    "AgentContextCheckpointItem",
     "AgentItem",
     "AgentMemory",
     "AgentSession",

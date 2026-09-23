@@ -81,6 +81,42 @@ python scripts/backfill_campaign_embeddings.py --execute
 
 Cron設定はProduction Deploymentだけで有効にし、PreviewからProductionの計測処理を起動しないでください。
 
+## X Post Operational Recovery
+
+X投稿結果が不明なRequestと、X成功後にDB保存待ちでLeaseが切れたRequestは、公開HTTP APIではなく`backend/`の運用Commandで復旧します。まず安全なMetadataだけを確認します。
+
+```bash
+python scripts/reconcile_x_posts.py list --company-id 123
+python scripts/reconcile_x_posts.py inspect --request-id 456
+```
+
+`manual_reconciliation`はX管理画面で投稿有無を確認してから、次のどちらか一方を一度だけ実行します。公開日時はX上の実日時をTimezone付きISO 8601で指定します。
+
+```bash
+python scripts/reconcile_x_posts.py resolve-posted \
+  --request-id 456 --x-post-id 1234567890 \
+  --published-at 2026-09-23T09:30:00Z --execute
+python scripts/reconcile_x_posts.py resolve-not-posted --request-id 456 --execute
+```
+
+`resume_persistence`はXへ再投稿せず、保存済みの外部結果を再検証してDB保存だけを再開します。
+
+```bash
+python scripts/reconcile_x_posts.py resume --request-id 789 --execute
+```
+
+`resolve-posted`と`resume`は本番Embeddingを作るため`EXTERNAL_CLIENT_MODE=real`およびOrcaRouter設定が必要です。Command出力へCredential、Request Body、X本文、Tracked URL、Provider Body、Lease Tokenは含まれません。`resolve-*`はPost関連データ、確定Replay Response、冪等状態、新しい完了済み監査Turnを1つのTransactionで保存します。競合時は一方だけが成功します。実行前に接続先の`DATABASE_URL`を確認し、まず`inspect`したRequest IDだけを対象にしてください。
+
+元Requestの本文またはURLが履歴保存時の機密情報マスク対象だった場合、自動復元は安全側で拒否されます。その場合だけ、元のJSON Object（`campaign_id`、`body`、`landing_url`）を標準入力から渡します。内容は保存済みRequest Hashと一致しなければ拒否され、出力・ログ・監査Turnには記録されません。Shell引数には本文を指定しないでください。
+
+```bash
+python scripts/reconcile_x_posts.py resolve-posted \
+  --request-id 456 --x-post-id 1234567890 \
+  --published-at 2026-09-23T09:30:00Z --request-stdin --execute < original-request.json
+python scripts/reconcile_x_posts.py resume \
+  --request-id 789 --request-stdin --execute < original-request.json
+```
+
 ## Application Secrets
 
 PreviewとProductionには、接続先を環境ごとに分離して次を設定します。
@@ -92,6 +128,14 @@ PreviewとProductionには、接続先を環境ごとに分離して次を設定
 | `EXTERNAL_CLIENT_MODE` | Preview・Productionは`real`。ローカル開発・テストは`fake` |
 | `ORCAROUTER_BASE_URL` | OrcaRouter APIのBase URL |
 | `ORCAROUTER_API_KEY` | OrcaRouter APIの認証鍵 |
+| `ORCAROUTER_FIREWALL_API_KEY` | Agent Firewall専用のgateway-scoped認証鍵 |
+| `AGENT_MODEL` | Chat Completionsで使う明示的なモデル名 |
+| `AGENT_MAX_STEPS` | 親Turnと子Agentで共有する論理step上限。既定20 |
+| `AGENT_MAX_COST_USD` | 親Turn単位の確定USD cost上限。既定1.00000000 |
+| `LLM_TIMEOUT_SECONDS` | 1回のLLM request timeout。既定60秒 |
+| `LLM_MAX_OUTPUT_TOKENS` | 1回のLLM最大出力token。既定4096 |
+| `GENERATION_LOOKUP_ATTEMPTS` | 確定cost取得のbounded retry回数。既定3 |
+| `GENERATION_LOOKUP_BACKOFF_SECONDS` | 確定cost取得retryの基準待機秒。既定0.1 |
 | `X_API_KEY` | X APIのConsumer Key |
 | `X_API_KEY_SECRET` | X APIのConsumer Secret |
 | `X_ACCESS_TOKEN` | 環境固定XアカウントのUser Access Token |
@@ -101,7 +145,7 @@ PreviewとProductionには、接続先を環境ごとに分離して次を設定
 
 PreviewとProductionは起動時にこれらの必須設定を検証し、Productionでは`CRON_SECRET`も必須です。FakeまたはMockの外部API Clientを明示的に使う開発・テスト環境だけは、OrcaRouter、X、GA4の実Credentialを省略できます。Secret値をBuild log、Runtime log、Response、Frontend環境変数へ出力しないでください。
 
-XのOAuth 1.0a Client、GA4 Client、実Agent Runnerの実装は、それぞれIssue #18、#33、#31で行います。本節の設定は先に起動時検証とClient切替の契約を固定するものです。
+実Agent RunnerはOrcaRouter Chat Completionsを使用し、SDK tracingを無効化したうえで履歴、Tool loop、budget、永続化をアプリケーションが管理します。
 
 ## CI
 

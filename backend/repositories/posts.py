@@ -27,6 +27,7 @@ class PostRow:
 
     post: Post
     campaign_title: str
+    campaign_archived_at: datetime | None
     metric: PostMetric
     similarity: float | None = None
 
@@ -73,7 +74,7 @@ class PostPage:
 def _published_stmt(company_id: int) -> Select[Any]:
     """公開済み投稿だけを対象とする基本のSELECT（API_DESIGN 3章「公開済みPostの取得境界」）。"""
     return (
-        select(Post, Campaign.title, PostMetric)
+        select(Post, Campaign.title, Campaign.archived_at, PostMetric)
         .join(ApiIdempotencyRequest, ApiIdempotencyRequest.id == Post.api_idempotency_request_id)
         .join(Campaign, Campaign.id == Post.campaign_id)
         .join(PostMetric, PostMetric.post_id == Post.id)
@@ -150,12 +151,31 @@ class PostRepository:
         """公開済み投稿を1件取得する。未公開・別会社は None。"""
         stmt = _published_stmt(company_id).where(Post.id == post_id)
         row = (await self._session.execute(stmt)).one_or_none()
-        return None if row is None else PostRow(row[0], row[1], row[2])
+        return None if row is None else PostRow(row[0], row[1], row[2], row[3])
 
     async def get_tracking(self, post_id: int) -> PostTrackingLink | None:
         """投稿のトラッキングURLを取得する。"""
         stmt = select(PostTrackingLink).where(PostTrackingLink.post_id == post_id)
         return (await self._session.execute(stmt)).scalar_one_or_none()
+
+    async def published_ids(self, company_id: int, post_ids: tuple[int, ...]) -> set[int]:
+        """会社に属する公開成功済みPost IDだけを返す。"""
+        if not post_ids:
+            return set()
+        stmt = (
+            select(Post.id)
+            .join(
+                ApiIdempotencyRequest,
+                ApiIdempotencyRequest.id == Post.api_idempotency_request_id,
+            )
+            .where(
+                Post.company_id == company_id,
+                Post.id.in_(post_ids),
+                ApiIdempotencyRequest.operation == ApiOperation.PUBLISH_X_POST,
+                ApiIdempotencyRequest.status == ApiIdempotencyStatus.SUCCEEDED,
+            )
+        )
+        return set((await self._session.execute(stmt)).scalars())
 
     async def list_for_campaign(
         self, company_id: int, campaign_id: int, limit: int
@@ -167,10 +187,10 @@ class PostRepository:
             .order_by(Post.published_at.desc(), Post.id.desc())
             .limit(limit)
         )
-        return [PostRow(r[0], r[1], r[2]) for r in await self._session.execute(stmt)]
+        return [PostRow(r[0], r[1], r[2], r[3]) for r in await self._session.execute(stmt)]
 
     async def list_posts(
-        self, company_id: int, flt: PostFilter, page: PostPage, limit: int
+        self, company_id: int, flt: PostFilter, page: PostPage, limit: int | None = None
     ) -> list[PostRow]:
         """並び替えとカーソルに従って公開済み投稿を返す（API_DESIGN 6.4）。"""
         stmt = _apply_filter(_published_stmt(company_id), flt)
@@ -185,15 +205,19 @@ class PostRepository:
             stmt = stmt.order_by(*(c.desc() if descending else c.asc() for c in columns))
         else:
             stmt = self._order_by_pv(stmt, descending, cursor)
-        stmt = stmt.limit(limit)
-        return [PostRow(r[0], r[1], r[2]) for r in await self._session.execute(stmt)]
+        if limit is not None:
+            stmt = stmt.limit(limit)
+        return [PostRow(r[0], r[1], r[2], r[3]) for r in await self._session.execute(stmt)]
 
     @staticmethod
     def _order_by_pv(
         stmt: Select[Any], descending: bool, cursor: dict[str, Any] | None
     ) -> Select[Any]:
         """`x_pv_count` の並び替え。値がない投稿（pending・failed）は常に末尾へ置く。"""
-        pv = PostMetric.x_pv_count
+        pv = case(
+            (PostMetric.status == PostMetricStatus.COMPLETED, PostMetric.x_pv_count),
+            else_=None,
+        )
         if cursor is not None:
             if not cursor["is_null"]:
                 key, after = tuple_(pv, Post.id), tuple_(cursor["x_pv_count"], cursor["id"])
@@ -235,7 +259,7 @@ class PostRepository:
             distance, Post.id.desc()
         )
         rows = await self._session.execute(stmt.limit(limit))
-        return [PostRow(r[0], r[1], r[2], float(r[3])) for r in rows]
+        return [PostRow(r[0], r[1], r[2], r[3], float(r[4])) for r in rows]
 
     async def summarize(
         self,

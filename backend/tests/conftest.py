@@ -10,13 +10,28 @@ from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 from pydantic import SecretStr
 
+from agent_runtime.business_tools import ToolHandlerDependencies, build_default_tool_registry
+from agent_runtime.firewall import FakeAgentFirewall
+from agent_runtime.guardrail import FakeToolResultGuardrail
+from agent_runtime.proposal_tools import register_proposal_tools
+from agent_runtime.web_tools import WebToolDependencies, register_web_tools
 from api.main import create_app
+from clients.web_fetch import HttpxPinnedTransport, SafeWebFetcher, SystemResolver
+from clients.web_search import FakeWebSearchProvider
 from core.config import Settings
 from repositories.database import SessionLocal
 from services.auth_service import AuthService
 from services.context import ServiceContext
 from tests.support.client import Account
-from tests.support.fakes import FakeAgentRunner, FakeEmbedding, FakeXApi, FixedClock, no_sleep
+from tests.support.fakes import (
+    FakeAgentRunner,
+    FakeContextCompactor,
+    FakeEmbedding,
+    FakeGa4,
+    FakeXApi,
+    FixedClock,
+    no_sleep,
+)
 
 ORIGIN = "http://localhost:3000"
 PASSWORD = "correct-horse-battery"
@@ -38,8 +53,18 @@ def x_api() -> FakeXApi:
 
 
 @pytest.fixture
+def ga4() -> FakeGa4:
+    return FakeGa4()
+
+
+@pytest.fixture
 def agent() -> FakeAgentRunner:
     return FakeAgentRunner()
+
+
+@pytest.fixture
+def compactor() -> FakeContextCompactor:
+    return FakeContextCompactor()
 
 
 @pytest.fixture
@@ -59,18 +84,44 @@ def ctx(
     clock: FixedClock,
     embedding: FakeEmbedding,
     x_api: FakeXApi,
+    ga4: FakeGa4,
     agent: FakeAgentRunner,
+    compactor: FakeContextCompactor,
 ) -> ServiceContext:
-    return ServiceContext(
+    registry = build_default_tool_registry(
+        ToolHandlerDependencies(settings, SessionLocal, embedding, clock)
+    )
+    register_web_tools(
+        registry,
+        WebToolDependencies(
+            SessionLocal,
+            FakeWebSearchProvider(),
+            SafeWebFetcher(
+                resolver=SystemResolver(),
+                transport=HttpxPinnedTransport(settings.web_fetch_timeout_seconds),
+                max_bytes=settings.web_fetch_max_bytes,
+                max_redirects=settings.web_fetch_max_redirects,
+            ),
+            uuid.uuid4,
+        ),
+    )
+    context = ServiceContext(
         settings=settings,
         session_factory=SessionLocal,
         clock=clock,
         embedding=embedding,
         x_api=x_api,
+        ga4=ga4,
         agent_runner=agent,
+        context_compactor=compactor,
+        tool_registry=registry,
+        agent_firewall=FakeAgentFirewall(),
+        tool_result_guardrail=FakeToolResultGuardrail(),
         sleep=no_sleep,
         new_uuid=uuid.uuid4,
     )
+    register_proposal_tools(context)
+    return context
 
 
 @pytest.fixture
