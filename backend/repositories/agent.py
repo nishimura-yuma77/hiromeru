@@ -2,9 +2,10 @@
 
 from dataclasses import dataclass
 from datetime import datetime
+from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import and_, exists, func, literal, select, tuple_, update
+from sqlalchemy import and_, exists, func, literal, or_, select, tuple_, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from domain.enums import (
@@ -14,16 +15,42 @@ from domain.enums import (
     AgentItemType,
     AgentTurnStatus,
     AgentType,
+    SecurityDetector,
+    SecurityEnforcement,
+    SecurityEventType,
     ToolExecutionStatus,
 )
 from models import (
+    AgentContextCheckpoint,
+    AgentContextCheckpointItem,
     AgentItem,
     AgentSession,
     AgentTurn,
     ApiIdempotencyRequest,
+    LlmCall,
+    Marketer,
     SecurityEvent,
     ToolExecution,
 )
+
+
+@dataclass(frozen=True)
+class ToolRuntimeRecord:
+    """DB正本から得たTool実行境界。"""
+
+    agent_type: AgentType
+    parent_session_id: int | None
+    started_at: datetime
+    turn_status: AgentTurnStatus
+
+
+@dataclass(frozen=True)
+class PreparedToolExecution:
+    """get-or-createした論理Tool実行。"""
+
+    tool_call: AgentItem
+    execution: ToolExecution
+    terminal_result: AgentItem | None
 
 
 @dataclass(frozen=True)
@@ -33,7 +60,34 @@ class TurnBundle:
     turn: AgentTurn
     items: list[AgentItem]
     notices: list[SecurityEvent]
-    is_approval: bool
+    approval: ApiIdempotencyRequest | None
+    completed_tool_call_ids: frozenset[int] = frozenset()
+
+    @property
+    def is_approval(self) -> bool:
+        """冪等性Requestから参照されるAPI実行Turnか。"""
+        return self.approval is not None
+
+
+@dataclass(frozen=True)
+class CheckpointBundle:
+    """有効Checkpointと境界、要約元Item ID。"""
+
+    checkpoint: AgentContextCheckpoint
+    through_turn_number: int
+    source_item_ids: tuple[int, ...]
+
+
+class InvalidCheckpointSourcesError(ValueError):
+    """Checkpointのsource Itemが許可された親Session・Turn境界に属さない。"""
+
+
+class ToolCallConflictError(ValueError):
+    """同じstable keyが異なるTool Call内容へ再利用された。"""
+
+
+class TurnNotRunningError(RuntimeError):
+    """runningではないTurnへの追記を拒否した。"""
 
 
 class SessionRepository:
@@ -126,14 +180,36 @@ class TurnRepository:
         対象は、pending・running のまま復旧判定時間を超えた、API実行Turnではない Turn。
         `status` を条件とする条件付きUPDATEのため、何度呼んでも結果は変わらない。
         """
+        return await self._recover_stale(
+            session_id=session_id, threshold=threshold, now=now, message=message
+        )
+
+    async def recover_all_stale(
+        self, *, threshold: datetime, now: datetime, message: str
+    ) -> list[int]:
+        """未訪問の親・子Sessionを含む全中断Turnを定期処理用に復旧する。"""
+        return await self._recover_stale(
+            session_id=None, threshold=threshold, now=now, message=message
+        )
+
+    async def _recover_stale(
+        self,
+        *,
+        session_id: int | None,
+        threshold: datetime,
+        now: datetime,
+        message: str,
+    ) -> list[int]:
+        conditions = [
+            AgentTurn.status.in_([AgentTurnStatus.PENDING, AgentTurnStatus.RUNNING]),
+            func.coalesce(AgentTurn.started_at, AgentTurn.created_at) < threshold,
+            ~self._is_api_turn(AgentTurn.id),
+        ]
+        if session_id is not None:
+            conditions.append(AgentTurn.session_id == session_id)
         stmt = (
             update(AgentTurn)
-            .where(
-                AgentTurn.session_id == session_id,
-                AgentTurn.status.in_([AgentTurnStatus.PENDING, AgentTurnStatus.RUNNING]),
-                func.coalesce(AgentTurn.started_at, AgentTurn.created_at) < threshold,
-                ~self._is_api_turn(AgentTurn.id),
-            )
+            .where(*conditions)
             .values(
                 status=AgentTurnStatus.FAILED,
                 error_code="TURN_INTERRUPTED",
@@ -159,6 +235,15 @@ class TurnRepository:
             )
             await self._session.execute(cancel)
         return recovered
+
+    async def is_running(self, turn_id: int, *, lock: bool = False) -> bool:
+        """Turnがrunningか確認し、必要なら復旧処理との順序を行Lockで確定する。"""
+        stmt = select(AgentTurn.id).where(
+            AgentTurn.id == turn_id, AgentTurn.status == AgentTurnStatus.RUNNING
+        )
+        if lock:
+            stmt = stmt.with_for_update()
+        return (await self._session.execute(stmt)).scalar_one_or_none() is not None
 
     async def has_active_chat_turn(self, session_id: int) -> bool:
         """pending・running のAgent Turn（API実行Turnを除く）があるか。"""
@@ -202,12 +287,17 @@ class TurnRepository:
         content: dict[str, Any],
         now: datetime,
         context_class: AgentContextClass = AgentContextClass.CONVERSATION,
+        llm_call_id: int | None = None,
     ) -> AgentItem:
         """アイテムを追記する。同じ `key` が保存済みなら、それを返す（二重保存を防ぐ）。"""
         existing = (
             await self._session.execute(
-                select(AgentItem).where(
-                    AgentItem.agent_turn_id == turn_id, AgentItem.idempotency_key == key
+                select(AgentItem)
+                .join(AgentTurn, AgentTurn.id == AgentItem.agent_turn_id)
+                .where(
+                    AgentItem.agent_turn_id == turn_id,
+                    AgentItem.idempotency_key == key,
+                    AgentTurn.status == AgentTurnStatus.RUNNING,
                 )
             )
         ).scalar_one_or_none()
@@ -217,11 +307,16 @@ class TurnRepository:
         number = (
             await self._session.execute(
                 update(AgentTurn)
-                .where(AgentTurn.id == turn_id)
+                .where(
+                    AgentTurn.id == turn_id,
+                    AgentTurn.status == AgentTurnStatus.RUNNING,
+                )
                 .values(next_item_number=AgentTurn.next_item_number + 1)
                 .returning(AgentTurn.next_item_number - 1)
             )
-        ).scalar_one()
+        ).scalar_one_or_none()
+        if number is None:
+            raise TurnNotRunningError
         item = AgentItem(
             agent_turn_id=turn_id,
             item_number=number,
@@ -231,11 +326,303 @@ class TurnRepository:
             content_source=source,
             context_status=AgentItemContextStatus.ACTIVE,
             content=content,
+            llm_call_id=llm_call_id,
             created_at=now,
         )
         self._session.add(item)
         await self._session.flush()
         return item
+
+    async def append_item_if_running(
+        self,
+        turn_id: int,
+        *,
+        key: str,
+        item_type: AgentItemType,
+        source: AgentContentSource,
+        content: dict[str, Any],
+        now: datetime,
+        context_class: AgentContextClass = AgentContextClass.CONVERSATION,
+        llm_call_id: int | None = None,
+    ) -> AgentItem | None:
+        """Turnがrunningの場合だけItemを追記する。終端化との競合では何も書かない。"""
+        existing = (
+            await self._session.execute(
+                select(AgentItem)
+                .join(AgentTurn, AgentTurn.id == AgentItem.agent_turn_id)
+                .where(
+                    AgentItem.agent_turn_id == turn_id,
+                    AgentItem.idempotency_key == key,
+                    AgentTurn.status == AgentTurnStatus.RUNNING,
+                )
+            )
+        ).scalar_one_or_none()
+        if existing is not None:
+            return existing
+        number = (
+            await self._session.execute(
+                update(AgentTurn)
+                .where(
+                    AgentTurn.id == turn_id,
+                    AgentTurn.status == AgentTurnStatus.RUNNING,
+                )
+                .values(next_item_number=AgentTurn.next_item_number + 1)
+                .returning(AgentTurn.next_item_number - 1)
+            )
+        ).scalar_one_or_none()
+        if number is None:
+            return None
+        item = AgentItem(
+            agent_turn_id=turn_id,
+            item_number=number,
+            idempotency_key=key,
+            item_type=item_type,
+            context_class=context_class,
+            content_source=source,
+            context_status=AgentItemContextStatus.ACTIVE,
+            content=content,
+            llm_call_id=llm_call_id,
+            created_at=now,
+        )
+        self._session.add(item)
+        await self._session.flush()
+        return item
+
+    async def latest_checkpoint(
+        self, session_id: int, *, before_turn_number: int
+    ) -> CheckpointBundle | None:
+        """現在Turnより前にある最新の有効Checkpointを返す。"""
+        row = (
+            await self._session.execute(
+                select(AgentContextCheckpoint, AgentTurn.turn_number)
+                .join(AgentTurn, AgentTurn.id == AgentContextCheckpoint.compacted_through_turn_id)
+                .where(
+                    AgentContextCheckpoint.session_id == session_id,
+                    AgentContextCheckpoint.invalidated_at.is_(None),
+                    AgentTurn.turn_number < before_turn_number,
+                )
+                .order_by(
+                    AgentContextCheckpoint.created_at.desc(),
+                    AgentContextCheckpoint.id.desc(),
+                )
+                .limit(1)
+            )
+        ).one_or_none()
+        if row is None:
+            return None
+        checkpoint, turn_number = row
+        source_ids = tuple(
+            (
+                await self._session.execute(
+                    select(AgentContextCheckpointItem.item_id)
+                    .where(AgentContextCheckpointItem.checkpoint_id == checkpoint.id)
+                    .order_by(AgentContextCheckpointItem.item_id)
+                )
+            ).scalars()
+        )
+        return CheckpointBundle(checkpoint, turn_number, source_ids)
+
+    async def completed_context_items(
+        self,
+        session_id: int,
+        *,
+        after_turn_number: int = 0,
+        before_turn_number: int,
+    ) -> list[tuple[AgentTurn, AgentItem]]:
+        """Checkpoint境界と現在Turnの間にある完了Itemを会話順で返す。"""
+        stmt = (
+            select(AgentTurn, AgentItem)
+            .join(AgentItem, AgentItem.agent_turn_id == AgentTurn.id)
+            .where(
+                AgentTurn.session_id == session_id,
+                AgentTurn.status == AgentTurnStatus.COMPLETED,
+                AgentTurn.turn_number > after_turn_number,
+                AgentTurn.turn_number < before_turn_number,
+            )
+            .order_by(AgentTurn.turn_number, AgentItem.item_number)
+        )
+        return list((await self._session.execute(stmt)).tuples())
+
+    async def current_user_item(self, turn_id: int) -> AgentItem | None:
+        """現在のrunning Turnのuser inputを1件取得する。"""
+        stmt = (
+            select(AgentItem)
+            .join(AgentTurn, AgentTurn.id == AgentItem.agent_turn_id)
+            .where(
+                AgentTurn.id == turn_id,
+                AgentTurn.status == AgentTurnStatus.RUNNING,
+                AgentItem.item_type == AgentItemType.USER_MESSAGE,
+            )
+            .order_by(AgentItem.item_number)
+            .limit(1)
+        )
+        return (await self._session.execute(stmt)).scalar_one_or_none()
+
+    async def trusted_user_item(self, session_id: int, item_id: int) -> AgentItem | None:
+        """同じ親Sessionのactive user inputをDB正本から取得する。"""
+        stmt = (
+            select(AgentItem)
+            .join(AgentTurn, AgentTurn.id == AgentItem.agent_turn_id)
+            .join(AgentSession, AgentSession.id == AgentTurn.session_id)
+            .where(
+                AgentItem.id == item_id,
+                AgentTurn.session_id == session_id,
+                AgentSession.agent == AgentType.PARENT,
+                AgentSession.parent_session_id.is_(None),
+                AgentItem.item_type == AgentItemType.USER_MESSAGE,
+                AgentItem.content_source == AgentContentSource.USER_INPUT,
+                AgentItem.context_status == AgentItemContextStatus.ACTIVE,
+            )
+        )
+        return (await self._session.execute(stmt)).scalar_one_or_none()
+
+    async def checkpoint_source_items(
+        self, session_id: int, current_turn_id: int, item_ids: list[int]
+    ) -> list[tuple[AgentTurn, AgentItem]] | None:
+        """最新Checkpointに含まれる同じ親Sessionの完了Itemを全件取得する。"""
+        current = await self.get_turn(session_id, current_turn_id)
+        if current is None:
+            return None
+        checkpoint = await self.latest_checkpoint(
+            session_id, before_turn_number=current.turn_number
+        )
+        if checkpoint is None or not set(item_ids).issubset(checkpoint.source_item_ids):
+            return None
+        stmt = (
+            select(AgentTurn, AgentItem)
+            .join(AgentItem, AgentItem.agent_turn_id == AgentTurn.id)
+            .join(AgentSession, AgentSession.id == AgentTurn.session_id)
+            .where(
+                AgentItem.id.in_(item_ids),
+                AgentTurn.session_id == session_id,
+                AgentTurn.status == AgentTurnStatus.COMPLETED,
+                AgentSession.agent == AgentType.PARENT,
+                AgentSession.parent_session_id.is_(None),
+            )
+            .order_by(AgentTurn.turn_number, AgentItem.item_number)
+        )
+        rows = list((await self._session.execute(stmt)).tuples())
+        return rows if len(rows) == len(item_ids) else None
+
+    async def recent_security_events(
+        self, session_id: int, *, before_turn_number: int, turn_limit: int = 5
+    ) -> list[SecurityEvent]:
+        """現在Turnより前の直近Turnに属するSecurity Eventを返す。"""
+        recent_turns = (
+            select(AgentTurn.id)
+            .where(
+                AgentTurn.session_id == session_id,
+                AgentTurn.turn_number < before_turn_number,
+            )
+            .order_by(AgentTurn.turn_number.desc())
+            .limit(turn_limit)
+            .subquery()
+        )
+        stmt = (
+            select(SecurityEvent)
+            .join(AgentTurn, AgentTurn.id == SecurityEvent.agent_turn_id)
+            .where(SecurityEvent.agent_turn_id.in_(select(recent_turns.c.id)))
+            .order_by(AgentTurn.turn_number, SecurityEvent.detected_at, SecurityEvent.id)
+        )
+        return list((await self._session.execute(stmt)).scalars())
+
+    async def create_checkpoint(
+        self,
+        session_id: int,
+        through_turn_id: int,
+        *,
+        summary: str,
+        source_item_ids: tuple[int, ...],
+        now: datetime,
+    ) -> AgentContextCheckpoint:
+        """source境界を検証し、Checkpointと中間行を同じTransactionへ追加する。"""
+        boundary_number = (
+            await self._session.execute(
+                select(AgentTurn.turn_number)
+                .join(AgentSession, AgentSession.id == AgentTurn.session_id)
+                .where(
+                    AgentTurn.id == through_turn_id,
+                    AgentTurn.session_id == session_id,
+                    AgentTurn.status == AgentTurnStatus.COMPLETED,
+                    AgentSession.agent == AgentType.PARENT,
+                    AgentSession.parent_session_id.is_(None),
+                )
+            )
+        ).scalar_one_or_none()
+        unique_ids = tuple(dict.fromkeys(source_item_ids))
+        if boundary_number is None or not unique_ids:
+            raise InvalidCheckpointSourcesError
+        valid_count = (
+            await self._session.execute(
+                select(func.count(AgentItem.id))
+                .join(AgentTurn, AgentTurn.id == AgentItem.agent_turn_id)
+                .join(AgentSession, AgentSession.id == AgentTurn.session_id)
+                .where(
+                    AgentItem.id.in_(unique_ids),
+                    AgentTurn.session_id == session_id,
+                    AgentTurn.status == AgentTurnStatus.COMPLETED,
+                    AgentTurn.turn_number <= boundary_number,
+                    AgentSession.agent == AgentType.PARENT,
+                    AgentSession.parent_session_id.is_(None),
+                )
+            )
+        ).scalar_one()
+        if valid_count != len(unique_ids):
+            raise InvalidCheckpointSourcesError
+        checkpoint = AgentContextCheckpoint(
+            session_id=session_id,
+            compacted_through_turn_id=through_turn_id,
+            summary=summary,
+            created_at=now,
+        )
+        self._session.add(checkpoint)
+        await self._session.flush()
+        self._session.add_all(
+            AgentContextCheckpointItem(checkpoint_id=checkpoint.id, item_id=item_id)
+            for item_id in unique_ids
+        )
+        await self._session.flush()
+        return checkpoint
+
+    async def quarantine_item(
+        self,
+        item_id: int,
+        *,
+        reason: str,
+        context_override: dict[str, Any],
+        now: datetime,
+    ) -> bool:
+        """Itemを隔離し、そのItemをsourceに持つ有効Checkpointを同時に無効化する。"""
+        quarantined = (
+            await self._session.execute(
+                update(AgentItem)
+                .where(
+                    AgentItem.id == item_id,
+                    AgentItem.context_status == AgentItemContextStatus.ACTIVE,
+                )
+                .values(
+                    context_status=AgentItemContextStatus.QUARANTINED,
+                    quarantine_reason=reason,
+                    context_override=context_override,
+                    quarantined_at=now,
+                )
+                .returning(AgentItem.id)
+            )
+        ).scalar_one_or_none()
+        if quarantined is None:
+            return False
+        checkpoint_ids = select(AgentContextCheckpointItem.checkpoint_id).where(
+            AgentContextCheckpointItem.item_id == item_id
+        )
+        await self._session.execute(
+            update(AgentContextCheckpoint)
+            .where(
+                AgentContextCheckpoint.id.in_(checkpoint_ids),
+                AgentContextCheckpoint.invalidated_at.is_(None),
+            )
+            .values(invalidated_at=now, invalidation_reason=reason)
+        )
+        return True
 
     async def finish_turn(
         self,
@@ -266,7 +653,21 @@ class TurnRepository:
             )
             .returning(AgentTurn.id)
         )
-        return (await self._session.execute(stmt)).first() is not None
+        finished = (await self._session.execute(stmt)).first() is not None
+        if finished:
+            await self._session.execute(
+                update(ToolExecution)
+                .where(
+                    ToolExecution.status.in_(
+                        [ToolExecutionStatus.PENDING, ToolExecutionStatus.RUNNING]
+                    ),
+                    ToolExecution.tool_call_item_id.in_(
+                        select(AgentItem.id).where(AgentItem.agent_turn_id == turn_id)
+                    ),
+                )
+                .values(status=ToolExecutionStatus.CANCELLED, completed_at=now)
+            )
+        return finished
 
     async def get_turn(self, session_id: int, turn_id: int) -> AgentTurn | None:
         """指定セッションのTurnを取得する。"""
@@ -307,16 +708,469 @@ class TurnRepository:
         )
         for event in (await self._session.execute(event_stmt)).scalars():
             notices[event.agent_turn_id].append(event)
-        approval_ids = set(
+        approvals = {
+            request.agent_turn_id: request
+            for request in (
+                await self._session.execute(
+                    select(ApiIdempotencyRequest).where(
+                        ApiIdempotencyRequest.agent_turn_id.in_(ids)
+                    )
+                )
+            ).scalars()
+            if request.agent_turn_id is not None
+        }
+        completed_tool_call_ids = frozenset(
             (
                 await self._session.execute(
-                    select(ApiIdempotencyRequest.agent_turn_id).where(
-                        ApiIdempotencyRequest.agent_turn_id.in_(ids)
+                    select(ToolExecution.tool_call_item_id).where(
+                        ToolExecution.tool_call_item_id.in_(
+                            select(AgentItem.id).where(AgentItem.agent_turn_id.in_(ids))
+                        ),
+                        ToolExecution.status == ToolExecutionStatus.COMPLETED,
                     )
                 )
             ).scalars()
         )
         return [
-            TurnBundle(turn, items[turn.id], notices[turn.id], turn.id in approval_ids)
+            TurnBundle(
+                turn,
+                items[turn.id],
+                notices[turn.id],
+                approvals.get(turn.id),
+                completed_tool_call_ids,
+            )
             for turn in turns
         ]
+
+
+class ToolExecutionRepository:
+    """Tool実行の短いTransaction用DBアクセス。"""
+
+    def __init__(self, session: AsyncSession) -> None:
+        """DB sessionを受け取る。"""
+        self._session = session
+
+    @staticmethod
+    def _require_matching_call(
+        tool_call: AgentItem,
+        *,
+        name: str,
+        arguments: dict[str, Any],
+        provenance: list[dict[str, Any]],
+    ) -> None:
+        expected: dict[str, Any] = {
+            "name": name,
+            "call_key": tool_call.idempotency_key.removeprefix("tool:"),
+            "arguments": arguments,
+        }
+        if provenance:
+            expected["provenance"] = provenance
+        if tool_call.content != expected:
+            raise ToolCallConflictError
+
+    async def runtime_record(
+        self, *, marketer_id: int, company_id: int, session_id: int, turn_id: int
+    ) -> ToolRuntimeRecord | None:
+        """Tenant、Session、Turn境界をDB正本で検証する。"""
+        row = (
+            await self._session.execute(
+                select(
+                    AgentSession.agent,
+                    AgentSession.parent_session_id,
+                    AgentTurn.started_at,
+                    AgentTurn.status,
+                )
+                .join(AgentTurn, AgentTurn.session_id == AgentSession.id)
+                .join(Marketer, Marketer.id == AgentSession.marketer_id)
+                .where(
+                    AgentSession.id == session_id,
+                    AgentSession.marketer_id == marketer_id,
+                    Marketer.company_id == company_id,
+                    AgentTurn.id == turn_id,
+                    AgentTurn.session_id == session_id,
+                    or_(
+                        and_(
+                            AgentSession.agent == AgentType.PARENT,
+                            AgentSession.parent_session_id.is_(None),
+                        ),
+                        and_(
+                            AgentSession.agent != AgentType.PARENT,
+                            AgentSession.parent_session_id.is_not(None),
+                        ),
+                    ),
+                )
+            )
+        ).one_or_none()
+        if row is None or row.started_at is None:
+            return None
+        return ToolRuntimeRecord(row.agent, row.parent_session_id, row.started_at, row.status)
+
+    async def prepare(
+        self,
+        *,
+        turn_id: int,
+        stable_key: str,
+        name: str,
+        arguments: dict[str, Any],
+        provenance: list[dict[str, Any]],
+        now: datetime,
+        origin_llm_call_id: int | None = None,
+    ) -> PreparedToolExecution | None:
+        """Running Turnだけにtool_callとpending executionをget-or-createする。"""
+        turn = (
+            await self._session.execute(
+                select(AgentTurn)
+                .where(AgentTurn.id == turn_id, AgentTurn.status == AgentTurnStatus.RUNNING)
+                .with_for_update()
+            )
+        ).scalar_one_or_none()
+        if turn is None:
+            return None
+        key = f"tool:{stable_key}"
+        tool_call = (
+            await self._session.execute(
+                select(AgentItem).where(
+                    AgentItem.agent_turn_id == turn_id,
+                    AgentItem.idempotency_key == key,
+                )
+            )
+        ).scalar_one_or_none()
+        if tool_call is None:
+            tool_call = AgentItem(
+                agent_turn_id=turn_id,
+                item_number=turn.next_item_number,
+                idempotency_key=key,
+                item_type=AgentItemType.TOOL_CALL,
+                context_class=AgentContextClass.CONVERSATION,
+                content_source=AgentContentSource.AGENT_OUTPUT,
+                context_status=AgentItemContextStatus.ACTIVE,
+                content={
+                    "name": name,
+                    "call_key": stable_key,
+                    "arguments": arguments,
+                    **({"provenance": provenance} if provenance else {}),
+                },
+                llm_call_id=origin_llm_call_id,
+                created_at=now,
+            )
+            turn.next_item_number += 1
+            self._session.add(tool_call)
+            await self._session.flush()
+        elif tool_call.item_type != AgentItemType.TOOL_CALL:
+            return None
+        else:
+            self._require_matching_call(
+                tool_call, name=name, arguments=arguments, provenance=provenance
+            )
+            if origin_llm_call_id is not None and tool_call.llm_call_id != origin_llm_call_id:
+                raise ToolCallConflictError
+        execution = (
+            await self._session.execute(
+                select(ToolExecution).where(ToolExecution.tool_call_item_id == tool_call.id)
+            )
+        ).scalar_one_or_none()
+        if execution is None:
+            execution = ToolExecution(
+                tool_call_item_id=tool_call.id,
+                status=ToolExecutionStatus.PENDING,
+                attempt_count=0,
+                created_at=now,
+            )
+            self._session.add(execution)
+            await self._session.flush()
+        result = (
+            await self._session.execute(
+                select(AgentItem).where(
+                    AgentItem.agent_turn_id == turn_id,
+                    AgentItem.related_tool_call_item_id == tool_call.id,
+                    AgentItem.item_type == AgentItemType.TOOL_RESULT,
+                )
+            )
+        ).scalar_one_or_none()
+        return PreparedToolExecution(tool_call, execution, result)
+
+    async def claim(self, execution_id: int, turn_id: int) -> bool:
+        """pending実行を1つの呼出元だけが実行できるようclaimする。"""
+        claimed = (
+            await self._session.execute(
+                update(ToolExecution)
+                .where(
+                    ToolExecution.id == execution_id,
+                    ToolExecution.status == ToolExecutionStatus.PENDING,
+                    ToolExecution.tool_call_item_id.in_(
+                        select(AgentItem.id).where(AgentItem.agent_turn_id == turn_id)
+                    ),
+                    exists().where(
+                        AgentTurn.id == turn_id,
+                        AgentTurn.status == AgentTurnStatus.RUNNING,
+                    ),
+                )
+                .values(status=ToolExecutionStatus.RUNNING)
+                .returning(ToolExecution.id)
+            )
+        ).scalar_one_or_none()
+        return claimed is not None
+
+    async def increment_attempt(self, execution_id: int, turn_id: int) -> bool:
+        """Running Turnのphysical attempt直前に試行回数を増やす。"""
+        updated = (
+            await self._session.execute(
+                update(ToolExecution)
+                .where(
+                    ToolExecution.id == execution_id,
+                    ToolExecution.status == ToolExecutionStatus.RUNNING,
+                    exists().where(
+                        AgentTurn.id == turn_id,
+                        AgentTurn.status == AgentTurnStatus.RUNNING,
+                    ),
+                )
+                .values(attempt_count=ToolExecution.attempt_count + 1)
+                .returning(ToolExecution.id)
+            )
+        ).scalar_one_or_none()
+        return updated is not None
+
+    async def terminal_result(self, turn_id: int, tool_call_item_id: int) -> AgentItem | None:
+        """保存済みterminal resultを返す。"""
+        return (
+            await self._session.execute(
+                select(AgentItem).where(
+                    AgentItem.agent_turn_id == turn_id,
+                    AgentItem.related_tool_call_item_id == tool_call_item_id,
+                    AgentItem.item_type == AgentItemType.TOOL_RESULT,
+                )
+            )
+        ).scalar_one_or_none()
+
+    async def terminal_result_by_key(
+        self,
+        turn_id: int,
+        stable_key: str,
+        *,
+        name: str,
+        arguments: dict[str, Any],
+        provenance: list[dict[str, Any]],
+    ) -> AgentItem | None:
+        """論理Call keyに対応する保存済みterminal resultを返す。"""
+        tool_call = (
+            await self._session.execute(
+                select(AgentItem).where(
+                    AgentItem.agent_turn_id == turn_id,
+                    AgentItem.idempotency_key == f"tool:{stable_key}",
+                    AgentItem.item_type == AgentItemType.TOOL_CALL,
+                )
+            )
+        ).scalar_one_or_none()
+        if tool_call is None:
+            return None
+        self._require_matching_call(
+            tool_call, name=name, arguments=arguments, provenance=provenance
+        )
+        return await self.terminal_result(turn_id, tool_call.id)
+
+    async def active_search_result(
+        self, *, turn_id: int, search_result_id: str
+    ) -> tuple[int, str] | None:
+        """同じ現在Turnのactive completed web_search ResultからURLを解決する。"""
+        result = (
+            await self._session.execute(
+                select(AgentItem)
+                .join(
+                    ToolExecution,
+                    ToolExecution.tool_call_item_id == AgentItem.related_tool_call_item_id,
+                )
+                .where(
+                    AgentItem.agent_turn_id == turn_id,
+                    AgentItem.item_type == AgentItemType.TOOL_RESULT,
+                    AgentItem.context_status == AgentItemContextStatus.ACTIVE,
+                    ToolExecution.status == ToolExecutionStatus.COMPLETED,
+                    AgentItem.related_tool_call_item_id.in_(
+                        select(AgentItem.id).where(
+                            AgentItem.agent_turn_id == turn_id,
+                            AgentItem.item_type == AgentItemType.TOOL_CALL,
+                            AgentItem.content["name"].as_string() == "web_search",
+                        )
+                    ),
+                )
+            )
+        ).scalars()
+        matched: tuple[int, str] | None = None
+        for item in result:
+            content = item.content
+            data = content.get("data") if content.get("success") is True else None
+            rows = data.get("results") if isinstance(data, dict) else None
+            if not isinstance(rows, list):
+                continue
+            for row in rows:
+                if not isinstance(row, dict) or row.get("search_result_id") != search_result_id:
+                    continue
+                url = row.get("url")
+                if not isinstance(url, str) or matched is not None:
+                    return None
+                matched = (item.id, url)
+        return matched
+
+    async def finish(
+        self,
+        *,
+        turn_id: int,
+        tool_call_item_id: int,
+        execution_id: int,
+        result: dict[str, Any],
+        status: ToolExecutionStatus,
+        source: AgentContentSource,
+        context_class: AgentContextClass,
+        now: datetime,
+        event_type: SecurityEventType | None = None,
+        detector: SecurityDetector | None = None,
+        quarantine: bool = False,
+        context_override: dict[str, Any] | None = None,
+        tool_name: str | None = None,
+    ) -> AgentItem | None:
+        """running条件でresult、block event、execution終端化を原子的に追加する。"""
+        turn = (
+            await self._session.execute(
+                select(AgentTurn)
+                .where(AgentTurn.id == turn_id, AgentTurn.status == AgentTurnStatus.RUNNING)
+                .with_for_update()
+            )
+        ).scalar_one_or_none()
+        if turn is None:
+            return None
+        existing = await self.terminal_result(turn_id, tool_call_item_id)
+        if existing is not None:
+            return existing
+        tool_call_type = (
+            await self._session.execute(
+                select(AgentItem.item_type).where(
+                    AgentItem.id == tool_call_item_id,
+                    AgentItem.agent_turn_id == turn_id,
+                )
+            )
+        ).scalar_one_or_none()
+        if tool_call_type != AgentItemType.TOOL_CALL:
+            return None
+        execution_status = (
+            await self._session.execute(
+                select(ToolExecution.status)
+                .where(
+                    ToolExecution.id == execution_id,
+                    ToolExecution.tool_call_item_id == tool_call_item_id,
+                    ToolExecution.status.in_(
+                        [ToolExecutionStatus.PENDING, ToolExecutionStatus.RUNNING]
+                    ),
+                )
+                .with_for_update()
+            )
+        ).scalar_one_or_none()
+        if execution_status is None:
+            return None
+        if quarantine != (context_override is not None):
+            return None
+        item = AgentItem(
+            agent_turn_id=turn_id,
+            related_tool_call_item_id=tool_call_item_id,
+            item_number=turn.next_item_number,
+            idempotency_key=f"tool-result:{tool_call_item_id}",
+            item_type=AgentItemType.TOOL_RESULT,
+            context_class=context_class,
+            content_source=source,
+            context_status=(
+                AgentItemContextStatus.QUARANTINED
+                if quarantine
+                else AgentItemContextStatus.ACTIVE
+            ),
+            quarantine_reason="prompt_injection" if quarantine else None,
+            context_override=context_override,
+            quarantined_at=now if quarantine else None,
+            content=result,
+            created_at=now,
+        )
+        turn.next_item_number += 1
+        self._session.add(item)
+        await self._session.flush()
+        if event_type is not None and detector is not None:
+            self._session.add(
+                SecurityEvent(
+                    agent_turn_id=turn_id,
+                    agent_item_id=item.id,
+                    event_type=event_type,
+                    detector=detector,
+                    source=AgentContentSource.SYSTEM,
+                    enforcement=SecurityEnforcement.BLOCKED,
+                    summary="Tool execution was blocked by a security control.",
+                    event_metadata=(
+                        {
+                            "classification": "prompt_injection",
+                            "tool_name": tool_name,
+                            "source_item_id": item.id,
+                        }
+                        if quarantine
+                        else {}
+                    ),
+                    detected_at=now,
+                )
+            )
+        execution_updated = (
+            await self._session.execute(
+                update(ToolExecution)
+                .where(
+                    ToolExecution.id == execution_id,
+                    ToolExecution.tool_call_item_id == tool_call_item_id,
+                    ToolExecution.status.in_(
+                        [ToolExecutionStatus.PENDING, ToolExecutionStatus.RUNNING]
+                    ),
+                )
+                .values(status=status, completed_at=now)
+                .returning(ToolExecution.id)
+            )
+        ).scalar_one_or_none()
+        if execution_updated is None:
+            return None
+        await self._session.flush()
+        return item
+
+
+class LlmCallRepository:
+    """LLM callをrunning Turn条件で短いTransactionへ保存する。"""
+
+    def __init__(self, session: AsyncSession) -> None:
+        """DB sessionを保持する。"""
+        self._session = session
+
+    async def create_if_running(
+        self,
+        turn_id: int,
+        *,
+        request_id: str | None,
+        input_tokens: int | None,
+        output_tokens: int | None,
+        cost_usd: Decimal | None,
+        response_time_ms: int | None,
+        succeeded: bool,
+        error_code: str | None,
+    ) -> LlmCall | None:
+        """終端化raceでは何も保存しない。Provider本文は引数にも取らない。"""
+        running = (
+            await self._session.execute(
+                select(AgentTurn.id)
+                .where(AgentTurn.id == turn_id, AgentTurn.status == AgentTurnStatus.RUNNING)
+                .with_for_update()
+            )
+        ).scalar_one_or_none()
+        if running is None:
+            return None
+        call = LlmCall(
+            agent_turn_id=turn_id,
+            orcarouter_request_id=request_id,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            cost_usd=cost_usd,
+            response_time_ms=response_time_ms,
+            succeeded=succeeded,
+            error_code=error_code,
+            error_message=None if succeeded else "The model request failed.",
+        )
+        self._session.add(call)
+        await self._session.flush()
+        return call

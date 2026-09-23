@@ -9,6 +9,18 @@ class EmbeddingError(UpstreamError):
     """Embeddingを生成できなかった。"""
 
 
+class Ga4ConfigurationError(UpstreamError):
+    """GA4のCredential、Property、権限が不足または無効。"""
+
+
+class Ga4ProviderError(UpstreamError):
+    """GA4 Data APIで再試行対象外のProvider Errorが発生した。"""
+
+
+class Ga4RetryableProviderError(Ga4ProviderError):
+    """GA4 Data APIで一時的または応答検証の失敗が発生した。"""
+
+
 class XApiConfigurationError(UpstreamError):
     """X APIのCredentialが不足または無効で、Requestを実行できない。"""
 

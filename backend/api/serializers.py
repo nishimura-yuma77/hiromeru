@@ -9,7 +9,9 @@ from services.views import (
     CampaignEditView,
     CampaignListView,
     HistoryView,
+    MemoryCampaignListView,
     MemoryListView,
+    MemoryPostListView,
     MetricsReportView,
     MetricsView,
     PostDetailView,
@@ -66,8 +68,8 @@ def serialize_session_list(view: SessionListView) -> dict[str, Any]:
     }
 
 
-def serialize_turn(view: TurnView) -> dict[str, Any]:
-    """5.1のTurnの形式。"""
+def serialize_turn_projection(view: TurnView) -> dict[str, Any]:
+    """5.1のTurnの形式。SSEの障害時にも同じProjectionを利用する。"""
     return {
         "agent_turn_id": view.agent_turn_id,
         "turn_number": view.turn_number,
@@ -79,6 +81,15 @@ def serialize_turn(view: TurnView) -> dict[str, Any]:
             "code": view.error.code,
             "message": view.error.message,
             "retryable": view.error.retryable,
+        },
+        "approval_state": None
+        if view.approval_state is None
+        else {
+            "operation": view.approval_state.operation,
+            "status": view.approval_state.status,
+            "external_effect_started": view.approval_state.external_effect_started,
+            "external_succeeded": view.approval_state.external_succeeded,
+            "recovery": view.approval_state.recovery,
         },
         "started_at": _iso(view.started_at),
         "completed_at": _iso(view.completed_at),
@@ -103,6 +114,11 @@ def serialize_turn(view: TurnView) -> dict[str, Any]:
     }
 
 
+def serialize_turn(view: TurnView) -> dict[str, Any]:
+    """5.1のTurnの形式。"""
+    return serialize_turn_projection(view)
+
+
 def serialize_history(view: HistoryView) -> dict[str, Any]:
     """Session履歴の形式。"""
     return {
@@ -122,6 +138,7 @@ def serialize_campaign_list(view: CampaignListView) -> dict[str, Any]:
                 "objective": item.objective,
                 "created_at": _iso(item.created_at),
                 "updated_at": _iso(item.updated_at),
+                "archived_at": _iso(item.archived_at),
                 "similarity": item.similarity,
                 "metrics_summary": serialize_summary(item.metrics_summary),
             }
@@ -144,6 +161,7 @@ def serialize_campaign_detail(view: CampaignDetailView) -> dict[str, Any]:
             "plan": campaign.plan,
             "created_at": _iso(campaign.created_at),
             "updated_at": _iso(campaign.updated_at),
+            "archived_at": _iso(campaign.archived_at),
         },
         "metrics_summary": serialize_summary(view.metrics_summary),
         "posts": [
@@ -174,6 +192,7 @@ def serialize_post_list(view: PostListView) -> dict[str, Any]:
                 "post_id": item.post_id,
                 "campaign_id": item.campaign_id,
                 "campaign_title": item.campaign_title,
+                "campaign_archived_at": _iso(item.campaign_archived_at),
                 "body": item.body,
                 "x_post_id": item.x_post_id,
                 "published_at": _iso(item.published_at),
@@ -196,7 +215,11 @@ def serialize_post_detail(view: PostDetailView) -> dict[str, Any]:
             "x_post_id": view.x_post_id,
             "published_at": _iso(view.published_at),
         },
-        "campaign": {"id": view.campaign_id, "title": view.campaign_title},
+        "campaign": {
+            "id": view.campaign_id,
+            "title": view.campaign_title,
+            "archived_at": _iso(view.campaign_archived_at),
+        },
         "tracking": {
             "landing_url": tracking.landing_url,
             "utm_source": tracking.utm_source,
@@ -216,9 +239,15 @@ def serialize_metrics_report(view: MetricsReportView) -> dict[str, Any]:
         "published_to": _iso(view.published_to),
         "summary": serialize_summary(view.summary),
         "campaigns": [
-            {"id": item.id, "title": item.title, **serialize_summary(item.summary)}
+            {
+                "id": item.id,
+                "title": item.title,
+                "archived_at": _iso(item.archived_at),
+                **serialize_summary(item.summary),
+            }
             for item in view.campaigns
         ],
+        "next_cursor": view.next_cursor,
     }
 
 
@@ -230,13 +259,40 @@ def serialize_memory_list(view: MemoryListView) -> dict[str, Any]:
                 "id": memory.id,
                 "content": memory.content,
                 "similarity": memory.similarity,
-                "campaigns": [{"id": cid, "title": title} for cid, title in memory.campaigns],
+                "campaigns": [
+                    {"id": cid, "title": title, "archived_at": _iso(archived_at)}
+                    for cid, title, archived_at in memory.campaigns
+                ],
+                "campaigns_next_cursor": memory.campaigns_next_cursor,
                 "posts": [
                     {"post_id": pid, "published_at": _iso(published_at)}
                     for pid, published_at in memory.posts
                 ],
+                "posts_next_cursor": memory.posts_next_cursor,
             }
             for memory in view.memories
+        ],
+        "next_cursor": view.next_cursor,
+    }
+
+
+def serialize_memory_campaigns(view: MemoryCampaignListView) -> dict[str, Any]:
+    """記憶に関連する施策一覧の形式。"""
+    return {
+        "campaigns": [
+            {"id": cid, "title": title, "archived_at": _iso(archived_at)}
+            for cid, title, archived_at in view.campaigns
+        ],
+        "next_cursor": view.next_cursor,
+    }
+
+
+def serialize_memory_posts(view: MemoryPostListView) -> dict[str, Any]:
+    """記憶に関連する公開済み投稿一覧の形式。"""
+    return {
+        "posts": [
+            {"post_id": post_id, "published_at": _iso(published_at)}
+            for post_id, published_at in view.posts
         ],
         "next_cursor": view.next_cursor,
     }

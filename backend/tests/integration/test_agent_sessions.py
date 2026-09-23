@@ -1,11 +1,17 @@
 import asyncio
 import json
+from collections.abc import AsyncGenerator
+from typing import cast
 from urllib.parse import quote
 
+import pytest
 from httpx import AsyncClient, Response
 
+import api.sse
 from core.masking import mask_text
-from services.context import ServiceContext
+from services.context import AuthContext, ServiceContext
+from services.turn_service import TurnService
+from services.turn_view import TurnViewLoader
 from tests.conftest import AccountFactory
 from tests.support.client import Account
 from tests.support.fakes import FakeAgentRunner, FixedClock
@@ -65,7 +71,7 @@ async def test_Session一覧のページング_limitとcursorで続きを取得�
     assert page2["next_cursor"] is None
 
 
-async def test_メッセージ送信_JSON_201でTurnとAgentの回答を返す(
+async def test_メッセージ送信_JSON_LLM生成元なしのassistantを表示しない(
     account: Account, agent: FakeAgentRunner
 ) -> None:
     session_id = await account.create_session()
@@ -78,10 +84,16 @@ async def test_メッセージ送信_JSON_201でTurnとAgentの回答を返す(
     assert data["status"] == "completed"
     assert data["kind"] == "chat"
     assert data["turn_number"] == 1
-    assert [item["type"] for item in data["items"]] == ["user_message", "assistant_message"]
+    assert [item["type"] for item in data["items"]] == ["user_message"]
     assert data["items"][0]["content"] == {"text": "春のキャンペーンを考えて"}
-    assert data["items"][1]["content"] == {"text": "提案です"}
+    assert data["approval_state"] is None
     assert agent.inputs[0].company_id == account.company_id
+    turn = await account.client.get(
+        f"/api/v1/agent-sessions/{session_id}/turns/{data['agent_turn_id']}"
+    )
+    history = await account.client.get(f"/api/v1/agent-sessions/{session_id}")
+    assert turn.json()["data"] == data
+    assert history.json()["data"]["turns"] == [data]
 
 
 async def test_タイトル_最初のメッセージの先頭50文字がマスクされて設定される(
@@ -298,6 +310,13 @@ async def test_SSE_Accept指定のときturn_startedからturn_finishedまで進
     assert events[1][1]["name"] == "search_campaigns"
     finished = events[-1][1]
     assert finished["status"] == "completed"
+    turn_id = finished["agent_turn_id"]
+    turn = await account.client.get(f"/api/v1/agent-sessions/{session_id}/turns/{turn_id}")
+    history = await account.client.get(f"/api/v1/agent-sessions/{session_id}")
+    projected = next(
+        item for item in history.json()["data"]["turns"] if item["agent_turn_id"] == turn_id
+    )
+    assert finished == turn.json()["data"] == projected
 
 
 async def test_SSE_Agent失敗のときturn_finishedのstatusがfailed(
@@ -315,6 +334,101 @@ async def test_SSE_Agent失敗のときturn_finishedのstatusがfailed(
     events = _events(response.text)
     assert events[-1][0] == "turn_finished"
     assert events[-1][1]["status"] == "failed"
+
+
+@pytest.mark.parametrize(
+    "accept",
+    ["text/event-stream;q=0", "application/json, text/event-stream;q=0.5", "*/*"],
+)
+async def test_AcceptでSSEが優先されないときJSONを返す(
+    account: Account, accept: str
+) -> None:
+    session_id = await account.create_session()
+
+    response = await _send(account, session_id, "JSONで返す", Accept=accept)
+
+    assert response.status_code == 201
+    assert response.headers["content-type"].startswith("application/json")
+
+
+async def test_SSE_View読込が一度失敗してもTurnを終端化する(
+    account: Account, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    session_id = await account.create_session()
+    original = TurnViewLoader.load
+    calls = 0
+
+    async def fail_once(self: TurnViewLoader, session_id: int, turn_id: int):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise RuntimeError("view failure")
+        return await original(self, session_id, turn_id)
+
+    monkeypatch.setattr(TurnViewLoader, "load", fail_once)
+    response = await _send(account, session_id, "表示失敗", Accept="text/event-stream")
+
+    events = _events(response.text)
+    assert [name for name, _ in events].count("turn_started") == 1
+    assert [name for name, _ in events].count("turn_finished") == 1
+    assert events[-1][1]["status"] == "completed"
+
+
+async def test_SSE_Serializerが失敗してもGETと同じturn_finishedを返す(
+    account: Account, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    session_id = await account.create_session()
+
+    def fail_serializer(_view: object) -> dict[str, object]:
+        raise RuntimeError("serializer failure")
+
+    monkeypatch.setattr(api.sse, "serialize_turn", fail_serializer)
+    response = await _send(account, session_id, "変換失敗", Accept="text/event-stream")
+
+    events = _events(response.text)
+    finished = events[-1][1]
+    turn = await account.client.get(
+        f"/api/v1/agent-sessions/{session_id}/turns/{finished['agent_turn_id']}"
+    )
+    assert [name for name, _ in events].count("turn_finished") == 1
+    assert finished == turn.json()["data"]
+
+
+async def test_SSE_切断後もTurnを継続し待機中はkeep_aliveを返す(
+    account: Account,
+    ctx: ServiceContext,
+    agent: FakeAgentRunner,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    session_id = await account.create_session()
+    gate = asyncio.Event()
+    agent.gate = gate
+
+    async def body() -> bytes:
+        return json.dumps({"message": "切断後も続ける"}).encode()
+
+    service = TurnService(ctx)
+    prepared = await service.begin(
+        AuthContext(account.marketer_id, account.company_id, 1, account.email),
+        session_id,
+        body,
+    )
+    monkeypatch.setattr(api.sse, "SSE_KEEP_ALIVE_SECONDS", 0.01)
+    stream = cast(AsyncGenerator[bytes], api.sse.stream_turn(service, prepared))
+
+    assert b"event: turn_started" in await anext(stream)
+    assert await anext(stream) == b": keep-alive\n\n"
+    await stream.aclose()
+    gate.set()
+
+    async with asyncio.timeout(2):
+        while True:
+            response = await account.client.get(
+                f"/api/v1/agent-sessions/{session_id}/turns/{prepared.turn_id}"
+            )
+            if response.json()["data"]["status"] == "completed":
+                break
+            await asyncio.sleep(0.01)
 
 
 async def test_SSE_Turnを開始できないときはSSEではなくJSONのエラーを返す(

@@ -38,12 +38,14 @@ class CampaignRepository:
             stmt = stmt.with_for_update()
         return (await self._session.execute(stmt)).scalar_one_or_none()
 
-    async def titles(self, company_id: int, campaign_ids: list[int]) -> dict[int, str]:
-        """施策IDとタイトルの対応を返す。"""
-        stmt = select(Campaign.id, Campaign.title).where(
+    async def references(
+        self, company_id: int, campaign_ids: list[int]
+    ) -> dict[int, tuple[str, datetime | None]]:
+        """施策IDに対応するタイトルとArchive日時を返す。"""
+        stmt = select(Campaign.id, Campaign.title, Campaign.archived_at).where(
             Campaign.company_id == company_id, Campaign.id.in_(campaign_ids)
         )
-        return {row[0]: row[1] for row in await self._session.execute(stmt)}
+        return {row[0]: (row[1], row[2]) for row in await self._session.execute(stmt)}
 
     async def get_embedding_hash(self, campaign_id: int) -> str | None:
         """保存済みの検索用テキストのハッシュを返す。"""
@@ -158,13 +160,16 @@ class CampaignRepository:
         *,
         created_from: datetime | None,
         created_to: datetime | None,
+        archived: bool | None,
         limit: int,
         after: tuple[datetime, int] | None,
     ) -> list[Campaign]:
         """`created_at` の降順（同じ場合は id の降順）で施策を返す。"""
-        stmt = select(Campaign).where(
-            Campaign.company_id == company_id, Campaign.archived_at.is_(None)
-        )
+        stmt = select(Campaign).where(Campaign.company_id == company_id)
+        if archived is not None:
+            stmt = stmt.where(
+                Campaign.archived_at.is_not(None) if archived else Campaign.archived_at.is_(None)
+            )
         if created_from is not None:
             stmt = stmt.where(Campaign.created_at >= created_from)
         if created_to is not None:
@@ -187,6 +192,7 @@ class CampaignRepository:
         *,
         created_from: datetime | None,
         created_to: datetime | None,
+        archived: bool | None,
         limit: int,
     ) -> list[tuple[Campaign, float]]:
         """コサイン類似度の高い順に施策を返す。"""
@@ -194,8 +200,12 @@ class CampaignRepository:
         stmt = (
             select(Campaign, (1 - distance).label("similarity"))
             .join(CampaignEmbedding, CampaignEmbedding.campaign_id == Campaign.id)
-            .where(Campaign.company_id == company_id, Campaign.archived_at.is_(None))
+            .where(Campaign.company_id == company_id)
         )
+        if archived is not None:
+            stmt = stmt.where(
+                Campaign.archived_at.is_not(None) if archived else Campaign.archived_at.is_(None)
+            )
         if created_from is not None:
             stmt = stmt.where(Campaign.created_at >= created_from)
         if created_to is not None:

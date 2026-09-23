@@ -31,6 +31,46 @@ async def test_一覧_作成順の降順で返し他社の施策を含めない(
     assert campaigns[0]["metrics_summary"]["landing_rate"] is None
 
 
+@pytest.mark.parametrize("query", [None, "施策"])
+@pytest.mark.parametrize(
+    ("archived", "expected_titles"),
+    [
+        (None, {"有効な施策", "Archive済み施策"}),
+        (False, {"有効な施策"}),
+        (True, {"Archive済み施策"}),
+    ],
+)
+async def test_一覧_archivedの3状態が通常一覧と意味検索で同じように動く(
+    account: Account,
+    clock: FixedClock,
+    query: str | None,
+    archived: bool | None,
+    expected_titles: set[str],
+) -> None:
+    session_id = await account.create_session()
+    await account.create_campaign(session_id, title="有効な施策")
+    archived_id = await account.create_campaign(session_id, title="Archive済み施策")
+    archived_at = clock.now().isoformat().replace("+00:00", "Z")
+    await archive_campaign(archived_id, clock.now())
+    params: dict[str, str | bool] = {}
+    if query is not None:
+        params["query"] = query
+    if archived is not None:
+        params["archived"] = archived
+
+    response = await account.client.get("/api/v1/campaigns", params=params)
+
+    assert response.status_code == 200
+    campaigns = response.json()["data"]["campaigns"]
+    assert {campaign["title"] for campaign in campaigns} == expected_titles
+    assert {campaign["title"]: campaign["archived_at"] for campaign in campaigns} == {
+        title: archived_at if title == "Archive済み施策" else None for title in expected_titles
+    }
+    assert all(
+        (campaign["similarity"] is not None) == (query is not None) for campaign in campaigns
+    )
+
+
 async def test_一覧のページング_limitで区切りnext_cursorで続きを取得できる(
     account: Account,
 ) -> None:
@@ -116,18 +156,21 @@ async def test_未認証_Cookieがないとき401(anonymous: AsyncClient) -> Non
     assert response.status_code == 401
 
 
-async def test_詳細_投稿と記憶と集計を返す(account: Account) -> None:
+async def test_詳細_Archive後も投稿と記憶と集計を返す(account: Account, clock: FixedClock) -> None:
     session_id = await account.create_session()
     campaign_id = await account.create_campaign(session_id)
     published = (await account.publish_post(session_id, post_body(campaign_id))).json()["data"]
     await complete_metrics(published["post_id"], x_pv_count=200, landing_user_count=50)
     await insert_memory(account.company_id, "この施策は反応が良い", campaign_ids=(campaign_id,))
+    archived_at = clock.now()
+    await archive_campaign(campaign_id, archived_at)
 
     response = await account.client.get(f"/api/v1/campaigns/{campaign_id}")
 
     assert response.status_code == 200
     data = response.json()["data"]
     assert data["campaign"]["id"] == campaign_id
+    assert data["campaign"]["archived_at"] == archived_at.isoformat().replace("+00:00", "Z")
     assert data["posts"][0]["post_id"] == published["post_id"]
     assert data["posts"][0]["metrics"]["status"] == "completed"
     assert data["metrics_summary"]["landing_rate"] == 0.25

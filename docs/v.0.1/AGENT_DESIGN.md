@@ -829,6 +829,13 @@ flowchart TD
 - 要約対象の境界には`compacted_through_turn_id`を使用し、実行中または失敗したTurnは要約範囲へ含めない
 - 直近のTurnは要約せず、元のItemをそのままContextへ含める
 - 要約にLLMを使用する場合はOrcaRouterとGuardrailを経由し、現在の親TurnのLLM Callとして記録してステップ数とコストへ含める
+
+### SDKと自前ループの境界
+
+- OpenAI Agents SDKは`AsyncOpenAI`の既定ClientとChat Completions APIの設定にだけ使用し、tracingは無効化する
+- Chat requestはraw response APIで実行して`X-Orca-Request-Id`を取得する。履歴、Tool loop、親子共有budget、Context再構築、DB保存はアプリケーションが管理する
+- Providerのraw response、private reasoning、エラー本文は履歴、監査情報、logへ保存しない
+- `llm_calls`のcostは同一Request内のgeneration lookupでUSDの確定値を取得できた場合だけ成功として保存する
 - 要約に失敗しても未圧縮Contextがモデルの上限内なら処理を継続し、上限を超える場合はTurnを失敗で終了する
 - 過去のItemを隔離した場合、そのItemを要約範囲に含むCheckpointを無効化し、安全な`context_override`を使って作り直す
 - Checkpoint要約は業務データやLong-term Memoryの正本として使用せず、施策や投稿の状態は各業務テーブルから取得する

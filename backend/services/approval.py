@@ -195,6 +195,22 @@ class ApprovalExecutor:
         key = parse_idempotency_key(key_header)
         return await self._claim(auth, session_id, operation, key, body)
 
+    async def replay_after_lease_lost(self, ctx: ExecutionContext) -> ApprovalOutcome:
+        """実行権喪失後に確定済みならResponseを再生し、未確定なら処理中を返す。"""
+        async with self._ctx.session_factory() as session:
+            row = await IdempotencyRepository(session).get(ctx.request_id)
+            if (
+                row is not None
+                and row.status != ApiIdempotencyStatus.PROCESSING
+                and row.http_status is not None
+                and row.response_body is not None
+            ):
+                return ApprovalOutcome(row.http_status, row.response_body)
+        raise AppError(
+            "IDEMPOTENCY_REQUEST_IN_PROGRESS",
+            retry_after_seconds=IN_PROGRESS_RETRY_AFTER_SECONDS,
+        )
+
     async def _claim(
         self,
         auth: AuthContext,

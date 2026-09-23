@@ -9,7 +9,6 @@ from clients.errors import EmbeddingError
 from core.errors import AppError, LeaseLostError
 from core.logging import get_logger, safe_error_text
 from domain.campaign_rules import CampaignContent, campaign_field_errors
-from domain.constants import IN_PROGRESS_RETRY_AFTER_SECONDS
 from domain.enums import ApiIdempotencyStatus, ApiOperation
 from domain.requests import CampaignUpsertRequest
 from domain.search_text import build_campaign_search_text, content_hash
@@ -67,10 +66,7 @@ class CampaignApprovalService:
         try:
             return await self._run(prepared.execution, prepared.body)
         except LeaseLostError:
-            raise AppError(
-                "IDEMPOTENCY_REQUEST_IN_PROGRESS",
-                retry_after_seconds=IN_PROGRESS_RETRY_AFTER_SECONDS,
-            ) from None
+            return await self._executor.replay_after_lease_lost(prepared.execution)
 
     async def _run(self, ctx: ExecutionContext, body: dict[str, Any]) -> ApprovalOutcome:
         try:

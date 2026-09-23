@@ -30,12 +30,16 @@ def _real_settings(**overrides: object) -> Settings:
         "external_client_mode": "real",
         "orcarouter_base_url": "https://router.example.com/v1",
         "orcarouter_api_key": "router-secret",
+        "orcarouter_firewall_api_key": "firewall-secret",
+        "agent_model": "provider/model",
         "x_api_key": "x-key",
         "x_api_key_secret": "x-key-secret",
         "x_access_token": "x-token",
         "x_access_token_secret": "x-token-secret",
         "ga4_property_id": "123456",
         "ga4_service_account_json": '{"type":"service_account"}',
+        "web_search_base_url": "https://search.example.com",
+        "web_search_api_key": "search-secret",
     }
     values.update(overrides)
     return Settings.model_validate(values)
@@ -248,6 +252,18 @@ def test_設定_ProductionだけCron_Secretを必須にする() -> None:
         ({"lease_seconds": 300}, "LEASE_SECONDS"),
         ({"request_timeout_seconds": 0}, "REQUEST_TIMEOUT_SECONDS"),
         ({"request_timeout_seconds": 300.1}, "REQUEST_TIMEOUT_SECONDS"),
+        (
+            {"agent_context_compaction_threshold_bytes": 0},
+            "AGENT_CONTEXT_COMPACTION_THRESHOLD_BYTES",
+        ),
+        ({"agent_context_hard_limit_bytes": 0}, "AGENT_CONTEXT_HARD_LIMIT_BYTES"),
+        (
+            {
+                "agent_context_compaction_threshold_bytes": 100,
+                "agent_context_hard_limit_bytes": 100,
+            },
+            "AGENT_CONTEXT_COMPACTION_THRESHOLD_BYTES",
+        ),
     ],
 )
 def test_設定_Cron上限とLease境界を検証する(overrides: dict[str, object], message: str) -> None:
