@@ -1,0 +1,48 @@
+@use "../../../../shared/styles/breakpoints" as bp;
+
+.page { margin-inline: auto; max-width: var(--layout-max-width); padding: var(--space-7) var(--space-page) var(--space-9); }
+.header h1 { font-size: var(--font-size-heading-sm); letter-spacing: var(--letter-spacing-tight); line-height: var(--line-height-heading); margin-block: var(--space-2); }
+.header > p:last-child, .filters > p, .sectionHeading > p, .row > p { color: var(--color-text-secondary); }
+.eyebrow { color: var(--color-brand-primary); font-family: var(--font-family-mono); font-size: var(--font-size-xs); font-weight: var(--font-weight-semibold); letter-spacing: var(--letter-spacing-wide); margin-block-end: var(--space-2); text-transform: uppercase; }
+.filters { background: var(--color-surface); border: var(--border-width-thin) solid var(--color-border); border-radius: var(--radius-lg); margin-block: var(--space-7); padding: var(--space-5); }
+.filters h2 { margin-block-start: 0; }
+.filters form { align-items: end; display: flex; flex-wrap: wrap; gap: var(--space-4); }
+.filters label { display: grid; font-size: var(--font-size-sm); font-weight: var(--font-weight-semibold); gap: var(--space-2); }
+.filters input { background: var(--color-background-primary); border: var(--border-width-thin) solid var(--color-border-strong); border-radius: var(--radius-sm); color: var(--color-text-primary); min-height: 3rem; padding-inline: var(--space-3); }
+.filters button { background: var(--color-brand-primary); border: var(--border-width-thin) solid var(--color-brand-primary); border-radius: var(--radius-pill); color: var(--color-text-on-brand); cursor: pointer; font-weight: var(--font-weight-semibold); min-height: 3rem; padding-inline: var(--space-5); }
+.filters a, .campaignTitle a { color: var(--color-brand-primary); font-weight: var(--font-weight-semibold); }
+.filters a { padding-block: var(--space-3); }
+.summary { background: var(--color-brand-strong); border-radius: var(--radius-lg); color: var(--color-text-on-brand); padding: var(--space-6); }
+.sectionHeading { align-items: end; display: flex; gap: var(--space-4); justify-content: space-between; }
+.sectionHeading h2 { margin: 0; }
+.summary .eyebrow, .summary .sectionHeading > p { color: inherit; }
+.summary dl, .row dl { display: grid; gap: var(--space-4); grid-template-columns: repeat(4, 1fr); }
+.summary dt, .row dt { font-size: var(--font-size-sm); }
+.summary dd, .row dd { font-family: var(--font-family-mono); font-size: var(--font-size-xl); margin: var(--space-2) 0 0; overflow-wrap: anywhere; }
+.note { border-block-start: var(--border-width-thin) solid currentColor; padding-block-start: var(--space-4); }
+.campaigns { margin-block-start: var(--space-8); }
+.campaigns > .sectionHeading { border-block-end: var(--border-width-medium) solid var(--color-text-primary); padding-block-end: var(--space-4); }
+.list { display: grid; }
+.row { align-items: center; border-block-end: var(--border-width-thin) solid var(--color-border-strong); display: grid; gap: var(--space-5); grid-template-columns: auto minmax(12rem, 1fr) minmax(26rem, 2fr); padding-block: var(--space-6); }
+.rank { color: var(--color-brand-primary); font-family: var(--font-family-mono); font-size: var(--font-size-xl); }
+.campaignTitle h3 { margin-block: 0 var(--space-2); overflow-wrap: anywhere; }
+.campaignTitle { display: grid; gap: var(--space-2); justify-items: start; }
+.archivedBadge { background: var(--color-background-secondary); border: var(--border-width-thin) solid var(--color-border-strong); border-radius: var(--radius-pill); font-size: var(--font-size-xs); font-weight: var(--font-weight-semibold); padding: var(--space-1) var(--space-3); }
+.row dl { margin: 0; }
+.row > p { grid-column: 3; margin: 0; }
+.empty { background: var(--color-surface); border: var(--border-width-thin) solid var(--color-border); margin-block-start: var(--space-5); padding: var(--space-7); text-align: center; }
+.pagination { display: flex; gap: var(--space-4); justify-content: flex-end; padding-block-start: var(--space-6); }
+.pagination a { color: var(--color-brand-primary); font-weight: var(--font-weight-semibold); }
+.page :is(a, button, input):focus-visible { outline: var(--focus-ring-width) solid var(--color-focus-ring); outline-offset: var(--focus-ring-offset); }
+
+@media (max-width: bp.$tablet) {
+  .row { grid-template-columns: auto 1fr; }
+  .row dl, .row > p { grid-column: span 2; }
+}
+@media (max-width: bp.$mobile) {
+  .filters form, .sectionHeading { align-items: stretch; flex-direction: column; }
+  .filters label, .filters button { width: 100%; }
+  .summary dl, .row dl { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .row { gap: var(--space-4); }
+  .pagination { align-items: stretch; flex-direction: column; }
+}

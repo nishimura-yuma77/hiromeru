@@ -1,0 +1,300 @@
+@use "../../../../shared/styles/breakpoints" as bp;
+
+.page {
+  margin-inline: auto;
+  max-width: var(--layout-max-width);
+  padding: var(--space-6) var(--space-page) var(--space-9);
+}
+
+.backLink,
+.section a {
+  color: var(--color-brand-primary);
+  font-weight: var(--font-weight-semibold);
+}
+
+.header {
+  align-items: end;
+  display: flex;
+  gap: var(--space-6);
+  justify-content: space-between;
+  margin-block: var(--space-6);
+}
+
+.header h1 {
+  font-size: var(--font-size-heading-sm);
+  letter-spacing: var(--letter-spacing-tight);
+  line-height: var(--line-height-heading);
+  margin-block: var(--space-2);
+  overflow-wrap: anywhere;
+}
+
+.header p,
+.eyebrow {
+  color: var(--color-text-secondary);
+  margin: 0;
+}
+
+.archivedBadge {
+  background: var(--color-background-secondary);
+  border: var(--border-width-thin) solid var(--color-border-strong);
+  border-radius: var(--radius-pill);
+  display: inline-block;
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  margin-block-start: var(--space-2);
+  padding: var(--space-1) var(--space-3);
+}
+
+.readOnly {
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+}
+
+.eyebrow {
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-xs);
+  letter-spacing: var(--letter-spacing-wide);
+  text-transform: uppercase;
+}
+
+.headerActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+}
+
+.headerActions a {
+  border: var(--border-width-thin) solid var(--color-brand-primary);
+  border-radius: var(--radius-pill);
+  color: var(--color-brand-primary);
+  font-weight: var(--font-weight-semibold);
+  padding: var(--space-3) var(--space-4);
+  text-decoration: none;
+}
+
+.headerActions a:first-child {
+  background: var(--color-brand-primary);
+  color: var(--color-text-on-brand);
+}
+
+.summary {
+  background: var(--color-brand-strong);
+  border-radius: var(--radius-lg);
+  color: var(--color-text-on-brand);
+  padding: var(--space-6);
+}
+
+.summary h2 {
+  margin-block-start: 0;
+}
+
+.summary dl {
+  display: grid;
+  gap: var(--space-4);
+  grid-template-columns: repeat(4, 1fr);
+  margin: 0;
+}
+
+.summary dt {
+  font-size: var(--font-size-sm);
+}
+
+.summary dd {
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-xl);
+  margin: var(--space-2) 0 0;
+  overflow-wrap: anywhere;
+}
+
+.statusLine {
+  border-block-start: var(--border-width-thin) solid currentColor;
+  margin-block: var(--space-5) 0;
+  padding-block-start: var(--space-4);
+}
+
+.section {
+  margin-block-start: var(--space-8);
+}
+
+.sectionHeading {
+  align-items: center;
+  border-block-end: var(--border-width-medium) solid var(--color-text-primary);
+  display: flex;
+  gap: var(--space-4);
+  justify-content: space-between;
+  padding-block-end: var(--space-3);
+}
+
+.sectionHeading h2 {
+  margin: 0;
+}
+
+.sectionHeading button,
+.formActions button {
+  background: transparent;
+  border: var(--border-width-thin) solid var(--color-brand-primary);
+  border-radius: var(--radius-pill);
+  color: var(--color-brand-primary);
+  cursor: pointer;
+  font-weight: var(--font-weight-semibold);
+  padding: var(--space-2) var(--space-4);
+}
+
+.contentList {
+  background: var(--color-surface);
+  border: var(--border-width-thin) solid var(--color-border);
+  display: grid;
+  gap: var(--space-5);
+  margin: var(--space-5) 0 0;
+  padding: var(--space-6);
+}
+
+.contentList dt {
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+}
+
+.contentList dd {
+  line-height: var(--line-height-body);
+  margin: var(--space-2) 0 0;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.editForm {
+  background: var(--color-surface);
+  border: var(--border-width-thin) solid var(--color-border);
+  display: grid;
+  gap: var(--space-5);
+  margin-block-start: var(--space-5);
+  padding: var(--space-6);
+}
+
+.editForm label {
+  display: grid;
+  font-weight: var(--font-weight-semibold);
+  gap: var(--space-2);
+}
+
+.editForm input,
+.editForm textarea {
+  background: var(--color-background-primary);
+  border: var(--border-width-thin) solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+  color: var(--color-text-primary);
+  line-height: var(--line-height-body);
+  min-width: 0;
+  padding: var(--space-3);
+  resize: vertical;
+}
+
+.error {
+  border-inline-start: var(--space-1) solid var(--color-danger);
+  color: var(--color-danger);
+  margin: 0;
+  padding: var(--space-3);
+}
+
+.formActions {
+  display: flex;
+  gap: var(--space-3);
+  justify-content: flex-end;
+}
+
+.formActions button:last-child {
+  background: var(--color-brand-primary);
+  color: var(--color-text-on-brand);
+}
+
+.formActions button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.relatedList {
+  display: grid;
+  gap: var(--space-4);
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin-block-start: var(--space-5);
+}
+
+.relatedList article,
+.memoryList li {
+  background: var(--color-surface);
+  border: var(--border-width-thin) solid var(--color-border);
+  padding: var(--space-5);
+}
+
+.relatedList p {
+  color: var(--color-text-secondary);
+}
+
+.postBody {
+  color: var(--color-text-primary) !important;
+  display: -webkit-box;
+  line-height: var(--line-height-body);
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
+
+.memoryList {
+  display: grid;
+  gap: var(--space-3);
+  list-style: none;
+  margin-block: var(--space-5) 0;
+  padding: 0;
+}
+
+.memoryList li {
+  line-height: var(--line-height-body);
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.emptyText {
+  color: var(--color-text-secondary);
+  padding-block: var(--space-5);
+}
+
+.liveMessage {
+  color: var(--color-brand-primary);
+  min-height: 1lh;
+}
+
+.page :is(a, button, input, textarea):focus-visible {
+  outline: var(--focus-ring-width) solid var(--color-focus-ring);
+  outline-offset: var(--focus-ring-offset);
+}
+
+@media (max-width: bp.$tablet) {
+  .header {
+    align-items: stretch;
+    flex-direction: column;
+  }
+}
+
+@media (max-width: bp.$mobile) {
+  .summary dl,
+  .relatedList {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .headerActions,
+  .formActions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .headerActions a,
+  .formActions button {
+    text-align: center;
+  }
+
+  .contentList,
+  .editForm {
+    padding: var(--space-5);
+  }
+}
