@@ -10,7 +10,8 @@ from domain.x_text import URL_PATTERN
 _WHITESPACE = re.compile(r"\s+")
 
 
-def _normalize(text: str) -> str:
+def normalize_search_text(text: str) -> str:
+    """NFKCと空白の正規化を適用する。"""
     return _WHITESPACE.sub(" ", unicodedata.normalize("NFKC", text)).strip()
 
 
@@ -18,18 +19,18 @@ def build_campaign_search_text(content: CampaignContent) -> str:
     """施策の5項目から検索用テキストを作る。"""
     return "\n".join(
         (
-            f"施策タイトル: {_normalize(content.title)}",
-            f"ターゲット像: {_normalize(content.target_profile)}",
-            f"実施背景: {_normalize(content.background)}",
-            f"施策目的: {_normalize(content.objective)}",
-            f"施策内容: {_normalize(content.plan)}",
+            f"施策タイトル: {normalize_search_text(content.title)}",
+            f"ターゲット像: {normalize_search_text(content.target_profile)}",
+            f"実施背景: {normalize_search_text(content.background)}",
+            f"施策目的: {normalize_search_text(content.objective)}",
+            f"施策内容: {normalize_search_text(content.plan)}",
         )
     )
 
 
 def build_post_search_text(body: str) -> str:
     """投稿本文からURLを除去して正規化した検索用テキストを作る。"""
-    return _normalize(URL_PATTERN.sub(" ", body))
+    return normalize_search_text(URL_PATTERN.sub(" ", body))
 
 
 def content_hash(search_text: str) -> str:

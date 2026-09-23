@@ -3,12 +3,13 @@
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime
 from enum import StrEnum
 
 from sqlalchemy import or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from domain.cron import retry_delay
 from domain.enums import PostMetricStatus
 from models import Post, PostMetric, PostTrackingLink
 
@@ -39,11 +40,6 @@ class MetricTransition(StrEnum):
     DEFERRED = "deferred"
     FAILED = "failed"
     LEASE_LOST = "lease_lost"
-
-
-def metric_retry_delay(attempt_count: int) -> timedelta:
-    """Claim試行回数に対する1h開始・24h上限の指数Backoff。"""
-    return timedelta(hours=min(24, 2 ** (attempt_count - 1)))
 
 
 class MetricCronRepository:
@@ -187,7 +183,7 @@ class MetricCronRepository:
             metric.status = PostMetricStatus.FAILED
             metric.next_attempt_at = None
             return MetricTransition.FAILED
-        metric.next_attempt_at = now + metric_retry_delay(metric.attempt_count)
+        metric.next_attempt_at = now + retry_delay(metric.attempt_count)
         return MetricTransition.DEFERRED
 
     async def _held(

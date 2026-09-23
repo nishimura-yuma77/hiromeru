@@ -9,13 +9,10 @@ from clients.errors import (
     Ga4RetryableProviderError,
     XApiRetryableProviderError,
 )
+from domain.cron import retry_delay
 from domain.enums import PostMetricStatus
 from models import PostMetric
-from repositories.metric_cron import (
-    MetricCronRepository,
-    MetricTransition,
-    metric_retry_delay,
-)
+from repositories.metric_cron import MetricCronRepository, MetricTransition
 from services.context import ServiceContext
 from services.metric_collection import MetricCollectionService
 from tests.support.client import Account, post_body
@@ -184,7 +181,7 @@ async def test_再試行不能Errorは成功した部分値を保持して即時
 def test_Metrics再試行Backoffは1hから指数増加し24hを上限とする(
     attempt: int, hours: int
 ) -> None:
-    assert metric_retry_delay(attempt) == timedelta(hours=hours)
+    assert retry_delay(attempt) == timedelta(hours=hours)
 
 
 async def test_Metrics再試行は1h_2h後で最大試行に達するとfailed(
