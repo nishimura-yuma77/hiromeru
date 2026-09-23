@@ -87,9 +87,7 @@ class OrcaRouterAgentFirewall:
             if verdict is None and isinstance(body.get("data"), dict):
                 verdict = body["data"].get("verdict")
             return (
-                FirewallDecision.ALLOW
-                if verdict in {"allow", "audit"}
-                else FirewallDecision.BLOCK
+                FirewallDecision.ALLOW if verdict in {"allow", "audit"} else FirewallDecision.BLOCK
             )
         except Exception:  # noqa: BLE001 - Provider詳細を公開せずfail closed
             return FirewallDecision.BLOCK

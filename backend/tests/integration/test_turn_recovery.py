@@ -195,9 +195,7 @@ async def test_global復旧がLLM応答より先なら遅延応答を保存し�
     model = _BlockingModel()
     object.__setattr__(ctx, "agent_runner", RealAgentRunner(ctx, model))
     task = asyncio.create_task(
-        account.client.post(
-            f"/api/v1/agent-sessions/{parent_id}/turns", json={"message": "wait"}
-        )
+        account.client.post(f"/api/v1/agent-sessions/{parent_id}/turns", json={"message": "wait"})
     )
     await asyncio.wait_for(model.started.wait(), 5)
     clock.advance(331)
@@ -213,9 +211,7 @@ async def test_global復旧がLLM応答より先なら遅延応答を保存し�
     async with ctx.session_factory() as session:
         items = list(
             (
-                await session.execute(
-                    select(AgentItem).where(AgentItem.agent_turn_id == turn_id)
-                )
+                await session.execute(select(AgentItem).where(AgentItem.agent_turn_id == turn_id))
             ).scalars()
         )
         calls = list(
@@ -245,9 +241,7 @@ async def test_global復旧後の遅延guardrailは監査eventを追加しない
     model = _BlockingGuardrailModel()
     object.__setattr__(ctx, "agent_runner", RealAgentRunner(ctx, model))
     task = asyncio.create_task(
-        account.client.post(
-            f"/api/v1/agent-sessions/{parent_id}/turns", json={"message": "wait"}
-        )
+        account.client.post(f"/api/v1/agent-sessions/{parent_id}/turns", json={"message": "wait"})
     )
     await asyncio.wait_for(model.started.wait(), 5)
     clock.advance(331)
@@ -274,9 +268,7 @@ async def test_chat実行中でもapproval_turnは独立して完了できる(
     parent_id = await account.create_session()
     agent.gate = asyncio.Event()
     chat = asyncio.create_task(
-        account.client.post(
-            f"/api/v1/agent-sessions/{parent_id}/turns", json={"message": "wait"}
-        )
+        account.client.post(f"/api/v1/agent-sessions/{parent_id}/turns", json={"message": "wait"})
     )
     await asyncio.wait_for(agent.started.wait(), 5)
 

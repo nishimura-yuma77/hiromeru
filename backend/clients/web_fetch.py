@@ -122,9 +122,7 @@ class HttpxPinnedTransport:
                 if key.lower() in {"accept", "user-agent"}
             }
             request_headers.update({"Accept-Encoding": "identity", "Host": host_header})
-            request = client.build_request(
-                "GET", pinned_url, headers=request_headers
-            )
+            request = client.build_request("GET", pinned_url, headers=request_headers)
             request.extensions["sni_hostname"] = target.host
             response = await client.send(request, stream=True)
         except Exception:

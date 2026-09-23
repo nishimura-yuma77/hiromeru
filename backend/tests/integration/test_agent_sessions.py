@@ -340,9 +340,7 @@ async def test_SSE_Agent失敗のときturn_finishedのstatusがfailed(
     "accept",
     ["text/event-stream;q=0", "application/json, text/event-stream;q=0.5", "*/*"],
 )
-async def test_AcceptでSSEが優先されないときJSONを返す(
-    account: Account, accept: str
-) -> None:
+async def test_AcceptでSSEが優先されないときJSONを返す(account: Account, accept: str) -> None:
     session_id = await account.create_session()
 
     response = await _send(account, session_id, "JSONで返す", Accept=accept)

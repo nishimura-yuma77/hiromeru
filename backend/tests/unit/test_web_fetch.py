@@ -155,9 +155,7 @@ async def test_httpx_transportはipへ接続しhostとsniを元hostにする() -
 
 
 async def test_safe_redirect_chainは各hostを再検証する() -> None:
-    resolver = Resolver(
-        {"one.example": ("93.184.216.34",), "two.example": ("1.1.1.1",)}
-    )
+    resolver = Resolver({"one.example": ("93.184.216.34",), "two.example": ("1.1.1.1",)})
     transport = Transport(
         [
             _response(302, headers={"location": "https://two.example/final"}),
@@ -254,9 +252,7 @@ async def test_compressed_responseを展開前に拒否する() -> None:
 async def test_non_success_responseをcloseする() -> None:
     resolver = Resolver({"example.com": ("93.184.216.34",)})
     closed = CloseRecorder()
-    response = PinnedResponse(
-        503, {"content-type": "text/plain"}, _chunks(b"error"), closed
-    )
+    response = PinnedResponse(503, {"content-type": "text/plain"}, _chunks(b"error"), closed)
     fetcher = SafeWebFetcher(
         resolver=resolver,
         transport=Transport([response]),
@@ -301,11 +297,7 @@ async def test_html_active_contentを除去しvisible_textをmaskする() -> Non
     fetcher = SafeWebFetcher(
         resolver=resolver,
         transport=Transport(
-            [
-                _response(
-                    headers={"content-type": "text/html; charset=utf-8"}, chunks=(html,)
-                )
-            ]
+            [_response(headers={"content-type": "text/html; charset=utf-8"}, chunks=(html,))]
         ),
         max_bytes=1000,
         max_redirects=0,

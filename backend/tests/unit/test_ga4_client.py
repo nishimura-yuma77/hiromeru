@@ -119,9 +119,7 @@ async def test_GA4はactiveUsersと保存済みUTMの4条件AND完全一致を�
         ({"rowCount": 1, "rows": [{"metricValues": [{"value": "123"}]}]}, 123),
     ],
 )
-async def test_GA4の0行と非負整数を実測値として返す(
-    body: dict[str, object], expected: int
-) -> None:
+async def test_GA4の0行と非負整数を実測値として返す(body: dict[str, object], expected: int) -> None:
     client = _client(httpx.MockTransport(lambda _request: httpx.Response(200, json=body)))
 
     assert await client.get_active_users(_query()) == expected

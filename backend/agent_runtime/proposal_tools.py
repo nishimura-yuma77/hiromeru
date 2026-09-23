@@ -403,9 +403,7 @@ class RunContentCreatorHandler(_RunChildHandler):
         record = await self._create_child(
             context, tool_input.request_item_id, tool_input.campaign_id
         )
-        output = await self._run_child(
-            context, record, expected_campaign_id=tool_input.campaign_id
-        )
+        output = await self._run_child(context, record, expected_campaign_id=tool_input.campaign_id)
         if not isinstance(output, ContentCreatorOutput):
             _raise("INVALID_SUBAGENT_OUTPUT")
         return RunContentCreatorOutput(
@@ -515,9 +513,7 @@ class ProposeXPostHandler(_ProposalHandler):
 
 
 class _NullReporter:
-    def activity_started(
-        self, kind: str, name: str, parent_activity_id: str | None = None
-    ) -> str:
+    def activity_started(self, kind: str, name: str, parent_activity_id: str | None = None) -> str:
         del kind, name, parent_activity_id
         return ""
 

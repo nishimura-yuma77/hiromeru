@@ -18,7 +18,5 @@ from api.content_negotiation import accepts_event_stream
         ("text/event-stream;q=invalid", False),
     ],
 )
-def test_Acceptのmedia_typeと品質値でSSEを選択する(
-    accept: str | None, expected: bool
-) -> None:
+def test_Acceptのmedia_typeと品質値でSSEを選択する(accept: str | None, expected: bool) -> None:
     assert accepts_event_stream(accept) is expected

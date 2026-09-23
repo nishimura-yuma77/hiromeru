@@ -186,9 +186,7 @@ class MetricCronRepository:
         metric.next_attempt_at = now + retry_delay(metric.attempt_count)
         return MetricTransition.DEFERRED
 
-    async def _held(
-        self, post_id: int, token: uuid.UUID, now: datetime
-    ) -> PostMetric | None:
+    async def _held(self, post_id: int, token: uuid.UUID, now: datetime) -> PostMetric | None:
         stmt = (
             select(PostMetric)
             .where(

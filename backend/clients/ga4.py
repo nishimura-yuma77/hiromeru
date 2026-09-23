@@ -126,10 +126,14 @@ class HttpGa4Client:
             raise Ga4RetryableProviderError("GA4からMetricsを取得できませんでした") from None
         if response.status_code in (httpx.codes.UNAUTHORIZED, httpx.codes.FORBIDDEN):
             raise Ga4ConfigurationError("GA4のCredentialまたは権限が拒否されました")
-        if response.status_code in (
-            httpx.codes.REQUEST_TIMEOUT,
-            httpx.codes.TOO_MANY_REQUESTS,
-        ) or response.status_code >= 500:
+        if (
+            response.status_code
+            in (
+                httpx.codes.REQUEST_TIMEOUT,
+                httpx.codes.TOO_MANY_REQUESTS,
+            )
+            or response.status_code >= 500
+        ):
             raise Ga4RetryableProviderError("GA4からMetricsを取得できませんでした")
         if response.status_code != httpx.codes.OK:
             raise Ga4ProviderError("GA4からMetricsを取得できませんでした")

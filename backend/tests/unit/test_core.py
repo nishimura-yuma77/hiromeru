@@ -71,6 +71,12 @@ def test_マスク_通常の文章と年月日と価格は変えない() -> None
     assert mask_text(text) == text
 
 
+def test_マスク_16進識別子内の連続数字は変えない() -> None:
+    identifier = "a123456789012345b12345678901234c"
+
+    assert mask_text(identifier) == identifier
+
+
 def test_マスク_JSONを再帰的に処理し文字列以外は変えない() -> None:
     value = {"a": ["taro@example.com", 1, None], "b": {"c\x00key": "ok\x00value"}}
 

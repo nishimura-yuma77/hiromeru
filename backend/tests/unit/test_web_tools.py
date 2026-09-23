@@ -72,12 +72,20 @@ async def test_search_inputとprovider_outputをmaskする() -> None:
     assert "secret-value" not in output.results[0].url
 
 
-@pytest.mark.parametrize("result", [({"title": "x"},), (object(),), ((), (),)])
+@pytest.mark.parametrize(
+    "result",
+    [
+        ({"title": "x"},),
+        (object(),),
+        (
+            (),
+            (),
+        ),
+    ],
+)
 async def test_provider_malformedを固定errorへ変換する(result: Any) -> None:
     with pytest.raises(ToolDomainError) as raised:
-        await _handler(Provider(result)).execute(
-            _context(), WebSearchInput(query="query", limit=1)
-        )
+        await _handler(Provider(result)).execute(_context(), WebSearchInput(query="query", limit=1))
     assert raised.value.code == "WEB_SEARCH_FAILED"
     assert raised.value.retryable is True
 
@@ -94,8 +102,6 @@ async def test_provider_failureを固定retryable_errorへ変換する() -> None
 def test_web_fetchはopaque_idだけを受け取りdirect_urlを拒否する() -> None:
     WebFetchInput.model_validate({"search_result_id": "0" * 32})
     with pytest.raises(ValidationError):
-        WebFetchInput.model_validate(
-            {"search_result_id": "0" * 32, "url": "https://example.com"}
-        )
+        WebFetchInput.model_validate({"search_result_id": "0" * 32, "url": "https://example.com"})
     with pytest.raises(ValidationError):
         WebFetchInput.model_validate({"search_result_id": "not-an-id"})

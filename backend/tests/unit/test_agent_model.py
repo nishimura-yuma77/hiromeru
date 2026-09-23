@@ -104,9 +104,7 @@ async def test_OrcaRouter_Clientはheader_request_idとDecimal_costを返す(mon
             captured.update(kwargs)
             response = _response(content="answer")
             response.usage = SimpleNamespace(prompt_tokens=12, completion_tokens=3)
-            return SimpleNamespace(
-                headers={"X-Orca-Request-Id": "req-1"}, parse=lambda: response
-            )
+            return SimpleNamespace(headers={"X-Orca-Request-Id": "req-1"}, parse=lambda: response)
 
     client = cast(Any, object.__new__(OrcaRouterModelClient))
     client._client = SimpleNamespace(
@@ -189,9 +187,7 @@ async def test_OrcaRouter_Clientはfirewall_errorをguardrailと分離しrequest
             super().__init__()
             self.status_code = 400
             self.body = {"code": "firewall_blocked"}
-            self.response = SimpleNamespace(
-                headers={"X-Orca-Request-Id": "blocked-request"}
-            )
+            self.response = SimpleNamespace(headers={"X-Orca-Request-Id": "blocked-request"})
 
     async def create(**kwargs):
         del kwargs

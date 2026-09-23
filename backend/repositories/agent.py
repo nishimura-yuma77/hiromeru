@@ -1076,9 +1076,7 @@ class ToolExecutionRepository:
             context_class=context_class,
             content_source=source,
             context_status=(
-                AgentItemContextStatus.QUARANTINED
-                if quarantine
-                else AgentItemContextStatus.ACTIVE
+                AgentItemContextStatus.QUARANTINED if quarantine else AgentItemContextStatus.ACTIVE
             ),
             quarantine_reason="prompt_injection" if quarantine else None,
             context_override=context_override,

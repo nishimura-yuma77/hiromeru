@@ -18,9 +18,7 @@ def test_Claim_Budgetは240秒未満だけ新しいClaimを許可する() -> Non
 def test_VercelはProductionで日次Cronを実行しmaxDurationを維持する() -> None:
     config = json.loads(Path("../vercel.json").read_text())
 
-    assert config["crons"] == [
-        {"path": "/api/cron/post-metrics", "schedule": "0 0 * * *"}
-    ]
+    assert config["crons"] == [{"path": "/api/cron/post-metrics", "schedule": "0 0 * * *"}]
     assert config["services"]["backend"]["functions"]["main.py"]["maxDuration"] == 300
     assert config["rewrites"][0] == {
         "source": "/api/(.*)",

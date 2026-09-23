@@ -101,9 +101,7 @@ class EvaluationMemoryService:
         except Exception:  # noqa: BLE001 - rollback後の別Transactionで固定Codeだけを保存する
             return await self._record_failure(claim, "MEMORY_SAVE_FAILED")
 
-    async def _record_failure(
-        self, claim: EvaluationMemoryClaim, code: str
-    ) -> MemoryTransition:
+    async def _record_failure(self, claim: EvaluationMemoryClaim, code: str) -> MemoryTransition:
         _log.warning(
             "evaluation_memory_failed",
             post_id=claim.post_id,

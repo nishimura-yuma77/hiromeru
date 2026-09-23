@@ -178,9 +178,7 @@ async def test_再試行不能Errorは成功した部分値を保持して即時
 @pytest.mark.parametrize(
     ("attempt", "hours"), [(1, 1), (2, 2), (3, 4), (4, 8), (5, 16), (6, 24), (7, 24)]
 )
-def test_Metrics再試行Backoffは1hから指数増加し24hを上限とする(
-    attempt: int, hours: int
-) -> None:
+def test_Metrics再試行Backoffは1hから指数増加し24hを上限とする(attempt: int, hours: int) -> None:
     assert retry_delay(attempt) == timedelta(hours=hours)
 
 

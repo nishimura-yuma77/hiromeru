@@ -65,9 +65,7 @@ class MetricCollectionService:
         counts = {"claimed": 0, "completed": 0, "failed": 0, "deferred": 0}
         await self._terminalize_interrupted()
         while counts["claimed"] < limit and should_continue_claiming():
-            batch_limit = min(
-                self._ctx.settings.cron_metric_batch_size, limit - counts["claimed"]
-            )
+            batch_limit = min(self._ctx.settings.cron_metric_batch_size, limit - counts["claimed"])
             claims = await self._claim(batch_limit)
             if not claims:
                 break

@@ -30,9 +30,7 @@ async def _request(account: Account, key: str) -> ApiIdempotencyRequest:
 
 async def _turn(account: Account, session_id: int, turn_id: int | None) -> dict[str, Any]:
     assert turn_id is not None
-    response = await account.client.get(
-        f"/api/v1/agent-sessions/{session_id}/turns/{turn_id}"
-    )
+    response = await account.client.get(f"/api/v1/agent-sessions/{session_id}/turns/{turn_id}")
     assert response.status_code == 200
     return response.json()["data"]
 
@@ -43,9 +41,9 @@ async def test_campaign承認とchatのapproval_stateを公開する(account: Ac
     chat = await account.client.post(
         f"/api/v1/agent-sessions/{session_id}/turns", json={"message": "確認"}
     )
-    history = (await account.client.get(f"/api/v1/agent-sessions/{session_id}")).json()[
-        "data"
-    ]["turns"]
+    history = (await account.client.get(f"/api/v1/agent-sessions/{session_id}")).json()["data"][
+        "turns"
+    ]
     approval = next(turn for turn in history if turn["kind"] == "approval")
 
     assert approval["approval_state"] == {
