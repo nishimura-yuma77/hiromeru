@@ -260,9 +260,7 @@ async def test_生成済み記憶を削除してもMarkerを残し再生成し�
     assert (await EvaluationMemoryService(ctx).run(max_items=1)).created == 1
     async with ctx.session_factory() as session:
         memory_id = int(
-            await session.scalar(
-                select(MemoryPost.memory_id).where(MemoryPost.post_id == post_id)
-            )
+            await session.scalar(select(MemoryPost.memory_id).where(MemoryPost.post_id == post_id))
             or 0
         )
 

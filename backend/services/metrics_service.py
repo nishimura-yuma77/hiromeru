@@ -123,9 +123,7 @@ class MetricsService:
                 filter_hash,
                 limit,
             )
-        return await self._first_page(
-            auth, published_from, published_to, filter_hash, limit
-        )
+        return await self._first_page(auth, published_from, published_to, filter_hash, limit)
 
     async def _first_page(
         self,
@@ -171,9 +169,7 @@ class MetricsService:
             )
         shown = projections[:limit]
         next_cursor = (
-            self._next_cursor(snapshot_id, limit, filter_hash)
-            if len(projections) > limit
-            else None
+            self._next_cursor(snapshot_id, limit, filter_hash) if len(projections) > limit else None
         )
         return MetricsReportView(
             published_from,

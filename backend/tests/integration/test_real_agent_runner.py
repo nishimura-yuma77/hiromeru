@@ -278,9 +278,7 @@ async def test_実Runnerはstep上限到達後にtoolを実行しない(
     async with ctx.session_factory() as session:
         items = list(
             (
-                await session.execute(
-                    select(AgentItem).where(AgentItem.agent_turn_id == turn_id)
-                )
+                await session.execute(select(AgentItem).where(AgentItem.agent_turn_id == turn_id))
             ).scalars()
         )
     assert [item.item_type for item in items] == [AgentItemType.USER_MESSAGE]

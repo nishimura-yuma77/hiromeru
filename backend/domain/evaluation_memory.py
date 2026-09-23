@@ -10,11 +10,7 @@ def build_evaluation_memory_content(
     landing_user_count: int,
 ) -> str:
     """外部LLMを使わず、固定5行Templateを生成する。"""
-    rate = (
-        "算出不可（初週PVが0）"
-        if x_pv_count == 0
-        else f"{landing_user_count}/{x_pv_count}"
-    )
+    rate = "算出不可（初週PVが0）" if x_pv_count == 0 else f"{landing_user_count}/{x_pv_count}"
     return "\n".join(
         (
             f"施策タイトル: {normalize_search_text(campaign_title)}",

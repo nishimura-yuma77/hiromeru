@@ -90,9 +90,7 @@ async def _run_turn(
         async with asyncio.timeout_at(deadline):
             view = await service.execute(prepared, SseReporter(queue))
     except TimeoutError:
-        view = await asyncio.shield(
-            service.fail_running(prepared, "TURN_TIME_LIMIT_EXCEEDED")
-        )
+        view = await asyncio.shield(service.fail_running(prepared, "TURN_TIME_LIMIT_EXCEEDED"))
     except asyncio.CancelledError:
         await asyncio.shield(service.fail_running(prepared, "AGENT_EXECUTION_FAILED"))
         raise

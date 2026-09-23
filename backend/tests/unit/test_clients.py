@@ -335,9 +335,7 @@ async def test_Web検索Providerは認証情報をheaderだけに付け型付き
         return httpx.Response(
             200,
             json={
-                "results": [
-                    {"title": "Example", "url": "https://example.com", "snippet": "text"}
-                ]
+                "results": [{"title": "Example", "url": "https://example.com", "snippet": "text"}]
             },
         )
 

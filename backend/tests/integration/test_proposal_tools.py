@@ -214,9 +214,7 @@ async def test_Planner提案は子の最終結果だけを保存しUIへ投影�
     child_history = await account.client.get(f"/api/v1/agent-sessions/{child_session_id}")
     assert child_history.status_code == 404
     assert (
-        await account.client.get(
-            f"/api/v1/agent-sessions/{child_session_id}/turns/{child_turn.id}"
-        )
+        await account.client.get(f"/api/v1/agent-sessions/{child_session_id}/turns/{child_turn.id}")
     ).status_code == 404
     assert (
         await account.client.post(
@@ -377,9 +375,7 @@ async def test_保存済みProposalがSchema不正ならTurn表示から除外�
             turn_id, status=AgentTurnStatus.COMPLETED, now=ctx.clock.now()
         )
 
-    response = await account.client.get(
-        f"/api/v1/agent-sessions/{session_id}/turns/{turn_id}"
-    )
+    response = await account.client.get(f"/api/v1/agent-sessions/{session_id}/turns/{turn_id}")
     assert [item["type"] for item in response.json()["data"]["items"]] == ["user_message"]
 
 

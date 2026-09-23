@@ -196,9 +196,7 @@ def test_子出力と提案入力はXOR_strict_時刻注入を検証する() -> 
         "plan": "働き方を訴求",
     }
     parsed = CampaignProposal.model_validate(proposal)
-    assert RunCampaignPlannerOutput(
-        child_session_id=1, proposal=parsed
-    ).proposal == parsed
+    assert RunCampaignPlannerOutput(child_session_id=1, proposal=parsed).proposal == parsed
     with pytest.raises(ValidationError):
         RunCampaignPlannerOutput(child_session_id=1)
     with pytest.raises(ValidationError):

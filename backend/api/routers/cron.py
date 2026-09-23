@@ -51,12 +51,8 @@ async def collect_post_metrics(request: Request, ctx: Context) -> Response:
         else loop.time()
     )
     budget = ClaimBudget(claim_deadline, loop.time)
-    metrics = await MetricCollectionService(ctx).run(
-        should_continue_claiming=budget.available
-    )
-    memories = await EvaluationMemoryService(ctx).run(
-        should_continue_claiming=budget.available
-    )
+    metrics = await MetricCollectionService(ctx).run(should_continue_claiming=budget.available)
+    memories = await EvaluationMemoryService(ctx).run(should_continue_claiming=budget.available)
     return JSONResponse(
         {
             "status": "ok",

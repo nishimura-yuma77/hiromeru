@@ -208,8 +208,10 @@ class ToolExecutor:
             result, status, event_type, detector = await self._run_allowed(
                 context, call, definition, validated_input, prepared
             )
-            if status == ToolExecutionStatus.COMPLETED and result.success and (
-                result_class == AgentContextClass.UNTRUSTED_DATA
+            if (
+                status == ToolExecutionStatus.COMPLETED
+                and result.success
+                and (result_class == AgentContextClass.UNTRUSTED_DATA)
             ):
                 try:
                     guardrail = await self._ctx.tool_result_guardrail.inspect(

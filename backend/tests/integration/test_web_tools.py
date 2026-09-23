@@ -171,9 +171,7 @@ async def test_result_idは別turnとquarantined_resultから再利用できな�
     assert isinstance(guardrail, FakeToolResultGuardrail)
     guardrail.decision = GuardrailDecision.BLOCK
     quarantined = await second.invoke(
-        ToolCall(
-            name="web_search", stable_key="quarantined", arguments={"query": "x", "limit": 1}
-        )
+        ToolCall(name="web_search", stable_key="quarantined", arguments={"query": "x", "limit": 1})
     )
     assert quarantined.error is not None
     async with ctx.session_factory() as session:

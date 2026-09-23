@@ -26,9 +26,7 @@ async def _campaign_with_post(
     session_id = await account.create_session()
     campaign_id = await account.create_campaign(session_id, title=title)
     clock.advance(60)
-    response = await account.publish_post(
-        session_id, post_body(campaign_id, body=f"{title}の投稿")
-    )
+    response = await account.publish_post(session_id, post_body(campaign_id, body=f"{title}の投稿"))
     assert response.status_code == 201, response.text
     post_id = int(response.json()["data"]["post_id"])
     if x_pv_count is not None:
@@ -44,9 +42,7 @@ async def _campaign_with_post(
     ("limit", "expected_status"),
     [(0, 400), (1, 200), (50, 200), (51, 400)],
 )
-async def test_limit境界を検証する(
-    account: Account, limit: int, expected_status: int
-) -> None:
+async def test_limit境界を検証する(account: Account, limit: int, expected_status: int) -> None:
     response = await account.client.get("/api/v1/metrics", params={"limit": limit})
 
     assert response.status_code == expected_status

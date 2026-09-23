@@ -28,7 +28,5 @@ class TurnRecoveryService:
                 message=DEFAULT_MESSAGES["TURN_INTERRUPTED"],
             )
         if recovered:
-            _log.warning(
-                "turn_interrupted_recovered", count=len(recovered), source="scheduled"
-            )
+            _log.warning("turn_interrupted_recovered", count=len(recovered), source="scheduled")
         return recovered

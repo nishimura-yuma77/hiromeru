@@ -442,9 +442,7 @@ class RealAgentRunner:
         return [
             ModelMessage(
                 role="assistant",
-                tool_calls=(
-                    ModelMessageToolCall(id=provider_id, name=name, arguments=arguments),
-                ),
+                tool_calls=(ModelMessageToolCall(id=provider_id, name=name, arguments=arguments),),
             ),
             ModelMessage(role="tool", tool_call_id=provider_id, content=canonical_json(result)),
         ]
