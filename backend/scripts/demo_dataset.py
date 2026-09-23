@@ -4,12 +4,17 @@ import argparse
 import hashlib
 import json
 import re
+import sys
 import unicodedata
 from contextvars import ContextVar
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 import sqlalchemy as sa
 from sqlalchemy.engine import Connection
+
+# Allow direct execution from `backend/`.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from core.config import get_settings
 
@@ -48,7 +53,9 @@ _CAMPAIGNS = (
         "id": _CAMPAIGN_IDS[1],
         "title": "フルリモート開発文化の紹介",
         "target_profile": "居住地に縛られず、裁量を持って働きたい経験者エンジニア",
-        "background": "リモート勤務制度は知られているが、実際の連携方法や働きやすさが伝わっていない。",
+        "background": (
+            "リモート勤務制度は知られているが、実際の連携方法や働きやすさが伝わっていない。"
+        ),
         "objective": "リモート環境への不安を減らし、カジュアル面談への関心を高める。",
         "plan": "非同期コミュニケーション、定例、開発環境を社員の実例とともに紹介する。",
         "created_at": datetime(2026, 8, 3, 9, 0, tzinfo=UTC),
@@ -68,7 +75,10 @@ _POSTS = (
     {
         "id": _POST_IDS[0],
         "campaign_id": _CAMPAIGN_IDS[0],
-        "body": "朝会からレビューまで、開発者の一日を紹介します。制度名だけでは見えない、チームで働く時間をまとめました。",
+        "body": (
+            "朝会からレビューまで、開発者の一日を紹介します。"
+            "制度名だけでは見えない、チームで働く時間をまとめました。"
+        ),
         "landing_url": "https://hiromeru.local/demo/engineer-day",
         "x_post_id": "demo-x-post-9003006001",
         "published_at": datetime(2026, 7, 15, 2, 30, tzinfo=UTC),
@@ -78,7 +88,10 @@ _POSTS = (
     {
         "id": _POST_IDS[1],
         "campaign_id": _CAMPAIGN_IDS[0],
-        "body": "仕様相談は早めに、集中時間はしっかり確保。開発チームが大切にしている一日のリズムを紹介します。",
+        "body": (
+            "仕様相談は早めに、集中時間はしっかり確保。"
+            "開発チームが大切にしている一日のリズムを紹介します。"
+        ),
         "landing_url": "https://hiromeru.local/demo/development-culture",
         "x_post_id": "demo-x-post-9003006002",
         "published_at": datetime(2026, 7, 29, 6, 0, tzinfo=UTC),
@@ -88,7 +101,10 @@ _POSTS = (
     {
         "id": _POST_IDS[2],
         "campaign_id": _CAMPAIGN_IDS[1],
-        "body": "フルリモートでも相談しやすいチームへ。非同期の共有と週次の対話をどう使い分けているか紹介します。",
+        "body": (
+            "フルリモートでも相談しやすいチームへ。"
+            "非同期の共有と週次の対話をどう使い分けているか紹介します。"
+        ),
         "landing_url": "https://hiromeru.local/demo/remote-work",
         "x_post_id": "demo-x-post-9003006003",
         "published_at": datetime(2026, 8, 20, 3, 15, tzinfo=UTC),
@@ -98,7 +114,10 @@ _POSTS = (
     {
         "id": _POST_IDS[3],
         "campaign_id": _CAMPAIGN_IDS[2],
-        "body": "コードレビューを、指摘ではなく学びの場に。若手メンバーが成長しやすいレビュー文化を紹介します。",
+        "body": (
+            "コードレビューを、指摘ではなく学びの場に。"
+            "若手メンバーが成長しやすいレビュー文化を紹介します。"
+        ),
         "landing_url": "https://hiromeru.local/demo/code-review",
         "x_post_id": "demo-x-post-9003006004",
         "published_at": datetime(2026, 9, 20, 1, 45, tzinfo=UTC),
@@ -794,17 +813,25 @@ def _has_non_seed_dependents() -> bool:
         "SELECT 1 FROM campaigns WHERE company_id = :company_id AND id NOT IN :campaign_ids",
         "SELECT 1 FROM agent_memories WHERE company_id = :company_id AND id NOT IN :memory_ids",
         "SELECT 1 FROM agent_sessions WHERE marketer_id = :marketer_id AND id NOT IN :session_ids",
-        "SELECT 1 FROM agent_sessions WHERE parent_session_id IN :session_ids AND id NOT IN :session_ids",
+        "SELECT 1 FROM agent_sessions WHERE parent_session_id IN :session_ids "
+        "AND id NOT IN :session_ids",
         "SELECT 1 FROM agent_turns WHERE session_id IN :session_ids AND id NOT IN :turn_ids",
         "SELECT 1 FROM agent_items WHERE agent_turn_id IN :turn_ids AND id NOT IN :item_ids",
-        "SELECT 1 FROM api_idempotency_requests WHERE marketer_id = :marketer_id AND id NOT IN :request_ids",
+        "SELECT 1 FROM api_idempotency_requests WHERE marketer_id = :marketer_id "
+        "AND id NOT IN :request_ids",
         "SELECT 1 FROM posts WHERE company_id = :company_id AND id NOT IN :post_ids",
         "SELECT 1 FROM post_tracking_links WHERE post_id IN :post_ids AND id NOT IN :tracking_ids",
-        f"SELECT 1 FROM memory_campaigns WHERE (memory_id IN :memory_ids OR campaign_id IN :campaign_ids) AND NOT ({_pair_predicate('memory_id', 'campaign_id', _MEMORY_CAMPAIGNS)})",  # noqa: S608
-        f"SELECT 1 FROM memory_posts WHERE (memory_id IN :memory_ids OR post_id IN :post_ids) AND NOT ({_pair_predicate('memory_id', 'post_id', _MEMORY_POSTS)})",  # noqa: S608
+        "SELECT 1 FROM memory_campaigns WHERE "  # noqa: S608
+        "(memory_id IN :memory_ids OR campaign_id IN :campaign_ids) AND NOT "
+        f"({_pair_predicate('memory_id', 'campaign_id', _MEMORY_CAMPAIGNS)})",
+        "SELECT 1 FROM memory_posts WHERE "  # noqa: S608
+        "(memory_id IN :memory_ids OR post_id IN :post_ids) AND NOT "
+        f"({_pair_predicate('memory_id', 'post_id', _MEMORY_POSTS)})",
         "SELECT 1 FROM llm_calls WHERE agent_turn_id IN :turn_ids AND id NOT IN :llm_ids",
-        "SELECT 1 FROM agent_context_checkpoints WHERE session_id IN :session_ids OR compacted_through_turn_id IN :turn_ids",
-        "SELECT 1 FROM security_events WHERE agent_turn_id IN :turn_ids OR agent_item_id IN :item_ids",
+        "SELECT 1 FROM agent_context_checkpoints WHERE session_id IN :session_ids "
+        "OR compacted_through_turn_id IN :turn_ids",
+        "SELECT 1 FROM security_events WHERE agent_turn_id IN :turn_ids "
+        "OR agent_item_id IN :item_ids",
         "SELECT 1 FROM tool_executions WHERE tool_call_item_id IN :item_ids",
     )
     for sql in checks:
@@ -820,7 +847,7 @@ def _has_non_seed_dependents() -> bool:
 def remove_demo() -> None:
     """Delete only the fixed demo graph, refusing unsafe dependent-data removal."""
     if _has_non_seed_dependents():
-        raise RuntimeError("demo dataset has non-seeded dependent rows; refusing unsafe downgrade")
+        raise RuntimeError("demo dataset has non-seeded dependent rows; refusing unsafe removal")
     bind = _BIND.get()
     bind.execute(
         sa.text(
