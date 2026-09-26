@@ -12,6 +12,7 @@ from agent_runtime.model import (
     ModelCallError,
     ModelMessage,
     ModelRequest,
+    ModelResponseFormat,
     ModelTool,
     OrcaRouterModelClient,
 )
@@ -59,13 +60,17 @@ def test_Model_parseは正確に1件のtool_callだけを許可する() -> None:
         _response(calls=[_call(), _call()], finish="tool_calls"),
         _response(calls=[_call("[]")], finish="tool_calls"),
         _response(content="", finish="stop"),
-        _response(content="answer", finish="length"),
         _response(content="answer", refusal="blocked"),
     ],
 )
 def test_Model_parseは曖昧またはmalformedなdecisionを拒否する(response) -> None:
     with pytest.raises(ModelCallError, match="MODEL_MALFORMED_RESPONSE"):
         OrcaRouterModelClient._parse_response(response)
+
+
+def test_Model_parseは出力上限をmalformedと分離する() -> None:
+    with pytest.raises(ModelCallError, match="MODEL_OUTPUT_LIMIT_EXCEEDED"):
+        OrcaRouterModelClient._parse_response(_response(content="answer", finish="length"))
 
 
 class _Clock:
@@ -135,6 +140,16 @@ async def test_OrcaRouter_Clientはheader_request_idとDecimal_costを返す(mon
                 ),
             ),
             max_output_tokens=10,
+            timeout_seconds=20,
+            response_format=ModelResponseFormat(
+                name="result",
+                schema={
+                    "type": "object",
+                    "properties": {"answer": {"type": "string"}},
+                    "required": ["answer"],
+                },
+            ),
+            reasoning_effort="low",
         )
     )
 
@@ -144,7 +159,12 @@ async def test_OrcaRouter_Clientはheader_request_idとDecimal_costを返す(mon
     assert result.prompt_tokens == 12
     assert result.completion_tokens == 3
     assert captured["parallel_tool_calls"] is False
+    assert captured["timeout"] == 20
     assert captured["tools"][0]["function"]["parameters"]["additionalProperties"] is False
+    assert captured["reasoning_effort"] == "low"
+    assert captured["response_format"]["type"] == "json_schema"
+    assert captured["response_format"]["json_schema"]["strict"] is True
+    assert captured["response_format"]["json_schema"]["schema"]["additionalProperties"] is False
 
 
 @pytest.mark.asyncio

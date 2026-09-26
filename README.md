@@ -62,6 +62,25 @@ docker compose logs -f frontend
 docker compose logs -f backend
 ```
 
+### Demo Dataset
+
+ローカルで業務画面を確認する場合は、migration適用後にデモデータを明示的に投入できます。本番環境では実行しないでください。
+
+```bash
+docker compose exec backend python scripts/demo_dataset.py seed
+```
+
+ログイン情報:
+
+- メールアドレス: `demo@hiromeru.local`
+- パスワード: `HiromeruDemo2026!`
+
+デモデータだけを削除する場合:
+
+```bash
+docker compose exec backend python scripts/demo_dataset.py remove
+```
+
 ### Database Migration
 
 モデル追加後にmigrationを作成します。

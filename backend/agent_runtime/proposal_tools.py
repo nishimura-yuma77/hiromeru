@@ -13,6 +13,7 @@ from agent_runtime.executor import ToolExecutor
 from agent_runtime.runner import (
     ActivityKind,
     ActivityStatus,
+    AgentContext,
     AgentRunError,
     CampaignPlannerOutput,
     CampaignProposal,
@@ -142,6 +143,25 @@ class _ParentHandler:
 class _RunChildHandler(_ParentHandler):
     agent_type: AgentType
 
+    @staticmethod
+    def _conversation(context: TrustedToolContext, request_item_id: int) -> list[dict[str, str]]:
+        parent_context = context.agent_context
+        if not isinstance(parent_context, AgentContext):
+            return []
+        conversation = []
+        for entry in parent_context.entries:
+            if (
+                entry.kind != "item"
+                or entry.item_id == request_item_id
+                or entry.context_status != AgentItemContextStatus.ACTIVE
+                or entry.role not in {"user", "assistant"}
+            ):
+                continue
+            prior_text = entry.content.get("text")
+            if isinstance(prior_text, str):
+                conversation.append({"role": entry.role, "text": prior_text})
+        return conversation
+
     async def _create_child(
         self,
         context: TrustedToolContext,
@@ -214,6 +234,9 @@ class _RunChildHandler(_ParentHandler):
                 "request_item_id": request_item_id,
                 "request": text,
             }
+            conversation = self._conversation(context, request_item_id)
+            if conversation:
+                structured["conversation"] = conversation
             if campaign is not None:
                 structured["campaign"] = {
                     "id": campaign.id,

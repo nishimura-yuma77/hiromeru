@@ -105,8 +105,11 @@ async def _run(args: argparse.Namespace) -> int:
         return 0
     if not args.execute:
         raise XPostRecoveryError("変更を実行するには --execute を指定してください")
-    if args.command in {"resolve-posted", "resume"} and ctx.settings.external_client_mode != "real":
-        raise XPostRecoveryError("Embedding保存を伴うため EXTERNAL_CLIENT_MODE=real が必要です")
+    if (
+        args.command in {"resolve-posted", "resume"}
+        and ctx.settings.embedding_client_mode != "real"
+    ):
+        raise XPostRecoveryError("Embedding保存を伴うため EMBEDDING_CLIENT_MODE=real が必要です")
     if args.command == "resolve-posted":
         result = await service.resolve_posted(
             args.request_id,

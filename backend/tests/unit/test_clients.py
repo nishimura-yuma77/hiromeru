@@ -1,7 +1,12 @@
+from typing import Any, cast
+
 import httpx
 import pytest
 from pydantic import SecretStr
 
+from agent_runtime.firewall import FakeAgentFirewall, OrcaRouterAgentFirewall
+from agent_runtime.real_runner import RealAgentRunner
+from agent_runtime.web_tools import WebToolDependencies
 from api.container import build_default_context
 from clients.embedding import OrcaRouterEmbeddingClient
 from clients.errors import (
@@ -14,9 +19,12 @@ from clients.errors import (
 )
 from clients.fakes import FakeEmbeddingClient, FakeGa4Client, FakeXApiClient
 from clients.ga4 import HttpGa4Client
-from clients.web_search import HttpWebSearchProvider, WebSearchProviderError
+from clients.web_fetch import FakeWebFetcher, SafeWebFetcher
+from clients.web_search import FakeWebSearchProvider, HttpWebSearchProvider, WebSearchProviderError
 from clients.x_api import HttpXApiClient
 from core.config import Settings
+from domain.enums import AgentType
+from services.context import ServiceContext
 
 DIMENSIONS = 4
 SECRET = "unit-test-secret-unit-test-secret-0123456789"
@@ -367,12 +375,24 @@ async def test_Web検索Providerは不正応答の本文を例外へ含めない
     assert "provider-secret" not in str(info.value)
 
 
+def _web_dependencies(context: ServiceContext, tool_name: str) -> WebToolDependencies:
+    definition = context.tool_registry.resolve(AgentType.PARENT, tool_name)
+    assert definition is not None
+    return cast(WebToolDependencies, cast(Any, definition.handler)._deps)
+
+
 def test_Client_Mode_fakeとrealで実行Clientを切り替える() -> None:
     fake = build_default_context(Settings(auth_cookie_secret=SecretStr(SECRET)))
     real = build_default_context(
         Settings(
             auth_cookie_secret=SecretStr(SECRET),
-            external_client_mode="real",
+            embedding_client_mode="real",
+            x_api_client_mode="real",
+            ga4_client_mode="real",
+            web_search_client_mode="real",
+            web_fetch_client_mode="real",
+            agent_client_mode="real",
+            agent_firewall_mode="real",
             orcarouter_base_url="https://router.example.com/v1",
             orcarouter_api_key=SecretStr("router-key"),
             orcarouter_firewall_api_key=SecretStr("firewall-key"),
@@ -391,6 +411,79 @@ def test_Client_Mode_fakeとrealで実行Clientを切り替える() -> None:
     assert isinstance(fake.embedding, FakeEmbeddingClient)
     assert isinstance(fake.x_api, FakeXApiClient)
     assert isinstance(fake.ga4, FakeGa4Client)
+    assert isinstance(_web_dependencies(fake, "web_search").search_provider, FakeWebSearchProvider)
+    assert isinstance(_web_dependencies(fake, "web_fetch").fetcher, FakeWebFetcher)
     assert isinstance(real.embedding, OrcaRouterEmbeddingClient)
     assert isinstance(real.x_api, HttpXApiClient)
     assert isinstance(real.ga4, HttpGa4Client)
+    assert isinstance(_web_dependencies(real, "web_search").search_provider, HttpWebSearchProvider)
+    assert isinstance(_web_dependencies(real, "web_fetch").fetcher, SafeWebFetcher)
+    assert isinstance(real.agent_firewall, OrcaRouterAgentFirewall)
+    assert isinstance(real.agent_runner, RealAgentRunner)
+
+
+@pytest.mark.parametrize(
+    ("mode", "expected"),
+    [
+        ("embedding_client_mode", OrcaRouterEmbeddingClient),
+        ("x_api_client_mode", HttpXApiClient),
+        ("ga4_client_mode", HttpGa4Client),
+        ("web_search_client_mode", HttpWebSearchProvider),
+        ("web_fetch_client_mode", SafeWebFetcher),
+    ],
+)
+def test_業務Clientは1つだけrealに切り替えられる(mode: str, expected: type[object]) -> None:
+    settings = {
+        "auth_cookie_secret": SecretStr(SECRET),
+        "orcarouter_base_url": "https://router.example.com/v1",
+        "orcarouter_api_key": SecretStr("router-key"),
+        "x_api_key": SecretStr("x-key"),
+        "x_api_key_secret": SecretStr("x-key-secret"),
+        "x_access_token": SecretStr("x-token"),
+        "x_access_token_secret": SecretStr("x-token-secret"),
+        "ga4_property_id": "123456",
+        "ga4_service_account_json": SecretStr('{"type":"service_account"}'),
+        "web_search_base_url": "https://search.example.com",
+        "web_search_api_key": SecretStr("search-secret"),
+        mode: "real",
+    }
+    context = build_default_context(Settings.model_validate(settings))
+
+    selected = {
+        "embedding_client_mode": context.embedding,
+        "x_api_client_mode": context.x_api,
+        "ga4_client_mode": context.ga4,
+        "web_search_client_mode": _web_dependencies(context, "web_search").search_provider,
+        "web_fetch_client_mode": _web_dependencies(context, "web_fetch").fetcher,
+    }[mode]
+    assert isinstance(selected, expected)
+    if mode != "embedding_client_mode":
+        assert isinstance(context.embedding, FakeEmbeddingClient)
+    if mode != "x_api_client_mode":
+        assert isinstance(context.x_api, FakeXApiClient)
+    if mode != "ga4_client_mode":
+        assert isinstance(context.ga4, FakeGa4Client)
+    if mode != "web_search_client_mode":
+        assert isinstance(
+            _web_dependencies(context, "web_search").search_provider, FakeWebSearchProvider
+        )
+    if mode != "web_fetch_client_mode":
+        assert isinstance(_web_dependencies(context, "web_fetch").fetcher, FakeWebFetcher)
+
+
+def test_Agent_Modeだけrealにして業務ClientはFakeを維持する() -> None:
+    context = build_default_context(
+        Settings(
+            auth_cookie_secret=SecretStr(SECRET),
+            agent_client_mode="real",
+            orcarouter_base_url="https://router.example.com/v1",
+            orcarouter_api_key=SecretStr("router-key"),
+            agent_model="provider/model",
+        )
+    )
+
+    assert isinstance(context.embedding, FakeEmbeddingClient)
+    assert isinstance(context.x_api, FakeXApiClient)
+    assert isinstance(context.ga4, FakeGa4Client)
+    assert isinstance(context.agent_firewall, FakeAgentFirewall)
+    assert isinstance(context.agent_runner, RealAgentRunner)

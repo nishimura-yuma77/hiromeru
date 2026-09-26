@@ -11,7 +11,7 @@ from agent_runtime.proposal_tools import (
     ProposeXPostInput,
     RunCampaignPlannerOutput,
 )
-from agent_runtime.runner import CampaignProposal
+from agent_runtime.runner import CampaignPlannerOutput, CampaignProposal
 from agent_runtime.tools import (
     StrictToolModel,
     ToolCall,
@@ -184,6 +184,10 @@ def test_業務Tool_schemaは重複_XOR_naive日時と型変換を拒否する()
         SearchCampaignsInput.model_validate(
             {"query": "x", "limit": 1, "created_from": "2026-01-01T00:00:00"}
         )
+    with pytest.raises(ValidationError):
+        SearchCampaignsInput.model_validate(
+            {"query": "x", "limit": 1, "created_from": "2026-01-01"}
+        )
 
 
 def test_子出力と提案入力はXOR_strict_時刻注入を検証する() -> None:
@@ -196,6 +200,10 @@ def test_子出力と提案入力はXOR_strict_時刻注入を検証する() -> 
         "plan": "働き方を訴求",
     }
     parsed = CampaignProposal.model_validate(proposal)
+    missing = CampaignPlannerOutput.model_validate_json(
+        '{"proposal":null,"missing_information":["採用人数"]}'
+    )
+    assert missing.missing_information == ("採用人数",)
     assert RunCampaignPlannerOutput(child_session_id=1, proposal=parsed).proposal == parsed
     with pytest.raises(ValidationError):
         RunCampaignPlannerOutput(child_session_id=1)
