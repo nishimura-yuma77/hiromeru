@@ -12,7 +12,7 @@
 - backendのエントリポイントは`backend/main.py`です。アプリケーション本体は`backend/`直下（`api/`、`services/`など）にあり、`main.py`が`backend/`をimportパスへ追加して`app`を公開します（Vercelがimportパスを文書化していないため）。
 - backendの`maxDuration`は、`vercel.json`の`services.backend.functions`で300秒（Hobbyの上限）に明示しています。プランを変更する場合は、この値と冪等性のLease（`API_DESIGN.md`の2.3）を見直してください。
 - backendの依存関係は`pyproject.toml`で宣言し、`uv.lock`で固定します。Vercelは`uv.lock`を検出して`uv`で依存関係を復元します。
-- PreviewとProductionでは`EXTERNAL_CLIENT_MODE=real`と`COOKIE_SECURE=true`を設定します。`fake`はローカル開発とテスト専用です。
+- PreviewとProductionでは各`*_CLIENT_MODE`と`AGENT_FIREWALL_MODE`を明示し、`COOKIE_SECURE=true`を設定します。Clientごとに`real`または`fake`を選択できます。
 - Preview Deploymentで、`/api/health`と`/api/health/db`が応答することを確認してください。
 
 Git連携後はPull RequestごとにPreview Deploymentが作成され、`main`へのmergeでProduction Deploymentが自動実行されます。
@@ -63,7 +63,7 @@ Alembicは`DATABASE_URL_UNPOOLED`がない場合に起動を中止し、`DATABAS
 python scripts/backfill_campaign_embeddings.py --execute
 ```
 
-`DATABASE_URL`、`EXTERNAL_CLIENT_MODE=real`、OrcaRouter設定が必要です。`--batch-size`、`--max-items`、`--company-id`で対象を制限でき、出力された`last_id`を`--after-id`へ渡すと途中から再開できます。失敗または実行中の編集との競合が残った場合は終了Code 1になり、同じCommandを再実行するとHashが一致する更新済みデータはスキップされます。
+`DATABASE_URL`、`EMBEDDING_CLIENT_MODE=real`、OrcaRouter設定が必要です。`--batch-size`、`--max-items`、`--company-id`で対象を制限でき、出力された`last_id`を`--after-id`へ渡すと途中から再開できます。失敗または実行中の編集との競合が残った場合は終了Code 1になり、同じCommandを再実行するとHashが一致する更新済みデータはスキップされます。
 
 ## Vercel Cron
 
@@ -105,7 +105,7 @@ python scripts/reconcile_x_posts.py resolve-not-posted --request-id 456 --execut
 python scripts/reconcile_x_posts.py resume --request-id 789 --execute
 ```
 
-`resolve-posted`と`resume`は本番Embeddingを作るため`EXTERNAL_CLIENT_MODE=real`およびOrcaRouter設定が必要です。Command出力へCredential、Request Body、X本文、Tracked URL、Provider Body、Lease Tokenは含まれません。`resolve-*`はPost関連データ、確定Replay Response、冪等状態、新しい完了済み監査Turnを1つのTransactionで保存します。競合時は一方だけが成功します。実行前に接続先の`DATABASE_URL`を確認し、まず`inspect`したRequest IDだけを対象にしてください。
+`resolve-posted`と`resume`は本番Embeddingを作るため`EMBEDDING_CLIENT_MODE=real`およびOrcaRouter設定が必要です。Command出力へCredential、Request Body、X本文、Tracked URL、Provider Body、Lease Tokenは含まれません。`resolve-*`はPost関連データ、確定Replay Response、冪等状態、新しい完了済み監査Turnを1つのTransactionで保存します。競合時は一方だけが成功します。実行前に接続先の`DATABASE_URL`を確認し、まず`inspect`したRequest IDだけを対象にしてください。
 
 元Requestの本文またはURLが履歴保存時の機密情報マスク対象だった場合、自動復元は安全側で拒否されます。その場合だけ、元のJSON Object（`campaign_id`、`body`、`landing_url`）を標準入力から渡します。内容は保存済みRequest Hashと一致しなければ拒否され、出力・ログ・監査Turnには記録されません。Shell引数には本文を指定しないでください。
 
@@ -125,7 +125,13 @@ PreviewとProductionには、接続先を環境ごとに分離して次を設定
 | --- | --- |
 | `AUTH_COOKIE_SECRET` | 認証CookieとCSRF Tokenの署名鍵。環境ごとに異なる十分に長いランダム値 |
 | `ALLOWED_ORIGINS` | CSRF検証で許可するカスタムOrigin。ワイルドカードは使用しない |
-| `EXTERNAL_CLIENT_MODE` | Preview・Productionは`real`。ローカル開発・テストは`fake` |
+| `EMBEDDING_CLIENT_MODE` | Embedding接続の`real`/`fake`。Preview・Productionでは明示必須 |
+| `X_API_CLIENT_MODE` | X API接続の`real`/`fake`。Preview・Productionでは明示必須 |
+| `GA4_CLIENT_MODE` | GA4接続の`real`/`fake`。Preview・Productionでは明示必須 |
+| `WEB_SEARCH_CLIENT_MODE` | Web検索接続の`real`/`fake`。Preview・Productionでは明示必須 |
+| `WEB_FETCH_CLIENT_MODE` | Web取得接続の`real`/`fake`。Preview・Productionでは明示必須 |
+| `AGENT_CLIENT_MODE` | Agent Model接続の`real`/`fake`。Preview・Productionでは明示必須 |
+| `AGENT_FIREWALL_MODE` | Agent Tool Firewallの`real`/`fake`。Preview・Productionでは明示必須 |
 | `ORCAROUTER_BASE_URL` | OrcaRouter APIのBase URL |
 | `ORCAROUTER_API_KEY` | OrcaRouter APIの認証鍵 |
 | `ORCAROUTER_FIREWALL_API_KEY` | Agent Firewall専用のgateway-scoped認証鍵 |
@@ -133,7 +139,9 @@ PreviewとProductionには、接続先を環境ごとに分離して次を設定
 | `AGENT_MAX_STEPS` | 親Turnと子Agentで共有する論理step上限。既定20 |
 | `AGENT_MAX_COST_USD` | 親Turn単位の確定USD cost上限。既定1.00000000 |
 | `LLM_TIMEOUT_SECONDS` | 1回のLLM request timeout。既定60秒 |
+| `SUBAGENT_LLM_TIMEOUT_SECONDS` | Structured Outputを返す子Agentのrequest timeout。既定120秒 |
 | `LLM_MAX_OUTPUT_TOKENS` | 1回のLLM最大出力token。既定4096 |
+| `SUBAGENT_LLM_MAX_OUTPUT_TOKENS` | Structured Outputを返す子Agentの最大出力token。既定8192 |
 | `GENERATION_LOOKUP_ATTEMPTS` | 確定cost取得のbounded retry回数。既定3 |
 | `GENERATION_LOOKUP_BACKOFF_SECONDS` | 確定cost取得retryの基準待機秒。既定0.1 |
 | `X_API_KEY` | X APIのConsumer Key |

@@ -4,10 +4,18 @@ import Link from "next/link";
 
 import { useCampaignFormController } from "@/features/campaigns/controllers/useCampaignFormController";
 import type { CampaignDetailResponse } from "@/features/campaigns/types/campaign";
+import type { CampaignField } from "@/features/campaigns/state/campaignFormReducer";
 
 import styles from "./CampaignDetail.module.scss";
 
 const numberFormat = new Intl.NumberFormat("ja-JP");
+const campaignFieldLabels: Record<CampaignField, string> = {
+  title: "施策タイトル",
+  target_profile: "ターゲット像",
+  background: "実施背景",
+  objective: "施策目的",
+  plan: "施策内容",
+};
 const dateFormat = new Intl.DateTimeFormat("ja-JP", {
   dateStyle: "medium",
   timeStyle: "short",
@@ -28,15 +36,57 @@ function metricState(metrics: CampaignDetailResponse["posts"][number]["metrics"]
   return "計測に失敗しました";
 }
 
+function summaryExplanation(summary: CampaignDetailResponse["metrics_summary"]): string {
+  const excluded = Math.max(
+    0,
+    summary.post_count - summary.completed_count - summary.pending_count - summary.failed_count,
+  );
+  if (summary.post_count === 0) return "公開済み投稿がないため、成果はまだ集計されていません。";
+  if (summary.completed_count === 0 && summary.pending_count > 0) {
+    return "計測待ちの投稿があります。計測完了後に初週PVと流入が表示されます。";
+  }
+  if (summary.completed_count === 0 && summary.failed_count > 0) {
+    return "計測結果を取得できなかったため、成果を表示できません。";
+  }
+  if (summary.completed_count === 0 && excluded > 0) {
+    return "公開済み投稿はすべて計測対象外です。";
+  }
+  if (summary.pending_count > 0 || summary.failed_count > 0 || excluded > 0) {
+    return "計測済みの投稿だけを成果に集計しています。";
+  }
+  return "すべての公開済み投稿を集計した成果です。";
+}
+
+function PvBar({ value, max }: { value: number | null; max: number }) {
+  const width = value === null || max <= 0 ? 0 : (value / max) * 100;
+  return (
+    <span className={styles.pvTrack} aria-hidden="true">
+      <span className={styles.pvFill} style={{ width: `${width}%` }} />
+    </span>
+  );
+}
+
 export function CampaignDetail({ detail }: { detail: CampaignDetailResponse }) {
   const { campaign, metrics_summary: summary } = detail;
-  const isArchived = campaign.archived_at !== null;
   const controller = useCampaignFormController(campaign);
-  const rate = summary.landing_rate === null
+  const isArchived = campaign.archived_at !== null || (controller.state.conflictCampaign?.archived_at ?? null) !== null;
+  const hasCompletedMetrics = summary.completed_count > 0;
+  const rate = !hasCompletedMetrics || summary.landing_rate === null
     ? "—"
     : new Intl.NumberFormat("ja-JP", { style: "percent", maximumFractionDigits: 1 }).format(
         summary.landing_rate,
       );
+  const maxCompletedPv = detail.posts.reduce(
+    (max, post) => post.metrics.status === "completed"
+      ? Math.max(max, post.metrics.x_pv_count ?? 0)
+      : max,
+    0,
+  );
+  const conflictFields = controller.state.conflictCampaign
+    ? (Object.keys(campaignFieldLabels) as CampaignField[]).filter(
+        (field) => controller.state.form[field] !== controller.state.baseline[field],
+      )
+    : [];
 
   return (
     <main id="main-content" className={styles.page}>
@@ -62,17 +112,29 @@ export function CampaignDetail({ detail }: { detail: CampaignDetailResponse }) {
         </div> : null}
       </header>
 
+      {isArchived ? (
+        <p className={styles.archivedNotice}>
+          この施策はアーカイブ済みです。内容の編集や、この施策を使った投稿案の作成はできません。過去の内容と成果は引き続き確認できます。
+        </p>
+      ) : null}
+
       <section className={styles.summary} aria-labelledby="campaign-summary-title">
         <h2 id="campaign-summary-title">成果</h2>
         <dl>
           <div><dt>公開済み投稿</dt><dd>{numberFormat.format(summary.post_count)}件</dd></div>
-          <div><dt>初週PV</dt><dd>{numberFormat.format(summary.x_pv_count)}</dd></div>
-          <div><dt>流入ユーザー</dt><dd>{numberFormat.format(summary.landing_user_count)}</dd></div>
+          <div><dt>初週PV</dt><dd>{hasCompletedMetrics ? numberFormat.format(summary.x_pv_count) : "—"}</dd></div>
+          <div><dt>流入ユーザー</dt><dd>{hasCompletedMetrics ? numberFormat.format(summary.landing_user_count) : "—"}</dd></div>
           <div><dt>流入率</dt><dd>{rate}</dd></div>
         </dl>
-        <p className={styles.statusLine}>
-          計測済み {summary.completed_count} / 待ち {summary.pending_count} / 失敗 {summary.failed_count}
-        </p>
+        <p className={styles.statusLine}>{summaryExplanation(summary)}</p>
+        <div className={styles.summaryStatuses} aria-label="計測状況">
+          {summary.completed_count > 0 ? <span>計測済み {summary.completed_count}</span> : null}
+          {summary.pending_count > 0 ? <span>待ち {summary.pending_count}</span> : null}
+          {summary.failed_count > 0 ? <span>失敗 {summary.failed_count}</span> : null}
+          {summary.post_count - summary.completed_count - summary.pending_count - summary.failed_count > 0
+            ? <span>対象外 {summary.post_count - summary.completed_count - summary.pending_count - summary.failed_count}</span>
+            : null}
+        </div>
       </section>
 
       <section className={styles.section} aria-labelledby="campaign-content-title">
@@ -84,7 +146,7 @@ export function CampaignDetail({ detail }: { detail: CampaignDetailResponse }) {
             <span>編集中</span>
           ) : <span className={styles.readOnly}>読み取り専用</span>}
         </div>
-        {controller.state.isEditing ? (
+        {controller.state.isEditing && !isArchived ? (
           <form
             className={styles.editForm}
             onSubmit={(event) => {
@@ -92,7 +154,30 @@ export function CampaignDetail({ detail }: { detail: CampaignDetailResponse }) {
               void controller.save();
             }}
           >
-            {controller.state.error ? <p role="alert" className={styles.error}>{controller.state.error}</p> : null}
+            {controller.state.error ? (
+              <div role="alert" className={controller.state.hasConflict ? styles.conflict : styles.error}>
+                <p>{controller.state.error}</p>
+                {controller.state.hasConflict ? (
+                  controller.state.conflictCampaign ? <>
+                    <button type="button" onClick={controller.toggleConflictComparison}>最新内容との差分を確認</button>
+                    {controller.state.showConflictComparison ? (
+                      <div className={styles.conflictComparison}>
+                        {conflictFields.map((field) => (
+                          <section key={field}>
+                            <h3>{campaignFieldLabels[field]}</h3>
+                            <div><div><strong>最新の保存内容</strong><p>{controller.state.conflictCampaign?.[field]}</p></div><div><strong>あなたの入力</strong><p>{controller.state.form[field]}</p></div></div>
+                          </section>
+                        ))}
+                        <div className={styles.conflictActions}>
+                          <button type="button" onClick={controller.applyLatest}>最新内容をフォームへ反映</button>
+                          <button type="button" onClick={controller.keepDraft}>現在の入力を優先して編集を続ける</button>
+                        </div>
+                      </div>
+                    ) : null}
+                  </> : <span>最新内容を読み込めませんでした。時間をおいてもう一度お試しください。</span>
+                ) : null}
+              </div>
+            ) : null}
             <label>
               <span>施策タイトル</span>
               <input
@@ -102,7 +187,12 @@ export function CampaignDetail({ detail }: { detail: CampaignDetailResponse }) {
                 maxLength={255}
                 required
                 disabled={controller.state.isPending}
+                aria-invalid={Boolean(controller.state.fieldErrors.title)}
+                aria-describedby={controller.state.fieldErrors.title ? "campaign-title-error" : undefined}
               />
+              {controller.state.fieldErrors.title ? (
+                <span id="campaign-title-error" className={styles.fieldError}>{controller.state.fieldErrors.title}</span>
+              ) : null}
             </label>
             {([
               ["target_profile", "ターゲット像"],
@@ -120,7 +210,12 @@ export function CampaignDetail({ detail }: { detail: CampaignDetailResponse }) {
                   required
                   disabled={controller.state.isPending}
                   rows={4}
+                  aria-invalid={Boolean(controller.state.fieldErrors[field])}
+                  aria-describedby={controller.state.fieldErrors[field] ? `campaign-${field}-error` : undefined}
                 />
+                {controller.state.fieldErrors[field] ? (
+                  <span id={`campaign-${field}-error`} className={styles.fieldError}>{controller.state.fieldErrors[field]}</span>
+                ) : null}
               </label>
             ))}
             <p>この編集はAgentとの会話履歴には保存されません。</p>
@@ -150,16 +245,40 @@ export function CampaignDetail({ detail }: { detail: CampaignDetailResponse }) {
           {summary.post_count > 0 ? <Link href={`/posts?campaign_id=${campaign.id}`}>すべての投稿を見る</Link> : null}
         </div>
         {detail.posts.length ? (
-          <div className={styles.relatedList}>
-            {detail.posts.map((post) => (
-              <article key={post.post_id}>
-                <p className={styles.postBody}>{post.body}</p>
-                <p><time dateTime={post.published_at}>{formatDate(post.published_at)} 公開</time></p>
-                <p>{metricState(post.metrics)}</p>
-                <Link href={`/posts/${post.post_id}`}>投稿の詳細を見る</Link>
-              </article>
-            ))}
-          </div>
+          <>
+            <div className={styles.relatedTableWrap}>
+              <table className={styles.relatedTable}>
+                <thead><tr><th scope="col">投稿</th><th scope="col">公開日</th><th scope="col">初週PV</th><th scope="col">計測状況</th></tr></thead>
+                <tbody>
+                  {detail.posts.map((post) => (
+                    <tr key={post.post_id}>
+                      <th scope="row"><Link href={`/posts/${post.post_id}`}>{post.body}</Link></th>
+                      <td><time dateTime={post.published_at}>{formatDate(post.published_at)}</time></td>
+                      <td>
+                        {post.metrics.status === "completed" ? numberFormat.format(post.metrics.x_pv_count ?? 0) : "—"}
+                        {maxCompletedPv > 0 && post.metrics.status === "completed" ? <PvBar value={post.metrics.x_pv_count} max={maxCompletedPv} /> : null}
+                      </td>
+                      <td>{metricState(post.metrics)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div className={styles.relatedCards}>
+              {detail.posts.map((post) => (
+                <article key={post.post_id}>
+                  <p className={styles.postBody}>{post.body}</p>
+                  <p><time dateTime={post.published_at}>{formatDate(post.published_at)} 公開</time></p>
+                  <p>{metricState(post.metrics)}</p>
+                  {post.metrics.status === "completed" && maxCompletedPv > 0 ? (
+                    <PvBar value={post.metrics.x_pv_count} max={maxCompletedPv} />
+                  ) : null}
+                  <Link href={`/posts/${post.post_id}`}>投稿の詳細を見る</Link>
+                </article>
+              ))}
+            </div>
+            {maxCompletedPv <= 0 ? <p className={styles.emptyText}>計測できた投稿がまだありません</p> : null}
+          </>
         ) : <p className={styles.emptyText}>公開済みの投稿はありません。</p>}
       </section>
 

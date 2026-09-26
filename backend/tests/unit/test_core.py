@@ -27,7 +27,13 @@ def _real_settings(**overrides: object) -> Settings:
         "auth_cookie_secret": SECRET,
         "cookie_secure": True,
         "database_url": "postgresql://production-pooler/database",
-        "external_client_mode": "real",
+        "embedding_client_mode": "real",
+        "x_api_client_mode": "real",
+        "ga4_client_mode": "real",
+        "web_search_client_mode": "real",
+        "web_fetch_client_mode": "real",
+        "agent_client_mode": "real",
+        "agent_firewall_mode": "real",
         "orcarouter_base_url": "https://router.example.com/v1",
         "orcarouter_api_key": "router-secret",
         "orcarouter_firewall_api_key": "firewall-secret",
@@ -203,23 +209,127 @@ def test_設定_ローカルの空のAUTH_COOKIE_SECRETは開発用既定値を�
     assert settings.auth_secret() == "dev-only-insecure-session-secret-change-me"
 
 
-def test_設定_本番とPreviewでSecure_Cookieと実Clientを必須にする() -> None:
+def test_設定_本番とPreviewでSecure_CookieとClient_Mode明示を必須にする() -> None:
     with pytest.raises(ValueError, match="COOKIE_SECURE"):
         _real_settings(vercel_env="production", cookie_secure=False, cron_secret="cron-secret")
-    with pytest.raises(ValueError, match="EXTERNAL_CLIENT_MODE"):
+    with pytest.raises(ValueError, match="EMBEDDING_CLIENT_MODE"):
         Settings(
             vercel_env="preview",
             auth_cookie_secret=SecretStr(SECRET),
             cookie_secure=True,
+            database_url=SecretStr("postgresql://preview/database"),
+        )
+    deployed_fake = Settings(
+        vercel_env="preview",
+        auth_cookie_secret=SecretStr(SECRET),
+        cookie_secure=True,
+        database_url=SecretStr("postgresql://preview/database"),
+        embedding_client_mode="fake",
+        x_api_client_mode="fake",
+        ga4_client_mode="fake",
+        web_search_client_mode="fake",
+        web_fetch_client_mode="fake",
+        agent_client_mode="fake",
+        agent_firewall_mode="fake",
+    )
+
+    assert deployed_fake.agent_firewall_mode == "fake"
+
+
+def test_設定_デプロイ環境のClient_Modeは環境変数から明示できる(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    for name in (
+        "EMBEDDING_CLIENT_MODE",
+        "X_API_CLIENT_MODE",
+        "GA4_CLIENT_MODE",
+        "WEB_SEARCH_CLIENT_MODE",
+        "WEB_FETCH_CLIENT_MODE",
+        "AGENT_CLIENT_MODE",
+        "AGENT_FIREWALL_MODE",
+    ):
+        monkeypatch.setenv(name, "fake")
+
+    settings = Settings(
+        vercel_env="preview",
+        auth_cookie_secret=SecretStr(SECRET),
+        cookie_secure=True,
+        database_url=SecretStr("postgresql://preview/database"),
+    )
+
+    assert settings.embedding_client_mode == "fake"
+    assert settings.agent_firewall_mode == "fake"
+
+
+def test_設定_各実Clientだけ固有Credentialを必須にしFakeでは省略できる() -> None:
+    fake = Settings(auth_cookie_secret=SecretStr(SECRET))
+    with pytest.raises(ValueError, match="ORCAROUTER_API_KEY"):
+        Settings(
+            auth_cookie_secret=SecretStr(SECRET),
+            embedding_client_mode="real",
+            orcarouter_base_url="https://router.example.com/v1",
+            orcarouter_api_key=SecretStr(""),
+        )
+    with pytest.raises(ValueError, match="X_API_KEY"):
+        Settings(
+            auth_cookie_secret=SecretStr(SECRET),
+            x_api_client_mode="real",
+            x_api_key=SecretStr(""),
+        )
+    with pytest.raises(ValueError, match="GA4_PROPERTY_ID"):
+        Settings(
+            auth_cookie_secret=SecretStr(SECRET),
+            ga4_client_mode="real",
+            ga4_property_id="",
+        )
+    with pytest.raises(ValueError, match="WEB_SEARCH_API_KEY"):
+        Settings(
+            auth_cookie_secret=SecretStr(SECRET),
+            web_search_client_mode="real",
+            web_search_base_url="https://search.example.com",
+            web_search_api_key=SecretStr(""),
+        )
+
+    assert fake.embedding_client_mode == "fake"
+    assert fake.x_api_client_mode == "fake"
+    assert fake.ga4_client_mode == "fake"
+    assert fake.web_search_client_mode == "fake"
+    assert fake.web_fetch_client_mode == "fake"
+
+
+def test_設定_実Agentは他ClientがFakeでもOrcaRouter設定だけで起動できる() -> None:
+    settings = Settings(
+        auth_cookie_secret=SecretStr(SECRET),
+        agent_client_mode="real",
+        orcarouter_base_url="https://router.example.com/v1",
+        orcarouter_api_key=SecretStr("router-secret"),
+        agent_model="provider/model",
+    )
+
+    assert settings.embedding_client_mode == "fake"
+    assert settings.agent_client_mode == "real"
+    assert settings.agent_firewall_mode == "fake"
+
+
+def test_設定_実AgentではAgent用Credentialを必須にする() -> None:
+    with pytest.raises(ValueError, match="AGENT_MODEL"):
+        Settings(
+            auth_cookie_secret=SecretStr(SECRET),
+            agent_client_mode="real",
+            orcarouter_base_url="https://router.example.com/v1",
+            orcarouter_api_key=SecretStr("router-secret"),
+            agent_model="",
         )
 
 
-def test_設定_実ClientではCredentialをすべて必須にしFakeでは省略できる() -> None:
-    fake = Settings(auth_cookie_secret=SecretStr(SECRET), external_client_mode="fake")
-    with pytest.raises(ValueError, match="GA4_PROPERTY_ID"):
-        _real_settings(ga4_property_id="")
-
-    assert fake.external_client_mode == "fake"
+def test_設定_実Firewallでは専用Credentialを必須にする() -> None:
+    with pytest.raises(ValueError, match="ORCAROUTER_FIREWALL_API_KEY"):
+        Settings(
+            auth_cookie_secret=SecretStr(SECRET),
+            agent_firewall_mode="real",
+            orcarouter_base_url="https://router.example.com/v1",
+            orcarouter_firewall_api_key=SecretStr(""),
+        )
 
 
 def test_設定_空白だけのSecretと実Client設定を拒否する() -> None:
@@ -258,6 +368,9 @@ def test_設定_ProductionだけCron_Secretを必須にする() -> None:
         ({"lease_seconds": 300}, "LEASE_SECONDS"),
         ({"request_timeout_seconds": 0}, "REQUEST_TIMEOUT_SECONDS"),
         ({"request_timeout_seconds": 300.1}, "REQUEST_TIMEOUT_SECONDS"),
+        ({"subagent_llm_timeout_seconds": 0}, "SUBAGENT_LLM_TIMEOUT_SECONDS"),
+        ({"subagent_llm_timeout_seconds": 201}, "SUBAGENT_LLM_TIMEOUT_SECONDS"),
+        ({"subagent_llm_max_output_tokens": 0}, "Agent step/output token"),
         (
             {"agent_context_compaction_threshold_bytes": 0},
             "AGENT_CONTEXT_COMPACTION_THRESHOLD_BYTES",

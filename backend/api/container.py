@@ -8,7 +8,7 @@ from fastapi import Request
 
 from agent_runtime.business_tools import ToolHandlerDependencies, build_default_tool_registry
 from agent_runtime.compactor import StubContextCompactor
-from agent_runtime.firewall import DenyAllAgentFirewall, OrcaRouterAgentFirewall
+from agent_runtime.firewall import FakeAgentFirewall, OrcaRouterAgentFirewall
 from agent_runtime.guardrail import DeferredToolResultGuardrail, FakeToolResultGuardrail
 from agent_runtime.model import OrcaRouterModelClient
 from agent_runtime.proposal_tools import register_proposal_tools
@@ -18,7 +18,7 @@ from agent_runtime.web_tools import WebToolDependencies, register_web_tools
 from clients.embedding import OrcaRouterEmbeddingClient
 from clients.fakes import FakeEmbeddingClient, FakeGa4Client, FakeXApiClient
 from clients.ga4 import GoogleServiceAccountTokenProvider, HttpGa4Client
-from clients.web_fetch import HttpxPinnedTransport, SafeWebFetcher, SystemResolver
+from clients.web_fetch import FakeWebFetcher, HttpxPinnedTransport, SafeWebFetcher, SystemResolver
 from clients.web_search import FakeWebSearchProvider, HttpWebSearchProvider
 from clients.x_api import HttpXApiClient
 from core.clock import SystemClock
@@ -27,16 +27,13 @@ from repositories.database import SessionLocal
 from services.context import ServiceContext
 
 
-def build_default_context(settings: Settings | None = None) -> ServiceContext:
+def build_default_context(  # noqa: PLR0912 - Clientごとの独立した組み立て分岐
+    settings: Settings | None = None,
+) -> ServiceContext:
     """本番・開発用の実行Contextを作る。"""
     resolved = settings or get_settings()
-    if resolved.external_client_mode == "fake":
+    if resolved.embedding_client_mode == "fake":
         embedding = FakeEmbeddingClient(resolved.embedding_dimensions)
-        x_api = FakeXApiClient()
-        ga4 = FakeGa4Client()
-        web_search = FakeWebSearchProvider()
-        guardrail = FakeToolResultGuardrail()
-        firewall = DenyAllAgentFirewall()
     else:
         embedding = OrcaRouterEmbeddingClient(
             base_url=resolved.orcarouter_base_url,
@@ -45,6 +42,9 @@ def build_default_context(settings: Settings | None = None) -> ServiceContext:
             dimensions=resolved.embedding_dimensions,
             timeout_seconds=resolved.embedding_timeout_seconds,
         )
+    if resolved.x_api_client_mode == "fake":
+        x_api = FakeXApiClient()
+    else:
         x_api = HttpXApiClient(
             base_url=resolved.x_api_base_url,
             api_key=resolved.x_api_key.get_secret_value(),
@@ -53,6 +53,9 @@ def build_default_context(settings: Settings | None = None) -> ServiceContext:
             access_token_secret=resolved.x_access_token_secret.get_secret_value(),
             timeout_seconds=resolved.x_api_timeout_seconds,
         )
+    if resolved.ga4_client_mode == "fake":
+        ga4 = FakeGa4Client()
+    else:
         ga4 = HttpGa4Client(
             property_id=resolved.ga4_property_id,
             token_provider=GoogleServiceAccountTokenProvider(
@@ -60,12 +63,31 @@ def build_default_context(settings: Settings | None = None) -> ServiceContext:
             ),
             timeout_seconds=resolved.ga4_timeout_seconds,
         )
+    if resolved.web_search_client_mode == "fake":
+        web_search = FakeWebSearchProvider()
+    else:
         web_search = HttpWebSearchProvider(
             base_url=resolved.web_search_base_url,
             api_key=resolved.web_search_api_key.get_secret_value(),
             timeout_seconds=resolved.web_search_timeout_seconds,
         )
+    web_fetch = (
+        FakeWebFetcher()
+        if resolved.web_fetch_client_mode == "fake"
+        else SafeWebFetcher(
+            resolver=SystemResolver(),
+            transport=HttpxPinnedTransport(resolved.web_fetch_timeout_seconds),
+            max_bytes=resolved.web_fetch_max_bytes,
+            max_redirects=resolved.web_fetch_max_redirects,
+        )
+    )
+    if resolved.agent_client_mode == "fake":
+        guardrail = FakeToolResultGuardrail()
+    else:
         guardrail = DeferredToolResultGuardrail()
+    if resolved.agent_firewall_mode == "fake":
+        firewall = FakeAgentFirewall()
+    else:
         parts = urlsplit(resolved.orcarouter_base_url)
         firewall = OrcaRouterAgentFirewall(
             origin=f"{parts.scheme}://{parts.netloc}",
@@ -81,12 +103,7 @@ def build_default_context(settings: Settings | None = None) -> ServiceContext:
         WebToolDependencies(
             SessionLocal,
             web_search,
-            SafeWebFetcher(
-                resolver=SystemResolver(),
-                transport=HttpxPinnedTransport(resolved.web_fetch_timeout_seconds),
-                max_bytes=resolved.web_fetch_max_bytes,
-                max_redirects=resolved.web_fetch_max_redirects,
-            ),
+            web_fetch,
             uuid.uuid4,
         ),
     )
@@ -106,7 +123,7 @@ def build_default_context(settings: Settings | None = None) -> ServiceContext:
         new_uuid=uuid.uuid4,
     )
     register_proposal_tools(context)
-    if resolved.external_client_mode == "real":
+    if resolved.agent_client_mode == "real":
         model_client = OrcaRouterModelClient(
             base_url=resolved.orcarouter_base_url,
             api_key=resolved.orcarouter_api_key.get_secret_value(),

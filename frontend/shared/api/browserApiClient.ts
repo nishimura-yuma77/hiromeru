@@ -1,10 +1,12 @@
 "use client";
 
 import {
+  ApiError,
   type ApiDataParser,
   normalizeFetchError,
   parseApiResponse,
 } from "@/shared/api/ApiError";
+import { safeRedirectPath } from "@/shared/lib/safeRedirectPath";
 
 type BrowserApiRequestOptions<T> = {
   method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
@@ -44,6 +46,23 @@ function parseCsrfData(input: unknown): string {
     throw new Error("Invalid CSRF token");
   }
   return token;
+}
+
+export function redirectToLogin(error: ApiError, force = false): void {
+  if (
+    (!force && error.code !== "UNAUTHENTICATED") ||
+    typeof window === "undefined" ||
+    window.location.pathname === "/login"
+  ) {
+    return;
+  }
+
+  const currentPath = safeRedirectPath(
+    `${window.location.pathname}${window.location.search}${window.location.hash}`,
+  );
+  const loginUrl = new URL("/login", window.location.origin);
+  loginUrl.search = new URLSearchParams({ next: currentPath }).toString();
+  window.location.assign(loginUrl);
 }
 
 async function executeRequest<T>(
@@ -86,6 +105,7 @@ export async function browserApiRequest<T>(
     return await executeRequest(path, options, isMutation ? readCookie("csrf_token") : null);
   } catch (error) {
     const apiError = normalizeFetchError(error);
+    redirectToLogin(apiError);
     if (
       !isMutation ||
       options.retryCsrf === false ||
@@ -102,7 +122,9 @@ export async function browserApiRequest<T>(
       );
       return await executeRequest(path, { ...options, retryCsrf: false }, csrfToken);
     } catch (retryError) {
-      throw normalizeFetchError(retryError);
+      const retryApiError = normalizeFetchError(retryError);
+      redirectToLogin(retryApiError, retryApiError.code === "CSRF_VALIDATION_FAILED");
+      throw retryApiError;
     }
   }
 }

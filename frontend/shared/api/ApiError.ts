@@ -12,6 +12,7 @@ type ApiErrorOptions = {
   status?: number;
   code?: string;
   retryable?: boolean;
+  retryAfterSeconds?: number | null;
   agentTurnId?: number | null;
   fieldErrors?: ApiFieldError[];
 };
@@ -21,6 +22,7 @@ export class ApiError extends Error {
   readonly status: number | null;
   readonly code: string;
   readonly retryable: boolean;
+  readonly retryAfterSeconds: number | null;
   readonly agentTurnId: number | null;
   readonly fieldErrors: ApiFieldError[];
 
@@ -31,6 +33,7 @@ export class ApiError extends Error {
     this.status = options.status ?? null;
     this.code = options.code ?? "UNKNOWN_ERROR";
     this.retryable = options.retryable ?? false;
+    this.retryAfterSeconds = options.retryAfterSeconds ?? null;
     this.agentTurnId = options.agentTurnId ?? null;
     this.fieldErrors = options.fieldErrors ?? [];
   }
@@ -65,15 +68,26 @@ export function parseApiEnvelope<T>(
   input: unknown,
   status: number,
   parseData: ApiDataParser<T>,
+  retryAfterSeconds: number | null = null,
 ): T {
   if (!isRecord(input) || typeof input.success !== "boolean") {
-    throw new ApiError({ kind: "parse", message: "APIレスポンスを読み取れませんでした。", status });
+    throw new ApiError({
+      kind: "parse",
+      message: "APIレスポンスを読み取れませんでした。",
+      status,
+      retryAfterSeconds,
+    });
   }
 
   if (input.success === false) {
     const error = input.error;
     if (!isRecord(error) || typeof error.code !== "string" || typeof error.message !== "string") {
-      throw new ApiError({ kind: "parse", message: "APIエラーを読み取れませんでした。", status });
+      throw new ApiError({
+        kind: "parse",
+        message: "APIエラーを読み取れませんでした。",
+        status,
+        retryAfterSeconds,
+      });
     }
 
     throw new ApiError({
@@ -82,13 +96,19 @@ export function parseApiEnvelope<T>(
       code: error.code,
       message: error.message,
       retryable: error.retryable === true,
+      retryAfterSeconds,
       agentTurnId: typeof error.agent_turn_id === "number" ? error.agent_turn_id : null,
       fieldErrors: parseFieldErrors(error.field_errors),
     });
   }
 
   if (input.error !== null) {
-    throw new ApiError({ kind: "parse", message: "APIレスポンスの形式が正しくありません。", status });
+    throw new ApiError({
+      kind: "parse",
+      message: "APIレスポンスの形式が正しくありません。",
+      status,
+      retryAfterSeconds,
+    });
   }
 
   try {
@@ -97,14 +117,37 @@ export function parseApiEnvelope<T>(
     if (error instanceof ApiError) {
       throw error;
     }
-    throw new ApiError({ kind: "parse", message: "APIデータを読み取れませんでした。", status });
+    throw new ApiError({
+      kind: "parse",
+      message: "APIデータを読み取れませんでした。",
+      status,
+      retryAfterSeconds,
+    });
   }
+}
+
+function parseRetryAfter(value: string | null): number | null {
+  if (!value) {
+    return null;
+  }
+
+  const seconds = Number(value);
+  if (Number.isFinite(seconds) && seconds >= 0) {
+    return Math.ceil(seconds);
+  }
+
+  const retryAt = Date.parse(value);
+  if (Number.isNaN(retryAt)) {
+    return null;
+  }
+  return Math.max(0, Math.ceil((retryAt - Date.now()) / 1000));
 }
 
 export async function parseApiResponse<T>(
   response: Response,
   parseData: ApiDataParser<T>,
 ): Promise<T> {
+  const retryAfterSeconds = parseRetryAfter(response.headers.get("Retry-After"));
   let body: unknown;
   try {
     body = await response.json();
@@ -115,12 +158,18 @@ export async function parseApiResponse<T>(
         status: response.status,
         code: "HTTP_ERROR",
         message: "APIリクエストに失敗しました。",
+        retryAfterSeconds,
       });
     }
-    throw new ApiError({ kind: "parse", status: response.status, message: "APIレスポンスを読み取れませんでした。" });
+    throw new ApiError({
+      kind: "parse",
+      status: response.status,
+      message: "APIレスポンスを読み取れませんでした。",
+      retryAfterSeconds,
+    });
   }
 
-  return parseApiEnvelope(body, response.status, parseData);
+  return parseApiEnvelope(body, response.status, parseData, retryAfterSeconds);
 }
 
 export function normalizeFetchError(error: unknown): ApiError {

@@ -45,6 +45,15 @@
   padding: var(--space-1) var(--space-3);
 }
 
+.archivedNotice {
+  background: var(--color-background-secondary);
+  border: var(--border-width-thin) solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+  color: var(--color-text-secondary);
+  line-height: var(--line-height-body);
+  padding: var(--space-4);
+}
+
 .readOnly {
   color: var(--color-text-secondary);
   font-size: var(--font-size-sm);
@@ -110,6 +119,20 @@
   border-block-start: var(--border-width-thin) solid currentColor;
   margin-block: var(--space-5) 0;
   padding-block-start: var(--space-4);
+}
+
+.summaryStatuses {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-block-start: var(--space-3);
+}
+
+.summaryStatuses span {
+  border: var(--border-width-thin) solid currentColor;
+  border-radius: var(--radius-pill);
+  font-size: var(--font-size-xs);
+  padding: var(--space-1) var(--space-3);
 }
 
 .section {
@@ -189,11 +212,71 @@
   resize: vertical;
 }
 
-.error {
+.error,
+.conflict {
   border-inline-start: var(--space-1) solid var(--color-danger);
   color: var(--color-danger);
   margin: 0;
   padding: var(--space-3);
+}
+
+.error p,
+.conflict p {
+  margin: 0;
+}
+
+.conflict {
+  background: var(--color-background-secondary);
+  color: var(--color-text-primary);
+}
+
+.conflict button {
+  margin-block-start: var(--space-3);
+}
+
+.conflictComparison {
+  display: grid;
+  gap: var(--space-4);
+  margin-block-start: var(--space-4);
+}
+
+.conflictComparison section > div {
+  display: grid;
+  gap: var(--space-3);
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.conflictComparison h3,
+.conflictComparison p {
+  margin: 0;
+}
+
+.conflictComparison section > div > div {
+  background: var(--color-surface);
+  border: var(--border-width-thin) solid var(--color-border);
+  padding: var(--space-3);
+}
+
+.conflictComparison p {
+  margin-block-start: var(--space-2);
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.conflictActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+}
+
+.fieldError {
+  color: var(--color-danger);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-normal);
+}
+
+.editForm :is(input, textarea)[aria-invalid="true"] {
+  border-color: var(--color-danger);
 }
 
 .formActions {
@@ -212,22 +295,78 @@
   opacity: 0.55;
 }
 
-.relatedList {
-  display: grid;
-  gap: var(--space-4);
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+.relatedTableWrap {
   margin-block-start: var(--space-5);
+  overflow-x: auto;
 }
 
-.relatedList article,
+.relatedTable {
+  border-collapse: collapse;
+  min-width: 54rem;
+  width: 100%;
+}
+
+.relatedTable :is(th, td) {
+  border-block-end: var(--border-width-thin) solid var(--color-border-strong);
+  padding: var(--space-4);
+  text-align: start;
+  vertical-align: top;
+}
+
+.relatedTable thead th {
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+}
+
+.relatedTable tbody th {
+  max-width: 28rem;
+}
+
+.relatedTable tbody th a {
+  display: -webkit-box;
+  font-weight: var(--font-weight-normal);
+  line-height: var(--line-height-body);
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
+
+.relatedTable td {
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+}
+
+.relatedCards {
+  display: none;
+}
+
+.relatedCards article,
 .memoryList li {
   background: var(--color-surface);
   border: var(--border-width-thin) solid var(--color-border);
   padding: var(--space-5);
 }
 
-.relatedList p {
+.relatedCards p {
   color: var(--color-text-secondary);
+}
+
+.pvTrack {
+  background: var(--color-background-secondary);
+  border-radius: var(--radius-pill);
+  display: block;
+  height: var(--space-2);
+  margin-block-start: var(--space-2);
+  min-width: 7rem;
+  overflow: hidden;
+}
+
+.pvFill {
+  background: var(--color-brand-primary);
+  border-radius: inherit;
+  display: block;
+  height: 100%;
 }
 
 .postBody {
@@ -277,9 +416,18 @@
 }
 
 @media (max-width: bp.$mobile) {
-  .summary dl,
-  .relatedList {
+  .summary dl {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .relatedTableWrap {
+    display: none;
+  }
+
+  .relatedCards {
+    display: grid;
+    gap: var(--space-4);
+    margin-block-start: var(--space-5);
   }
 
   .headerActions,
@@ -297,4 +445,6 @@
   .editForm {
     padding: var(--space-5);
   }
+  .conflictComparison section > div { grid-template-columns: 1fr; }
+  .conflictActions { align-items: stretch; flex-direction: column; }
 }

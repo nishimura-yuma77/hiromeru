@@ -1,5 +1,6 @@
 import asyncio
 from decimal import Decimal
+from typing import Any, cast
 
 from sqlalchemy import select
 
@@ -13,12 +14,14 @@ from agent_runtime.model import (
     ModelToolCall,
 )
 from agent_runtime.real_runner import RealAgentRunner
+from agent_runtime.runner import AgentContext, AgentContextEntry
 from domain.enums import (
     AgentContentSource,
     AgentContextClass,
     AgentItemContextStatus,
     AgentItemType,
     AgentTurnStatus,
+    AgentType,
 )
 from models import AgentItem, LlmCall, SecurityEvent
 from repositories.agent import SessionRepository, TurnRepository
@@ -60,6 +63,51 @@ def _use_real_runner(ctx: ServiceContext, script: list[ModelResult | Exception])
 
 def _rid(ctx: ServiceContext, label: str) -> str:
     return f"{label}-{ctx.new_uuid().hex}"
+
+
+def test_子Agent入力は監査IDを除外し親会話を明示する() -> None:
+    context = AgentContext(
+        entries=(
+            AgentContextEntry(
+                kind="item",
+                role="user",
+                content={
+                    "request": {
+                        "request_item_id": 54191,
+                        "request": "提案ツールを使って",
+                        "conversation": [
+                            {"role": "user", "text": "エンジニア採用施策を考えて"},
+                            {"role": "assistant", "text": "採用施策の草案です"},
+                        ],
+                    }
+                },
+                item_id=1,
+            ),
+        ),
+        estimated_utf8_bytes=0,
+    )
+
+    messages = RealAgentRunner._messages(AgentType.CAMPAIGN_PLANNER, context)
+
+    assert messages[-1].content is not None
+    assert "Current user request:\n提案ツールを使って" in messages[-1].content
+    assert "エンジニア採用施策を考えて" in messages[-1].content
+    assert "54191" not in messages[-1].content
+
+
+def test_実Runnerは検索Toolに実行時上限と施策検索方法を公開する(ctx: ServiceContext) -> None:
+    runner = RealAgentRunner(ctx, FakeModelClient([]))
+    tools = {tool.name: tool for tool in runner._tools(AgentType.PARENT)}
+
+    for name in ("search_long_term_memory", "search_campaigns", "search_posts"):
+        properties = cast(dict[str, Any], tools[name].parameters["properties"])
+        limit = cast(dict[str, Any], properties["limit"])
+        assert limit["maximum"] == ctx.settings.tool_search_limit
+    campaign_properties = cast(dict[str, Any], tools["search_campaigns"].parameters["properties"])
+    created_from = cast(dict[str, Any], campaign_properties["created_from"])
+    assert created_from["anyOf"][0]["pattern"].endswith("Z$")
+    assert "natural-language query" in tools["search_campaigns"].description
+    assert "not wildcard" in tools["search_campaigns"].description
 
 
 async def test_実Runnerはmulti_step_loopを実行しLLM生成元を関連付ける(

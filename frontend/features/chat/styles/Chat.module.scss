@@ -391,6 +391,72 @@
   small { color: var(--color-danger); }
 }
 
+.campaignCombobox {
+  display: grid;
+  gap: var(--space-2);
+  position: relative;
+
+  > label { font-size: var(--font-size-sm); font-weight: var(--font-weight-semibold); }
+
+  > input {
+    background: var(--color-background-primary);
+    border: 1px solid var(--color-border-strong);
+    border-radius: var(--radius-sm);
+    color: var(--color-text-primary);
+    font: inherit;
+    min-height: 2.75rem;
+    padding: 0.75rem var(--space-3);
+    width: 100%;
+
+    &[aria-invalid="true"] { border-color: var(--color-danger); }
+  }
+
+  > ul {
+    background: var(--color-surface);
+    border: 1px solid var(--color-border-strong);
+    border-radius: var(--radius-sm);
+    box-shadow: var(--shadow-panel);
+    display: grid;
+    inset: calc(100% - 2.8rem) 0 auto;
+    list-style: none;
+    margin: 0;
+    max-height: 18rem;
+    overflow-y: auto;
+    padding: var(--space-1);
+    position: absolute;
+    z-index: 2;
+  }
+
+  li[aria-selected="true"] { background: var(--color-background-secondary); }
+
+  li[role="option"] {
+    border-radius: var(--radius-sm);
+    color: var(--color-text-primary);
+    cursor: pointer;
+    display: flex;
+    gap: var(--space-3);
+    justify-content: space-between;
+    min-height: 2.75rem;
+    padding: var(--space-3);
+    text-align: start;
+
+    span { color: var(--color-text-secondary); font-size: var(--font-size-xs); white-space: nowrap; }
+  }
+
+  > small { color: var(--color-danger); }
+}
+
+.selectedCampaign,
+.comboboxStatus,
+.comboboxMessage {
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  margin: 0;
+}
+
+.comboboxStatus { min-height: 1lh; }
+.comboboxMessage { padding: var(--space-3); }
+
 .characterCount {
   color: var(--color-text-secondary);
   font-size: var(--font-size-xs);
@@ -398,8 +464,27 @@
   margin-block-start: calc(var(--space-3) * -1);
 }
 
+.proposalDirty {
+  align-items: center;
+  color: var(--color-text-secondary);
+  display: flex;
+  font-size: var(--font-size-sm);
+  gap: var(--space-3);
+  justify-content: space-between;
+
+  button {
+    background: transparent;
+    border: 0;
+    color: var(--color-brand-primary);
+    cursor: pointer;
+    padding: 0;
+    text-decoration: underline;
+  }
+}
+
 .approveButton,
-.confirmApproval button {
+.confirmApproval button,
+.revisionBox button {
   background: var(--color-brand-primary);
   border: 0;
   border-radius: var(--radius-pill);
@@ -414,13 +499,43 @@
 
 .approveButton { justify-self: end; }
 
-.confirmApproval {
-  background: #eef3df;
+.revisionButton {
+  background: transparent;
+  border: 0;
+  color: var(--color-brand-primary);
+  cursor: pointer;
+  font-weight: var(--font-weight-semibold);
+  justify-self: end;
+  padding: 0;
+  text-decoration: underline;
+}
+
+.revisionBox {
+  background: var(--color-background-secondary);
   border-radius: var(--radius-sm);
   display: grid;
-  gap: var(--space-3);
+  gap: var(--space-2);
   padding: var(--space-4);
 
+  label { font-size: var(--font-size-sm); font-weight: var(--font-weight-semibold); }
+  textarea { border: 1px solid var(--color-border-strong); border-radius: var(--radius-sm); padding: var(--space-3); resize: vertical; width: 100%; }
+  > span { color: var(--color-text-secondary); font-size: var(--font-size-xs); justify-self: end; }
+  > div { display: flex; gap: var(--space-2); justify-content: end; }
+
+  .secondaryButton { background: transparent; border: 1px solid var(--color-border-strong); color: var(--color-text-primary); }
+}
+
+.confirmApproval {
+  background: var(--color-surface);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-panel);
+  display: grid;
+  gap: var(--space-3);
+  max-width: 34rem;
+  padding: var(--space-4);
+  width: 100%;
+
+  h4 { font-size: var(--font-size-xl); margin: 0; }
   p { font-weight: var(--font-weight-semibold); margin: 0; }
   > div { display: flex; flex-wrap: wrap; gap: var(--space-2); justify-content: end; }
 
@@ -429,6 +544,17 @@
     border: 1px solid var(--color-border-strong);
     color: var(--color-text-primary);
   }
+}
+
+.confirmBackdrop {
+  align-items: center;
+  background: rgb(16 35 26 / 55%);
+  display: flex;
+  inset: 0;
+  justify-content: center;
+  padding: var(--space-4);
+  position: fixed;
+  z-index: var(--z-index-overlay, 100);
 }
 
 .proposalError,
@@ -608,6 +734,8 @@
   .shortcut { display: none; }
   .proposalCard { border-radius: var(--radius-sm); }
   .approveButton { justify-self: stretch; width: 100%; }
+  .revisionButton { justify-self: stretch; text-align: center; }
+  .revisionBox > div { display: grid; }
   .confirmApproval > div { display: grid; }
   .confirmApproval button { width: 100%; }
 }

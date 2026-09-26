@@ -17,7 +17,17 @@ _DEV_ORIGIN = "http://localhost:3000"
 _MAX_DURATION_SECONDS = 300
 _DEV_DATABASE_URL = "postgresql+psycopg://app:app@localhost:5432/app"
 
-type ExternalClientMode = Literal["real", "fake"]
+type ClientMode = Literal["real", "fake"]
+
+_CLIENT_MODE_FIELDS = {
+    "embedding_client_mode": "EMBEDDING_CLIENT_MODE",
+    "x_api_client_mode": "X_API_CLIENT_MODE",
+    "ga4_client_mode": "GA4_CLIENT_MODE",
+    "web_search_client_mode": "WEB_SEARCH_CLIENT_MODE",
+    "web_fetch_client_mode": "WEB_FETCH_CLIENT_MODE",
+    "agent_client_mode": "AGENT_CLIENT_MODE",
+    "agent_firewall_mode": "AGENT_FIREWALL_MODE",
+}
 
 
 class Settings(BaseSettings):
@@ -37,8 +47,14 @@ class Settings(BaseSettings):
     vercel_branch_url: str | None = None
     vercel_project_production_url: str | None = None
 
-    # 外部API。開発・テストだけFakeを許可する。
-    external_client_mode: ExternalClientMode = "fake"
+    # 外部API。各接続先を独立してFakeへ差し替えられる。
+    embedding_client_mode: ClientMode = "fake"
+    x_api_client_mode: ClientMode = "fake"
+    ga4_client_mode: ClientMode = "fake"
+    web_search_client_mode: ClientMode = "fake"
+    web_fetch_client_mode: ClientMode = "fake"
+    agent_client_mode: ClientMode = "fake"
+    agent_firewall_mode: ClientMode = "fake"
 
     # 埋め込み（BE_STD 13章）。モデル名と次元数は設定値とする。
     embedding_model: str = "openai/text-embedding-3-small"
@@ -96,7 +112,9 @@ class Settings(BaseSettings):
     agent_max_steps: int = 20
     agent_max_cost_usd: Decimal = Decimal("1.00000000")
     llm_timeout_seconds: float = 60.0
+    subagent_llm_timeout_seconds: float = 120.0
     llm_max_output_tokens: int = 4096
+    subagent_llm_max_output_tokens: int = 8192
     generation_lookup_attempts: int = 3
     generation_lookup_backoff_seconds: float = 0.1
     subagent_final_output_max_bytes: int = 64_000
@@ -135,8 +153,16 @@ class Settings(BaseSettings):
             raise ValueError("AUTH_COOKIE_SECRET を本番・プレビュー用に設定してください")
         if is_deployed and not self.cookie_secure:
             raise ValueError("本番・プレビューでは COOKIE_SECURE=true が必須です")
-        if is_deployed and self.external_client_mode != "real":
-            raise ValueError("本番・プレビューでは EXTERNAL_CLIENT_MODE=real が必須です")
+        if is_deployed:
+            missing_modes = [
+                env_name
+                for field_name, env_name in _CLIENT_MODE_FIELDS.items()
+                if field_name not in self.model_fields_set
+            ]
+            if missing_modes:
+                raise ValueError(
+                    f"本番・プレビューではClient Modeを明示してください: {', '.join(missing_modes)}"
+                )
         if is_deployed and self.application_database_url().strip() == _DEV_DATABASE_URL:
             raise ValueError("本番・プレビューでは DATABASE_URL が必須です")
         if self.vercel_env == "production" and not self.cron_secret.get_secret_value().strip():
@@ -144,26 +170,59 @@ class Settings(BaseSettings):
 
     def _validate_external_clients(self) -> None:
         """実Client Modeで必要な接続設定を検証する。"""
-        if self.external_client_mode == "real":
+        if self.embedding_client_mode == "real":
             required = {
                 "ORCAROUTER_BASE_URL": self.orcarouter_base_url,
                 "ORCAROUTER_API_KEY": self.orcarouter_api_key.get_secret_value(),
-                "ORCAROUTER_FIREWALL_API_KEY": (
-                    self.orcarouter_firewall_api_key.get_secret_value()
-                ),
-                "AGENT_MODEL": self.agent_model,
+            }
+            missing = [name for name, value in required.items() if not value.strip()]
+            if missing:
+                raise ValueError(f"実Embeddingに必要な設定がありません: {', '.join(missing)}")
+        if self.x_api_client_mode == "real":
+            required = {
                 "X_API_KEY": self.x_api_key.get_secret_value(),
                 "X_API_KEY_SECRET": self.x_api_key_secret.get_secret_value(),
                 "X_ACCESS_TOKEN": self.x_access_token.get_secret_value(),
                 "X_ACCESS_TOKEN_SECRET": self.x_access_token_secret.get_secret_value(),
+            }
+            missing = [name for name, value in required.items() if not value.strip()]
+            if missing:
+                raise ValueError(f"実X APIに必要な設定がありません: {', '.join(missing)}")
+        if self.ga4_client_mode == "real":
+            required = {
                 "GA4_PROPERTY_ID": self.ga4_property_id,
                 "GA4_SERVICE_ACCOUNT_JSON": self.ga4_service_account_json.get_secret_value(),
+            }
+            missing = [name for name, value in required.items() if not value.strip()]
+            if missing:
+                raise ValueError(f"実GA4に必要な設定がありません: {', '.join(missing)}")
+        if self.web_search_client_mode == "real":
+            required = {
                 "WEB_SEARCH_BASE_URL": self.web_search_base_url,
                 "WEB_SEARCH_API_KEY": self.web_search_api_key.get_secret_value(),
             }
             missing = [name for name, value in required.items() if not value.strip()]
             if missing:
-                raise ValueError(f"実Clientに必要な設定がありません: {', '.join(missing)}")
+                raise ValueError(f"実Web Searchに必要な設定がありません: {', '.join(missing)}")
+        if self.agent_client_mode == "real":
+            required = {
+                "ORCAROUTER_BASE_URL": self.orcarouter_base_url,
+                "ORCAROUTER_API_KEY": self.orcarouter_api_key.get_secret_value(),
+                "AGENT_MODEL": self.agent_model,
+            }
+            missing = [name for name, value in required.items() if not value.strip()]
+            if missing:
+                raise ValueError(f"実Agentに必要な設定がありません: {', '.join(missing)}")
+        if self.agent_firewall_mode == "real":
+            required = {
+                "ORCAROUTER_BASE_URL": self.orcarouter_base_url,
+                "ORCAROUTER_FIREWALL_API_KEY": (
+                    self.orcarouter_firewall_api_key.get_secret_value()
+                ),
+            }
+            missing = [name for name, value in required.items() if not value.strip()]
+            if missing:
+                raise ValueError(f"実Firewallに必要な設定がありません: {', '.join(missing)}")
 
     def _validate_cron_limits(self) -> None:
         """Cronの件数・試行回数とLeaseの境界を検証する。"""
@@ -197,12 +256,18 @@ class Settings(BaseSettings):
             raise ValueError("STALE_TURN_SECONDS はTURN_TIME_LIMIT_SECONDSより大きくしてください")
         if self.tool_max_attempts <= 0:
             raise ValueError("TOOL_MAX_ATTEMPTS は正の整数にしてください")
-        if self.agent_max_steps <= 0 or self.llm_max_output_tokens <= 0:
+        if (
+            self.agent_max_steps <= 0
+            or self.llm_max_output_tokens <= 0
+            or self.subagent_llm_max_output_tokens <= 0
+        ):
             raise ValueError("Agent step/output token上限は正の整数にしてください")
         if not self.agent_max_cost_usd.is_finite() or self.agent_max_cost_usd <= 0:
             raise ValueError("AGENT_MAX_COST_USD は正の有限Decimalにしてください")
         if not 0 < self.llm_timeout_seconds <= self.turn_time_limit_seconds:
             raise ValueError("LLM_TIMEOUT_SECONDS はTurn上限以下の正数にしてください")
+        if not 0 < self.subagent_llm_timeout_seconds <= self.turn_time_limit_seconds:
+            raise ValueError("SUBAGENT_LLM_TIMEOUT_SECONDS はTurn上限以下の正数にしてください")
         if self.generation_lookup_attempts <= 0:
             raise ValueError("GENERATION_LOOKUP_ATTEMPTS は正の整数にしてください")
         if self.generation_lookup_backoff_seconds <= 0:

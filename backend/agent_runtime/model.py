@@ -56,12 +56,22 @@ class ModelTool(StrictToolModel):
     parameters: dict[str, JsonValue]
 
 
+class ModelResponseFormat(StrictToolModel):
+    """Providerへ渡すstrict JSON Schema応答形式。"""
+
+    name: str = Field(pattern=r"^[a-z][a-z0-9_]{0,63}$")
+    schema_: dict[str, JsonValue] = Field(alias="schema")
+
+
 class ModelRequest(StrictToolModel):
     """Provider非依存のnon-streaming request。"""
 
     messages: tuple[ModelMessage, ...] = Field(min_length=1)
     tools: tuple[ModelTool, ...] = ()
     max_output_tokens: int = Field(gt=0)
+    timeout_seconds: float | None = Field(default=None, gt=0)
+    response_format: ModelResponseFormat | None = None
+    reasoning_effort: Literal["low", "medium", "high"] | None = None
 
 
 class FinalAnswer(StrictToolModel):
@@ -204,7 +214,7 @@ class OrcaRouterModelClient:
         self._backoff = generation_lookup_backoff_seconds
         self._sleep = sleep
 
-    async def complete(self, request: ModelRequest) -> ModelResult:  # noqa: PLR0915
+    async def complete(self, request: ModelRequest) -> ModelResult:  # noqa: PLR0912, PLR0915
         """Chatを1回実行し、確定cost取得後に結果を返す。"""
         started = monotonic()
         request_id: str | None = None
@@ -218,11 +228,22 @@ class OrcaRouterModelClient:
                 "max_completion_tokens": request.max_output_tokens,
                 "stream": False,
                 "extra_headers": {"X-OrcaRouter-Include-Cost": "true"},
-                "timeout": self._timeout,
+                "timeout": request.timeout_seconds or self._timeout,
             }
             if request.tools:
                 kwargs["tools"] = [self._tool_payload(tool) for tool in request.tools]
                 kwargs["parallel_tool_calls"] = False
+            if request.response_format is not None:
+                kwargs["response_format"] = {
+                    "type": "json_schema",
+                    "json_schema": {
+                        "name": request.response_format.name,
+                        "strict": True,
+                        "schema": ensure_strict_json_schema(request.response_format.schema_),
+                    },
+                }
+            if request.reasoning_effort is not None:
+                kwargs["reasoning_effort"] = request.reasoning_effort
             raw = await self._client.chat.completions.with_raw_response.create(**cast(Any, kwargs))
             request_id = raw.headers.get("X-Orca-Request-Id")
             response = raw.parse()
@@ -363,6 +384,8 @@ class OrcaRouterModelClient:
             refusal = getattr(message, "refusal", None)
             if refusal:
                 raise ValueError
+            if choice.finish_reason == "length":
+                raise ModelCallError("MODEL_OUTPUT_LIMIT_EXCEEDED")
             if choice.finish_reason == "stop" and not calls and isinstance(content, str):
                 stripped = content.strip()
                 if not stripped:
@@ -383,6 +406,8 @@ class OrcaRouterModelClient:
                     arguments=arguments,
                 )
             )
+        except ModelCallError:
+            raise
         except (AttributeError, TypeError, ValueError, json.JSONDecodeError, ValidationError):
             raise ModelCallError("MODEL_MALFORMED_RESPONSE") from None
 

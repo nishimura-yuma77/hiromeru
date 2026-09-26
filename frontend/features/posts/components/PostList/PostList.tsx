@@ -2,6 +2,7 @@ import Link from "next/link";
 
 import type { PostListResponse, PostMetrics } from "@/features/posts/types/post";
 import { postPageHref, type PostListParams } from "@/features/posts/utils/postParams";
+import { MetricBar } from "@/shared/components/MetricBar/MetricBar";
 
 import styles from "./PostList.module.scss";
 
@@ -18,25 +19,55 @@ function formatDate(value: string | null): string {
   return Number.isNaN(date.valueOf()) ? "—" : dateFormat.format(date);
 }
 
-function Metric({ metrics }: { metrics: PostMetrics }) {
+function PvMetric({ metrics, maxPv }: { metrics: PostMetrics; maxPv: number }) {
   if (metrics.status === "completed") {
     return (
-      <dl className={styles.metricValues}>
-        <div><dt>初週PV</dt><dd>{numberFormat.format(metrics.x_pv_count ?? 0)}</dd></div>
-        <div><dt>流入ユーザー</dt><dd>{numberFormat.format(metrics.landing_user_count ?? 0)}</dd></div>
-      </dl>
+      <div className={styles.pvMetric}>
+        <span>{numberFormat.format(metrics.x_pv_count ?? 0)}</span>
+        {maxPv > 0 ? <MetricBar value={metrics.x_pv_count ?? 0} max={maxPv} /> : null}
+        <span className={styles.completedBadge}>計測済み</span>
+      </div>
     );
   }
   return (
     <p className={styles.metricStatus}>
-      {metrics.status === "pending" ? `計測待ち / ${formatDate(metrics.scheduled_at)}予定` : "計測に失敗しました"}
+      {metrics.status === "pending" ? <>計測待ち<br /><span>{formatDate(metrics.scheduled_at)}予定</span></> : "計測に失敗しました"}
     </p>
+  );
+}
+
+function LandingMetric({ metrics }: { metrics: PostMetrics }) {
+  return metrics.status === "completed"
+    ? <span className={styles.landingMetric}>{numberFormat.format(metrics.landing_user_count ?? 0)}</span>
+    : <span aria-label="未計測">—</span>;
+}
+
+function PostBody({ post, returnTo }: { post: PostListResponse["posts"][number]; returnTo: string }) {
+  const excerpt = post.body.slice(0, 40);
+  return (
+    <div className={styles.postBody}>
+      <p className={styles.body}>{post.body}</p>
+      <Link href={`/posts/${post.post_id}?return_to=${returnTo}`} aria-label={`${formatDate(post.published_at)}の投稿「${excerpt}」の詳細を見る`}>詳細を見る</Link>
+    </div>
+  );
+}
+
+function PublishInfo({ post }: { post: PostListResponse["posts"][number] }) {
+  return (
+    <div className={styles.publishInfo}>
+      <Link href={`/campaigns/${post.campaign_id}`}>{post.campaign_title}</Link>
+      {post.campaign_archived_at ? <span className={styles.archivedBadge}>アーカイブ済み</span> : null}
+      <time dateTime={post.published_at}>{formatDate(post.published_at)} 公開</time>
+    </div>
   );
 }
 
 export function PostList({ response, params }: { response: PostListResponse; params: PostListParams }) {
   const currentListUrl = postPageHref(params, params.cursor || undefined);
   const hasFilters = Boolean(params.query || params.campaignId || params.publishedFrom || params.publishedTo);
+  const maxCompletedPv = response.posts.reduce((max, post) => (
+    post.metrics.status === "completed" ? Math.max(max, post.metrics.x_pv_count ?? 0) : max
+  ), 0);
 
   return (
     <main id="main-content" className={styles.page}>
@@ -100,25 +131,43 @@ export function PostList({ response, params }: { response: PostListResponse; par
             <Link href={hasFilters ? "/posts" : "/chat/new"}>{hasFilters ? "条件をクリア" : "投稿案を相談する"}</Link>
           </div>
         ) : (
-          <div className={styles.list}>
-            {response.posts.map((post) => {
-              const returnTo = encodeURIComponent(currentListUrl);
-              return (
-                <article className={styles.card} key={post.post_id}>
-                  <div>
-                    <p className={styles.body}>{post.body}</p>
-                    <Link href={`/posts/${post.post_id}?return_to=${returnTo}`} aria-label={`${formatDate(post.published_at)}の投稿の詳細を見る`}>詳細を見る</Link>
-                  </div>
-                  <div className={styles.publishInfo}>
-                    <Link href={`/campaigns/${post.campaign_id}`}>{post.campaign_title}</Link>
-                    {post.campaign_archived_at ? <span className={styles.archivedBadge}>施策はアーカイブ済み</span> : null}
-                    <time dateTime={post.published_at}>{formatDate(post.published_at)} 公開</time>
-                  </div>
-                  <Metric metrics={post.metrics} />
-                </article>
-              );
-            })}
-          </div>
+          <>
+            {maxCompletedPv === 0 ? <p className={styles.comparisonUnavailable}>比較できる計測結果がありません</p> : null}
+            <div className={styles.desktopTable}>
+              <table>
+                <caption>公開済み投稿一覧</caption>
+                <thead><tr><th scope="col">投稿</th><th scope="col">公開情報</th><th scope="col">初週PV</th><th scope="col">流入</th></tr></thead>
+                <tbody>
+                  {response.posts.map((post) => {
+                    const returnTo = encodeURIComponent(currentListUrl);
+                    return (
+                      <tr key={post.post_id}>
+                        <td><PostBody post={post} returnTo={returnTo} /></td>
+                        <td><PublishInfo post={post} /></td>
+                        <td><PvMetric metrics={post.metrics} maxPv={maxCompletedPv} /></td>
+                        <td><LandingMetric metrics={post.metrics} /></td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+            <div className={styles.mobileCards}>
+              {response.posts.map((post) => {
+                const returnTo = encodeURIComponent(currentListUrl);
+                return (
+                  <article className={styles.card} key={post.post_id}>
+                    <PostBody post={post} returnTo={returnTo} />
+                    <PublishInfo post={post} />
+                    <dl className={styles.mobileMetrics}>
+                      <div><dt>初週PV</dt><dd><PvMetric metrics={post.metrics} maxPv={maxCompletedPv} /></dd></div>
+                      <div><dt>流入ユーザー</dt><dd><LandingMetric metrics={post.metrics} /></dd></div>
+                    </dl>
+                  </article>
+                );
+              })}
+            </div>
+          </>
         )}
         {!params.query && (params.cursor || response.next_cursor) ? (
           <nav className={styles.pagination} aria-label="投稿一覧のページ移動">

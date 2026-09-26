@@ -2,7 +2,7 @@
 
 .page { margin-inline: auto; max-width: var(--layout-max-width); padding: var(--space-7) var(--space-page) var(--space-9); }
 .header h1 { font-size: var(--font-size-heading-sm); letter-spacing: var(--letter-spacing-tight); line-height: var(--line-height-heading); margin-block: var(--space-2); }
-.header > p:last-child, .filters > p, .sectionHeading > p, .row > p { color: var(--color-text-secondary); }
+.header > p:last-child, .filters > p, .sectionHeading > p, .graph > p, .overallStatus, .summary p, .graphList p { color: var(--color-text-secondary); }
 .eyebrow { color: var(--color-brand-primary); font-family: var(--font-family-mono); font-size: var(--font-size-xs); font-weight: var(--font-weight-semibold); letter-spacing: var(--letter-spacing-wide); margin-block-end: var(--space-2); text-transform: uppercase; }
 .filters { background: var(--color-surface); border: var(--border-width-thin) solid var(--color-border); border-radius: var(--radius-lg); margin-block: var(--space-7); padding: var(--space-5); }
 .filters h2 { margin-block-start: 0; }
@@ -10,39 +10,71 @@
 .filters label { display: grid; font-size: var(--font-size-sm); font-weight: var(--font-weight-semibold); gap: var(--space-2); }
 .filters input { background: var(--color-background-primary); border: var(--border-width-thin) solid var(--color-border-strong); border-radius: var(--radius-sm); color: var(--color-text-primary); min-height: 3rem; padding-inline: var(--space-3); }
 .filters button { background: var(--color-brand-primary); border: var(--border-width-thin) solid var(--color-brand-primary); border-radius: var(--radius-pill); color: var(--color-text-on-brand); cursor: pointer; font-weight: var(--font-weight-semibold); min-height: 3rem; padding-inline: var(--space-5); }
-.filters a, .campaignTitle a { color: var(--color-brand-primary); font-weight: var(--font-weight-semibold); }
-.filters a { padding-block: var(--space-3); }
-.summary { background: var(--color-brand-strong); border-radius: var(--radius-lg); color: var(--color-text-on-brand); padding: var(--space-6); }
+.filters a, .campaigns a { color: var(--color-brand-primary); font-weight: var(--font-weight-semibold); }
+.filters a, .disabledAction { padding-block: var(--space-3); }
+.disabledAction { color: var(--color-text-secondary); }
+.period { font-weight: var(--font-weight-semibold); margin-block: var(--space-6) var(--space-4); }
+.summary { display: grid; gap: var(--space-4); grid-template-columns: minmax(17rem, 1.5fr) 2fr; }
+.rateCard, .summaryMetrics > div { background: var(--color-surface); border: var(--border-width-thin) solid var(--color-border); border-radius: var(--radius-lg); padding: var(--space-5); }
+.rateCard { display: grid; gap: var(--space-2); }
+.rateCard > * { margin: 0; }
+.rateCard strong { color: var(--color-brand-strong); font-family: var(--font-family-mono); font-size: var(--font-size-heading-md); line-height: var(--line-height-heading); overflow-wrap: anywhere; }
+.rateReason { color: var(--color-text-primary) !important; font-weight: var(--font-weight-semibold); }
+.summaryMetrics { display: grid; gap: var(--space-4); grid-template-columns: repeat(2, minmax(0, 1fr)); margin: 0; }
+.summaryMetrics dt { font-size: var(--font-size-sm); font-weight: var(--font-weight-semibold); }
+.summaryMetrics dd { font-family: var(--font-family-mono); font-size: var(--font-size-xl); margin: var(--space-4) 0 var(--space-2); overflow-wrap: anywhere; }
+.summaryMetrics p { margin: 0; }
+.overallStatus { margin-block: var(--space-5) var(--space-8); }
+.overallStatus p { align-items: center; display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.statusBadges { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.completedBadge, .pendingBadge, .failedBadge, .archivedBadge { border: var(--border-width-thin) solid var(--color-border-strong); border-radius: var(--radius-pill); display: inline-block; font-size: var(--font-size-xs); font-weight: var(--font-weight-semibold); padding: var(--space-1) var(--space-3); }
+.completedBadge { border-color: var(--color-brand-primary); color: var(--color-brand-strong); }
+.failedBadge { border-color: var(--color-danger); color: var(--color-danger); }
 .sectionHeading { align-items: end; display: flex; gap: var(--space-4); justify-content: space-between; }
 .sectionHeading h2 { margin: 0; }
-.summary .eyebrow, .summary .sectionHeading > p { color: inherit; }
-.summary dl, .row dl { display: grid; gap: var(--space-4); grid-template-columns: repeat(4, 1fr); }
-.summary dt, .row dt { font-size: var(--font-size-sm); }
-.summary dd, .row dd { font-family: var(--font-family-mono); font-size: var(--font-size-xl); margin: var(--space-2) 0 0; overflow-wrap: anywhere; }
-.note { border-block-start: var(--border-width-thin) solid currentColor; padding-block-start: var(--space-4); }
+.graph { background: var(--color-surface); border: var(--border-width-thin) solid var(--color-border); border-radius: var(--radius-lg); padding: var(--space-6); }
+.scale { border-block-end: var(--border-width-thin) solid var(--color-border-strong); display: flex; font-family: var(--font-family-mono); font-size: var(--font-size-xs); justify-content: space-between; margin-block: var(--space-6) var(--space-4); padding-block-end: var(--space-2); }
+.graphList { display: grid; gap: var(--space-6); list-style: none; margin: 0; padding: 0; }
+.graphTitle { display: flex; gap: var(--space-4); justify-content: space-between; margin-block-end: var(--space-2); }
+.graphTitle span { font-weight: var(--font-weight-semibold); overflow-wrap: anywhere; }
+.graphTitle strong { font-family: var(--font-family-mono); }
+.graphList p { margin-block: var(--space-2) 0; }
+.comparisonUnavailable { background: var(--color-background-secondary); border-radius: var(--radius-sm); color: var(--color-text-primary) !important; font-weight: var(--font-weight-semibold); padding: var(--space-4); }
 .campaigns { margin-block-start: var(--space-8); }
-.campaigns > .sectionHeading { border-block-end: var(--border-width-medium) solid var(--color-text-primary); padding-block-end: var(--space-4); }
-.list { display: grid; }
-.row { align-items: center; border-block-end: var(--border-width-thin) solid var(--color-border-strong); display: grid; gap: var(--space-5); grid-template-columns: auto minmax(12rem, 1fr) minmax(26rem, 2fr); padding-block: var(--space-6); }
-.rank { color: var(--color-brand-primary); font-family: var(--font-family-mono); font-size: var(--font-size-xl); }
-.campaignTitle h3 { margin-block: 0 var(--space-2); overflow-wrap: anywhere; }
-.campaignTitle { display: grid; gap: var(--space-2); justify-items: start; }
-.archivedBadge { background: var(--color-background-secondary); border: var(--border-width-thin) solid var(--color-border-strong); border-radius: var(--radius-pill); font-size: var(--font-size-xs); font-weight: var(--font-weight-semibold); padding: var(--space-1) var(--space-3); }
-.row dl { margin: 0; }
-.row > p { grid-column: 3; margin: 0; }
+.campaigns > h2 { border-block-end: var(--border-width-medium) solid var(--color-text-primary); margin: 0; padding-block-end: var(--space-4); }
+.desktopTable { overflow-x: auto; }
+.desktopTable table { border-collapse: collapse; inline-size: 100%; table-layout: fixed; }
+.desktopTable caption { text-align: start; visibility: hidden; block-size: 0; }
+.desktopTable th, .desktopTable td { border-block-end: var(--border-width-thin) solid var(--color-border-strong); padding: var(--space-4) var(--space-3); text-align: start; vertical-align: top; overflow-wrap: anywhere; }
+.desktopTable thead th { font-size: var(--font-size-sm); }
+.desktopTable th:first-child { inline-size: 26%; }
+.desktopTable th:nth-child(2) { inline-size: 23%; }
+.desktopTable td:nth-child(n+3):nth-child(-n+5) { font-family: var(--font-family-mono); }
+.desktopTable td small, .desktopTable td > .statusBadges { display: flex; margin-block-start: var(--space-2); }
+.campaignName { display: grid; gap: var(--space-2); justify-items: start; }
+.campaignName h3 { margin: 0; overflow-wrap: anywhere; }
+.campaignLinks { display: flex; flex-wrap: wrap; gap: var(--space-3); }
+.mobileCards { display: none; }
 .empty { background: var(--color-surface); border: var(--border-width-thin) solid var(--color-border); margin-block-start: var(--space-5); padding: var(--space-7); text-align: center; }
 .pagination { display: flex; gap: var(--space-4); justify-content: flex-end; padding-block-start: var(--space-6); }
-.pagination a { color: var(--color-brand-primary); font-weight: var(--font-weight-semibold); }
+.visuallyHidden { block-size: 1px; clip: rect(0 0 0 0); clip-path: inset(50%); inline-size: 1px; overflow: hidden; position: absolute; white-space: nowrap; }
 .page :is(a, button, input):focus-visible { outline: var(--focus-ring-width) solid var(--color-focus-ring); outline-offset: var(--focus-ring-offset); }
 
 @media (max-width: bp.$tablet) {
-  .row { grid-template-columns: auto 1fr; }
-  .row dl, .row > p { grid-column: span 2; }
+  .desktopTable { display: none; }
+  .mobileCards { display: grid; gap: var(--space-4); margin-block-start: var(--space-5); }
+  .campaignCard { background: var(--color-surface); border: var(--border-width-thin) solid var(--color-border); border-radius: var(--radius-lg); padding: var(--space-5); }
+  .campaignCard dl { display: grid; gap: var(--space-3); margin-block: var(--space-5); }
+  .campaignCard dl > div { display: flex; gap: var(--space-4); justify-content: space-between; }
+  .campaignCard dd { font-family: var(--font-family-mono); margin: 0; overflow-wrap: anywhere; text-align: end; }
 }
+
 @media (max-width: bp.$mobile) {
   .filters form, .sectionHeading { align-items: stretch; flex-direction: column; }
   .filters label, .filters button { width: 100%; }
-  .summary dl, .row dl { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .row { gap: var(--space-4); }
+  .summary { grid-template-columns: 1fr; }
+  .summaryMetrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .graph { padding: var(--space-5); }
+  .graphTitle { align-items: flex-start; flex-direction: column; gap: var(--space-1); }
   .pagination { align-items: stretch; flex-direction: column; }
 }

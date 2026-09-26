@@ -1,5 +1,6 @@
-import { browserApiRequest } from "@/shared/api/browserApiClient";
+import { browserApiRequest, redirectToLogin } from "@/shared/api/browserApiClient";
 import { ApiError, parseApiResponse } from "@/shared/api/ApiError";
+import type { CampaignListResponse } from "@/features/campaigns/types/campaign";
 
 import { parseCsrfToken, parseHistory, parseSession, parseSessionList, parseTurn } from "./parsers";
 import type {
@@ -32,6 +33,12 @@ export function getHistory(sessionId: number, signal: AbortSignal, before?: numb
 
 export function getTurn(sessionId: number, turnId: number, signal: AbortSignal) {
   return browserApiRequest<AgentTurn>(`${BASE_PATH}/${sessionId}/turns/${turnId}`, { parseData: parseTurn, signal });
+}
+
+export function searchActiveCampaigns(query: string, signal: AbortSignal) {
+  const params = new URLSearchParams({ limit: "20", archived: "false" });
+  if (query.trim()) params.set("query", query.trim());
+  return browserApiRequest<CampaignListResponse>(`/api/v1/campaigns?${params}`, { signal });
 }
 
 export type CampaignApprovalResult = { id: number; agent_turn_id: number; title: string };
@@ -79,6 +86,7 @@ async function openTurnStream(sessionId: number, message: string, signal: AbortS
 
 async function turnStreamResponse(sessionId: number, message: string, signal: AbortSignal) {
   let response = await openTurnStream(sessionId, message, signal, readCookie("csrf_token"));
+  let retriedCsrf = false;
   if (response.status === 403) {
     try {
       await parseApiResponse(response, () => null);
@@ -92,9 +100,15 @@ async function turnStreamResponse(sessionId: number, message: string, signal: Ab
       signal,
     });
     response = await openTurnStream(sessionId, message, signal, token);
+    retriedCsrf = true;
   }
   if (!response.ok || !response.headers.get("content-type")?.startsWith("text/event-stream")) {
-    await parseApiResponse(response, parseTurn);
+    try {
+      await parseApiResponse(response, parseTurn);
+    } catch (error) {
+      if (error instanceof ApiError) redirectToLogin(error, retriedCsrf && error.code === "CSRF_VALIDATION_FAILED");
+      throw error;
+    }
     throw new Error("ストリームを開始できませんでした。");
   }
   return response;

@@ -100,32 +100,34 @@ export function useChatController(initialHistory: SessionHistory | null) {
     }
   }
 
-  async function send() {
-    const message = state.draft.trim();
+  async function send(explicitMessage?: string) {
+    const source = explicitMessage ?? state.draft;
+    const message = source.trim();
     if (!message) {
       dispatch({ type: "validation", message: "メッセージを入力してください。" });
       return;
     }
-    if (state.draft.length > MAX_MESSAGE_LENGTH) {
+    if (source.length > MAX_MESSAGE_LENGTH) {
       dispatch({ type: "validation", message: "メッセージは4,000文字以内で入力してください。" });
       return;
     }
     if (state.sending) return;
 
-    dispatch({ type: "send_started", message: state.draft });
+    dispatch({ type: "send_started", message: source });
     const controller = new AbortController();
     abortRef.current?.abort();
     abortRef.current = controller;
     turnIdRef.current = null;
+    let createdSessionId: number | null = null;
 
     try {
       let sessionId = sessionIdRef.current;
       if (sessionId === null) {
         const session = await createSession(controller.signal);
         sessionId = session.session_id;
+        createdSessionId = sessionId;
         sessionIdRef.current = sessionId;
         dispatch({ type: "session_created", session });
-        router.replace(`/chat/${sessionId}`);
       }
 
       let finished = false;
@@ -158,6 +160,8 @@ export function useChatController(initialHistory: SessionHistory | null) {
         }
       }
       dispatch({ type: "failed", message: errorMessage(error) });
+    } finally {
+      if (createdSessionId !== null) router.replace(`/chat/${createdSessionId}`);
     }
   }
 
