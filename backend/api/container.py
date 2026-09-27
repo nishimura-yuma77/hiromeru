@@ -8,6 +8,7 @@ from fastapi import Request
 
 from agent_runtime.business_tools import ToolHandlerDependencies, build_default_tool_registry
 from agent_runtime.compactor import StubContextCompactor
+from agent_runtime.definitions import validate_agent_definitions
 from agent_runtime.firewall import FakeAgentFirewall, OrcaRouterAgentFirewall
 from agent_runtime.guardrail import DeferredToolResultGuardrail, FakeToolResultGuardrail
 from agent_runtime.model import OrcaRouterModelClient
@@ -123,11 +124,11 @@ def build_default_context(  # noqa: PLR0912 - Clientごとの独立した組み�
         new_uuid=uuid.uuid4,
     )
     register_proposal_tools(context)
+    validate_agent_definitions(registry, turn_time_limit_seconds=resolved.turn_time_limit_seconds)
     if resolved.agent_client_mode == "real":
         model_client = OrcaRouterModelClient(
             base_url=resolved.orcarouter_base_url,
             api_key=resolved.orcarouter_api_key.get_secret_value(),
-            model=resolved.agent_model,
             timeout_seconds=resolved.llm_timeout_seconds,
             generation_lookup_attempts=resolved.generation_lookup_attempts,
             generation_lookup_backoff_seconds=resolved.generation_lookup_backoff_seconds,

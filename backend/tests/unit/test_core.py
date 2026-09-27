@@ -37,7 +37,6 @@ def _real_settings(**overrides: object) -> Settings:
         "orcarouter_base_url": "https://router.example.com/v1",
         "orcarouter_api_key": "router-secret",
         "orcarouter_firewall_api_key": "firewall-secret",
-        "agent_model": "provider/model",
         "x_api_key": "x-key",
         "x_api_key_secret": "x-key-secret",
         "x_access_token": "x-token",
@@ -303,7 +302,6 @@ def test_設定_実Agentは他ClientがFakeでもOrcaRouter設定だけで起動
         agent_client_mode="real",
         orcarouter_base_url="https://router.example.com/v1",
         orcarouter_api_key=SecretStr("router-secret"),
-        agent_model="provider/model",
     )
 
     assert settings.embedding_client_mode == "fake"
@@ -312,13 +310,12 @@ def test_設定_実Agentは他ClientがFakeでもOrcaRouter設定だけで起動
 
 
 def test_設定_実AgentではAgent用Credentialを必須にする() -> None:
-    with pytest.raises(ValueError, match="AGENT_MODEL"):
+    with pytest.raises(ValueError, match="ORCAROUTER_API_KEY"):
         Settings(
             auth_cookie_secret=SecretStr(SECRET),
             agent_client_mode="real",
             orcarouter_base_url="https://router.example.com/v1",
-            orcarouter_api_key=SecretStr("router-secret"),
-            agent_model="",
+            orcarouter_api_key=SecretStr(""),
         )
 
 
@@ -368,9 +365,6 @@ def test_設定_ProductionだけCron_Secretを必須にする() -> None:
         ({"lease_seconds": 300}, "LEASE_SECONDS"),
         ({"request_timeout_seconds": 0}, "REQUEST_TIMEOUT_SECONDS"),
         ({"request_timeout_seconds": 300.1}, "REQUEST_TIMEOUT_SECONDS"),
-        ({"subagent_llm_timeout_seconds": 0}, "SUBAGENT_LLM_TIMEOUT_SECONDS"),
-        ({"subagent_llm_timeout_seconds": 201}, "SUBAGENT_LLM_TIMEOUT_SECONDS"),
-        ({"subagent_llm_max_output_tokens": 0}, "Agent step/output token"),
         (
             {"agent_context_compaction_threshold_bytes": 0},
             "AGENT_CONTEXT_COMPACTION_THRESHOLD_BYTES",

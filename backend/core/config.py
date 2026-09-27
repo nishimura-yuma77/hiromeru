@@ -62,7 +62,6 @@ class Settings(BaseSettings):
     orcarouter_base_url: str = ""
     orcarouter_api_key: SecretStr = SecretStr("")
     orcarouter_firewall_api_key: SecretStr = SecretStr("")
-    agent_model: str = ""
     embedding_timeout_seconds: float = 30.0
 
     # Web検索Providerと、取得側のSSRF/response上限。
@@ -112,9 +111,6 @@ class Settings(BaseSettings):
     agent_max_steps: int = 20
     agent_max_cost_usd: Decimal = Decimal("1.00000000")
     llm_timeout_seconds: float = 60.0
-    subagent_llm_timeout_seconds: float = 120.0
-    llm_max_output_tokens: int = 4096
-    subagent_llm_max_output_tokens: int = 8192
     generation_lookup_attempts: int = 3
     generation_lookup_backoff_seconds: float = 0.1
     subagent_final_output_max_bytes: int = 64_000
@@ -208,7 +204,6 @@ class Settings(BaseSettings):
             required = {
                 "ORCAROUTER_BASE_URL": self.orcarouter_base_url,
                 "ORCAROUTER_API_KEY": self.orcarouter_api_key.get_secret_value(),
-                "AGENT_MODEL": self.agent_model,
             }
             missing = [name for name, value in required.items() if not value.strip()]
             if missing:
@@ -256,18 +251,12 @@ class Settings(BaseSettings):
             raise ValueError("STALE_TURN_SECONDS はTURN_TIME_LIMIT_SECONDSより大きくしてください")
         if self.tool_max_attempts <= 0:
             raise ValueError("TOOL_MAX_ATTEMPTS は正の整数にしてください")
-        if (
-            self.agent_max_steps <= 0
-            or self.llm_max_output_tokens <= 0
-            or self.subagent_llm_max_output_tokens <= 0
-        ):
-            raise ValueError("Agent step/output token上限は正の整数にしてください")
+        if self.agent_max_steps <= 0:
+            raise ValueError("Agent step上限は正の整数にしてください")
         if not self.agent_max_cost_usd.is_finite() or self.agent_max_cost_usd <= 0:
             raise ValueError("AGENT_MAX_COST_USD は正の有限Decimalにしてください")
         if not 0 < self.llm_timeout_seconds <= self.turn_time_limit_seconds:
             raise ValueError("LLM_TIMEOUT_SECONDS はTurn上限以下の正数にしてください")
-        if not 0 < self.subagent_llm_timeout_seconds <= self.turn_time_limit_seconds:
-            raise ValueError("SUBAGENT_LLM_TIMEOUT_SECONDS はTurn上限以下の正数にしてください")
         if self.generation_lookup_attempts <= 0:
             raise ValueError("GENERATION_LOOKUP_ATTEMPTS は正の整数にしてください")
         if self.generation_lookup_backoff_seconds <= 0:

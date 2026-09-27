@@ -135,13 +135,9 @@ PreviewとProductionには、接続先を環境ごとに分離して次を設定
 | `ORCAROUTER_BASE_URL` | OrcaRouter APIのBase URL |
 | `ORCAROUTER_API_KEY` | OrcaRouter APIの認証鍵 |
 | `ORCAROUTER_FIREWALL_API_KEY` | Agent Firewall専用のgateway-scoped認証鍵 |
-| `AGENT_MODEL` | Chat Completionsで使う明示的なモデル名 |
 | `AGENT_MAX_STEPS` | 親Turnと子Agentで共有する論理step上限。既定20 |
 | `AGENT_MAX_COST_USD` | 親Turn単位の確定USD cost上限。既定1.00000000 |
-| `LLM_TIMEOUT_SECONDS` | 1回のLLM request timeout。既定60秒 |
-| `SUBAGENT_LLM_TIMEOUT_SECONDS` | Structured Outputを返す子Agentのrequest timeout。既定120秒 |
-| `LLM_MAX_OUTPUT_TOKENS` | 1回のLLM最大出力token。既定4096 |
-| `SUBAGENT_LLM_MAX_OUTPUT_TOKENS` | Structured Outputを返す子Agentの最大出力token。既定8192 |
+| `LLM_TIMEOUT_SECONDS` | OrcaRouter接続（確定cost照会・Firewall等）の共通timeout。既定60秒。Agent別のrequest timeoutはコードで管理 |
 | `GENERATION_LOOKUP_ATTEMPTS` | 確定cost取得のbounded retry回数。既定3 |
 | `GENERATION_LOOKUP_BACKOFF_SECONDS` | 確定cost取得retryの基準待機秒。既定0.1 |
 | `X_API_KEY` | X APIのConsumer Key |
@@ -154,6 +150,7 @@ PreviewとProductionには、接続先を環境ごとに分離して次を設定
 PreviewとProductionは起動時にこれらの必須設定を検証し、Productionでは`CRON_SECRET`も必須です。FakeまたはMockの外部API Clientを明示的に使う開発・テスト環境だけは、OrcaRouter、X、GA4の実Credentialを省略できます。Secret値をBuild log、Runtime log、Response、Frontend環境変数へ出力しないでください。
 
 実Agent RunnerはOrcaRouter Chat Completionsを使用し、SDK tracingを無効化したうえで履歴、Tool loop、budget、永続化をアプリケーションが管理します。
+親Agent・施策立案Agent・コンテンツ制作Agentの指示、公開Tool、モデルID、出力形式とrequest timeoutは`backend/agent_runtime/definitions.py`で管理します。現在のモデルIDは`openai/gpt-6-sol`で、`AGENT_MODEL`などの旧環境変数は参照されません。全体のstep・cost・Turn時間上限は引き続き環境変数で管理します。
 
 ## CI
 

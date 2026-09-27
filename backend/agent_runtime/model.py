@@ -66,6 +66,7 @@ class ModelResponseFormat(StrictToolModel):
 class ModelRequest(StrictToolModel):
     """Provider非依存のnon-streaming request。"""
 
+    model_id: str = Field(min_length=1)
     messages: tuple[ModelMessage, ...] = Field(min_length=1)
     tools: tuple[ModelTool, ...] = ()
     max_output_tokens: int = Field(gt=0)
@@ -195,7 +196,6 @@ class OrcaRouterModelClient:
         *,
         base_url: str,
         api_key: str,
-        model: str,
         timeout_seconds: float,
         generation_lookup_attempts: int,
         generation_lookup_backoff_seconds: float,
@@ -208,7 +208,6 @@ class OrcaRouterModelClient:
         set_tracing_disabled(True)
         self._base_url = base_url.rstrip("/")
         self._api_key = api_key
-        self._model = model
         self._timeout = timeout_seconds
         self._attempts = generation_lookup_attempts
         self._backoff = generation_lookup_backoff_seconds
@@ -223,7 +222,7 @@ class OrcaRouterModelClient:
         cost_usd: Decimal | None = None
         try:
             kwargs: dict[str, Any] = {
-                "model": self._model,
+                "model": request.model_id,
                 "messages": [self._message_payload(message) for message in request.messages],
                 "max_completion_tokens": request.max_output_tokens,
                 "stream": False,
