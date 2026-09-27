@@ -28,3 +28,14 @@
     color: var(--color-text-primary);
   }
 }
+
+.login {
+  font-size: var(--font-size-md);
+  letter-spacing: normal;
+
+  &.inverse .mark {
+    background: var(--color-login-brand-mark);
+    border: var(--border-width-thin) solid var(--color-login-brand-mark-border);
+    color: var(--color-text-on-brand);
+  }
+}

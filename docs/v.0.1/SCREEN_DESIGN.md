@@ -109,61 +109,50 @@ flowchart TD
 | Subject | Hiromeruへ安全にログインし、採用Xの運用を再開する入口 |
 | Audience | 事前にアカウントを発行された採用マーケター |
 | Primary job | メールアドレスとパスワードを入力し、元の業務画面へ移動する |
-| 情報の優先順位 | Login Form、入力Error、Brand、サービス利用相談 |
-| Palette | 左カラムはBrand Strongと反転文字、右カラムはPaper背景、CardはWhite Surface、ErrorはDanger状態色 |
+| 情報の優先順位 | Login Form、入力Error、Brandと機能説明、管理者への問い合わせ文 |
+| Palette | 左カラムは`--color-login-brand-panel`と反転文字、右カラムは`--color-login-background`、CardはWhite Surface、ErrorはDanger状態色 |
 | Typography | LogoはLatin、見出しとFormはSans。補助文を過度に小さくしない |
-| Layout | PCはBrandとFormの2カラム、SPはBrandとLogin Cardの1カラム |
+| Layout | PCは左上のBrand・見出し・下部の機能一覧と中央のLogin Cardの2カラム、tablet未満は短いBrand HeaderとLogin Cardの1カラム |
 | Motion | Input ErrorとForm Errorが対象箇所の下端から現れるFeedbackだけに限定する |
 
 **PCワイヤー**
 
 ```text
 ┌──────────────────────────┬──────────────────────────────────────────────┐
-│                          │                                              │
-│      [H] HIROMERU        │             ┌────────────────────────┐       │
-│                          │             │ [H] HIROMERU           │       │
-│ SNS採用を自動化する      │             │                        │       │
-│ AIエージェント           │             │ ログイン               │       │
-│                          │             │                        │       │
-│                          │             │ メールアドレス         │       │
-│                          │             │ ┌────────────────────┐ │       │
-│                          │             │ │                    │ │       │
-│                          │             │ └────────────────────┘ │       │
-│                          │             │ エラーメッセージ       │       │
-│                          │             │                        │       │
-│                          │             │ パスワード     [表示] │       │
-│                          │             │ ┌────────────────────┐ │       │
-│                          │             │ │                    │ │       │
-│                          │             │ └────────────────────┘ │       │
-│                          │             │ エラーメッセージ       │       │
-│                          │             │                        │       │
+│ [H] Hiromeru             │                                              │
+│                          │             ┌────────────────────────┐       │
+│ SNS採用を                │             │ ログイン               │       │
+│ 自動化する               │             │ アカウント情報を入力   │       │
+│ AIエージェント           │             │ メールアドレス         │       │
+│ 採用施策の立案から       │             │ [ user@example.com   ] │       │
+│ 投稿後の計測まで管理     │             │ パスワード             │       │
+│                          │             │ [ ••••••••    表示 ] │       │
 │                          │             │ [     ログイン      ] │       │
 │                          │             │ Form error tray        │       │
 │                          │             └────────────────────────┘       │
-│                          │                                              │
-│                          │       サービス利用相談はXまで @hiromaru_jp  │
+│ ✓ 施策を立案してX投稿案 │       パスワードを忘れた場合は管理者に      │
+│   を自動生成             │       お問い合わせください               │
+│ ✓ 投稿後の成果を計測     │                                              │
+│ ✓ 採用文脈をAIが長期記憶 │                                              │
 └──────────────────────────┴──────────────────────────────────────────────┘
 ```
 
 - `tablet`以上で2カラムとし、左カラムはViewportの約40%、最小Inline sizeは`--login-brand-panel-min-width`（`24rem`）とする。右カラムは残りの幅を使う
-- 左カラムにHiromeru Logoと「SNS採用を自動化するAIエージェント」だけを表示し、中央付近で左揃えにする。Navigation、機能説明、装飾的な図は置かない
-- 右カラムはLogin Cardとサービス利用相談の2段とし、Login Cardを利用可能な領域の中央へ、相談導線をInline endかつBlock endへ配置する
-- 相談導線をViewportへ固定しない。高さが不足する場合は右カラムをDocument scrollし、Formと相談導線の両方へ到達できるようにする
-- Login Cardの最大Inline sizeは`--login-card-max-width`（`28rem`）とする。Card上部はHiromeru Logoと`h1`「ログイン」だけとし、挨拶、説明、登録案内、パスワード再設定を置かない
-- CardはSurfaceとBorderで背景から分ける。大きなShadow、Glass effect、背景画像は使用しない
+- 左カラムにLogoを上端、3行の「SNS採用を／自動化する／AIエージェント」と説明をその下、3つの機能を下端に表示する。2項目目は実際の計測仕様に合わせて「投稿後の成果を計測」とし、「リアルタイム計測」とは表示しない
+- 右カラムはLogin Cardと管理者への問い合わせ文の2段を中央に配置する。問い合わせ文はCard外のPlain textとし、Viewportへ固定しない。高さが不足する場合はPageをScrollする
+- Login Cardの最大Inline sizeは`--login-card-max-width`（`27rem`）。Card内にLogoを重複表示せず、`h1`「ログイン」と補助文「アカウント情報を入力してください」を置く
+- CardはSurface、Border、控えめな`--shadow-login-card`で背景から分ける。Glass effect、写真、強いShadowは使用しない
 
-**SPワイヤー**
+**Tablet / SPワイヤー**
 
 ```text
 ┌───────────────────────────────────┐
-│                                   │
-│          [H] HIROMERU             │
-│ SNS採用を自動化するAIエージェント │
+│ [H] Hiromeru                      │
+│ SNS採用を自動化するAIエージェント│
 │                                   │
 │ ┌───────────────────────────────┐ │
-│ │ [H] HIROMERU                  │ │
-│ │                               │ │
 │ │ ログイン                      │ │
+│ │ アカウント情報を入力してください│ │
 │ │                               │ │
 │ │ メールアドレス                │ │
 │ │ ┌───────────────────────────┐ │ │
@@ -179,38 +168,32 @@ flowchart TD
 │ │                               │ │
 │ │ [          ログイン         ] │ │
 │ │ Form error tray               │ │
-│ │                               │ │
-│ │ ───────────────────────────── │ │
-│ │ サービス利用相談はXまで       │ │
-│ │ @hiromaru_jp                  │ │
 │ └───────────────────────────────┘ │
-│                                   │
+│ パスワードを忘れた場合は管理者に│
+│ お問い合わせください           │
 └───────────────────────────────────┘
 ```
 
-- `tablet`未満は1カラムとし、Page上部にHiromeru Logoと「SNS採用を自動化するAIエージェント」を中央揃えで表示する
-- Login Card内にもFormの識別としてHiromeru Logoと`h1`「ログイン」を表示する
-- PageのInline paddingは`--space-4`、Login Cardの最大Inline sizeは`--login-card-max-width`とし、利用可能な幅まで広げる
-- Login ButtonはCardのInline sizeに合わせる。CardがViewportより高い場合はPage全体をScrollさせる
-- サービス利用相談はCard Footerに移し、本文との間をDividerで分ける
-- 320px幅、200% Zoom、長いError文でも横Scrollを発生させず、Input、Login Button、相談導線を失わない
+- `tablet`未満（TabletとSP）は1カラムとし、Page上部の緑のHeaderにはLogoと短い見出しだけを表示する。3行の改行は解除して幅に合わせて自然に折り返す。詳細説明と3つの機能一覧はこの幅では表示しない
+- Login Card内には`h1`「ログイン」と補助文を表示し、Logoを重複させない
+- PageのInline paddingは`--space-4`、Login Cardの最大Inline sizeは`--login-card-max-width`とし、利用可能な幅まで広げる。Tablet / SPではCardとFieldの余白を縮め、フォームを最初の画面で見つけやすくする
+- Login ButtonはCardのInline sizeに合わせる。Pageの残りの高さでFormを中央に配置し、高さが足りない場合やErrorが増えた場合はPage全体をScrollさせる
+- 管理者への問い合わせ文はCardの下に配置する
+- 320px幅、200% Zoom、長いError文でも横Scrollを発生させず、Input、Login Button、問い合わせ文を失わない
 
-**Brandとサービス利用相談**
+**Brandと管理者への問い合わせ**
 
-- Hiromeru LogoはLPと同じMark、Latin表記、比率を使う。SC-01ではNavigation Linkにせず、現在のPageを示す非操作要素とする
-- 相談の文言は「サービス利用相談はXまで」、Linkは「@hiromaru_jp」とする
-- Link先は`https://x.com/hiromaru_jp`とし、新しいTabで開く。Visible textまたはVisually hidden textで「新しいタブで開く」と伝える
-- X Logoを併記する場合は装飾扱いとし、`aria-hidden="true"`を設定する
-- PCでは相談導線を右カラム右下、SPではLogin Cardの下部に表示する
-- 実装前に`--login-brand-panel-min-width`と`--login-card-max-width`をLayout tokenへ追加し、SC-01のComponent内へ寸法のLiteralを重複して記述しない
+- Hiromeru Logoは共通Brandのログイン用バリエーションとし、Markの比率を維持しつつ表記を「Hiromeru」、暗い背景上のMarkを半透明の白にする。Navigation Linkにはしない
+- 問い合わせ文言は「パスワードを忘れた場合は管理者にお問い合わせください」とする。実装されていないパスワード再設定や外部リンクを示さない
+- 色・寸法・Shadowを`shared/styles/_tokens.scss`に定義し、SC-01のComponentは意味別tokenを参照する
 
 **Formと入力属性**
 
-- EmailとPasswordは6.14.2の共通`TextField`を使用する。Labelを常に表示し、Placeholderだけで項目を示さない
+- EmailとPasswordはLabelを常に表示し、Placeholderだけで項目を示さない。`user@example.com`とPasswordの伏字は入力済みの値ではなくPlaceholderとする
 - Emailは`type="email"`、`name="email"`、`autocomplete="username"`、`inputmode="email"`を設定する
 - Passwordは`type="password"`、`name="password"`、`autocomplete="current-password"`を設定する
 - Password Manager、自動入力、貼り付けを許可する。Passwordへ文字種や長さのClient validationを追加しない
-- Passwordの「表示／隠す」は`TextField`の`trailingAction`へVisibleなButtonとして置く。表示を切り替えても値、選択範囲、Focusを維持する
+- Passwordの「表示／隠す」はInput内右端へVisibleなButtonとして置く。表示を切り替えても値、選択範囲、Focusを維持する
 - EnterでSubmitできる。EmailはSubmit時に前後の空白を除き、Passwordは加工しない
 - Client validationはEmailの必須・形式とPasswordの必須だけを扱う。失敗時はRequestを送らず、最初のError InputへFocusを移す
 
@@ -2626,7 +2609,7 @@ type TextFieldProps = Omit<
 - `error`がある場合は`aria-invalid="true"`とし、入力直後ではなく、Blur後またはSubmit後に利用側が渡す。Error文は入力の直下へ表示し、Inputの`aria-describedby`で関連付ける
 - 必須項目はnativeの`required`に加え、Labelの横に「必須」とTextで表示する。任意項目に記号だけの説明を使わない
 - `trailingAction`は表示上InputのInline endへ置くが、Inputと重ねない。Passwordの表示切替など、Fieldに直接関係する1つの操作だけに使用する
-- `TextField`は`trailingAction`の処理や文言を知らない。SC-01では利用側がPasswordの「表示／隠す」Buttonと状態を渡す
+- `TextField`は`trailingAction`の処理や文言を知らない。SC-01のログイン専用FormではPassword Input右端に「表示／隠す」Buttonを配置し、表示状態をForm側で管理する
 
 **Anatomyと状態**
 
