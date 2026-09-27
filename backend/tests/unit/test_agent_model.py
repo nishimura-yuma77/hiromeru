@@ -12,6 +12,7 @@ from agent_runtime.model import (
     ModelCallError,
     ModelMessage,
     ModelRequest,
+    ModelResponseFormat,
     ModelTool,
     OrcaRouterModelClient,
 )
@@ -59,13 +60,17 @@ def test_Model_parseは正確に1件のtool_callだけを許可する() -> None:
         _response(calls=[_call(), _call()], finish="tool_calls"),
         _response(calls=[_call("[]")], finish="tool_calls"),
         _response(content="", finish="stop"),
-        _response(content="answer", finish="length"),
         _response(content="answer", refusal="blocked"),
     ],
 )
 def test_Model_parseは曖昧またはmalformedなdecisionを拒否する(response) -> None:
     with pytest.raises(ModelCallError, match="MODEL_MALFORMED_RESPONSE"):
         OrcaRouterModelClient._parse_response(response)
+
+
+def test_Model_parseは出力上限をmalformedと分離する() -> None:
+    with pytest.raises(ModelCallError, match="MODEL_OUTPUT_LIMIT_EXCEEDED"):
+        OrcaRouterModelClient._parse_response(_response(content="answer", finish="length"))
 
 
 class _Clock:
@@ -112,7 +117,6 @@ async def test_OrcaRouter_Clientはheader_request_idとDecimal_costを返す(mon
             completions=SimpleNamespace(with_raw_response=SimpleNamespace(create=_Create().create))
         )
     )
-    client._model = "provider/model"
     client._timeout = 10
 
     async def confirmed_cost(request_id: str) -> Decimal:
@@ -122,6 +126,7 @@ async def test_OrcaRouter_Clientはheader_request_idとDecimal_costを返す(mon
     monkeypatch.setattr(client, "_confirmed_cost", confirmed_cost)
     result = await client.complete(
         ModelRequest(
+            model_id="provider/model",
             messages=(ModelMessage(role="user", content="safe"),),
             tools=(
                 ModelTool(
@@ -135,16 +140,40 @@ async def test_OrcaRouter_Clientはheader_request_idとDecimal_costを返す(mon
                 ),
             ),
             max_output_tokens=10,
+            timeout_seconds=20,
+            response_format=ModelResponseFormat(
+                name="result",
+                schema={
+                    "type": "object",
+                    "properties": {"answer": {"type": "string"}},
+                    "required": ["answer"],
+                },
+            ),
+            reasoning_effort="low",
         )
     )
 
     assert captured["extra_headers"] == {"X-OrcaRouter-Include-Cost": "true"}
+    assert captured["model"] == "provider/model"
     assert result.request_id == "req-1"
     assert result.cost_usd == Decimal("0.01000001")
     assert result.prompt_tokens == 12
     assert result.completion_tokens == 3
     assert captured["parallel_tool_calls"] is False
+    assert captured["timeout"] == 20
     assert captured["tools"][0]["function"]["parameters"]["additionalProperties"] is False
+    assert captured["reasoning_effort"] == "low"
+    assert captured["response_format"]["type"] == "json_schema"
+    assert captured["response_format"]["json_schema"]["strict"] is True
+    assert captured["response_format"]["json_schema"]["schema"]["additionalProperties"] is False
+    await client.complete(
+        ModelRequest(
+            model_id="provider/other-model",
+            messages=(ModelMessage(role="user", content="safe"),),
+            max_output_tokens=10,
+        )
+    )
+    assert captured["model"] == "provider/other-model"
 
 
 @pytest.mark.asyncio
@@ -167,13 +196,14 @@ async def test_OrcaRouter_Clientはsecurity_error本文を公開しない() -> N
             completions=SimpleNamespace(with_raw_response=SimpleNamespace(create=create))
         )
     )
-    client._model = "provider/model"
     client._timeout = 10
 
     with pytest.raises(GuardrailBlocked) as info:
         await client.complete(
             ModelRequest(
-                messages=(ModelMessage(role="user", content="safe"),), max_output_tokens=10
+                model_id="provider/model",
+                messages=(ModelMessage(role="user", content="safe"),),
+                max_output_tokens=10,
             )
         )
     assert secret not in str(info.value)
@@ -199,13 +229,14 @@ async def test_OrcaRouter_Clientはfirewall_errorをguardrailと分離しrequest
             completions=SimpleNamespace(with_raw_response=SimpleNamespace(create=create))
         )
     )
-    client._model = "provider/model"
     client._timeout = 10
 
     with pytest.raises(ModelCallError, match="MODEL_FIREWALL_BLOCKED") as info:
         await client.complete(
             ModelRequest(
-                messages=(ModelMessage(role="user", content="safe"),), max_output_tokens=10
+                model_id="provider/model",
+                messages=(ModelMessage(role="user", content="safe"),),
+                max_output_tokens=10,
             )
         )
     assert info.value.request_id == "blocked-request"
@@ -224,13 +255,13 @@ async def test_OrcaRouter_Clientは外側timeoutの変換を妨げない() -> No
             completions=SimpleNamespace(with_raw_response=SimpleNamespace(create=create))
         )
     )
-    client._model = "provider/model"
     client._timeout = 10
 
     with pytest.raises(TimeoutError):
         async with asyncio.timeout(0.01):
             await client.complete(
                 ModelRequest(
+                    model_id="provider/model",
                     messages=(ModelMessage(role="user", content="safe"),),
                     max_output_tokens=10,
                 )

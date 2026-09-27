@@ -1,8 +1,14 @@
 import asyncio
 from decimal import Decimal
+from typing import Any, cast
 
+import pytest
 from sqlalchemy import select
 
+from agent_runtime import definitions
+from agent_runtime.budget import TurnBudget
+from agent_runtime.definitions import get_agent_definition
+from agent_runtime.executor import ToolExecutor
 from agent_runtime.model import (
     FakeModelClient,
     FinalAnswer,
@@ -13,15 +19,24 @@ from agent_runtime.model import (
     ModelToolCall,
 )
 from agent_runtime.real_runner import RealAgentRunner
+from agent_runtime.runner import (
+    AgentContext,
+    AgentContextEntry,
+    CampaignPlannerOutput,
+    ChildRunInput,
+)
+from api.sse import NullReporter
 from domain.enums import (
     AgentContentSource,
     AgentContextClass,
     AgentItemContextStatus,
     AgentItemType,
     AgentTurnStatus,
+    AgentType,
 )
-from models import AgentItem, LlmCall, SecurityEvent
+from models import AgentItem, AgentSession, LlmCall, SecurityEvent
 from repositories.agent import SessionRepository, TurnRepository
+from services.agent_context import AgentContextBuilder
 from services.context import ServiceContext
 from tests.support.client import Account
 
@@ -62,6 +77,138 @@ def _rid(ctx: ServiceContext, label: str) -> str:
     return f"{label}-{ctx.new_uuid().hex}"
 
 
+def test_子Agent入力は監査IDを除外し親会話を明示する() -> None:
+    context = AgentContext(
+        entries=(
+            AgentContextEntry(
+                kind="item",
+                role="user",
+                content={
+                    "request": {
+                        "request_item_id": 54191,
+                        "request": "提案ツールを使って",
+                        "conversation": [
+                            {"role": "user", "text": "エンジニア採用施策を考えて"},
+                            {"role": "assistant", "text": "採用施策の草案です"},
+                        ],
+                    }
+                },
+                item_id=1,
+            ),
+        ),
+        estimated_utf8_bytes=0,
+    )
+
+    messages = RealAgentRunner._messages(AgentType.CAMPAIGN_PLANNER, context)
+
+    assert messages[-1].content is not None
+    assert "Current user request:\n提案ツールを使って" in messages[-1].content
+    assert "エンジニア採用施策を考えて" in messages[-1].content
+    assert "54191" not in messages[-1].content
+
+
+def test_実Runnerは検索Toolに実行時上限と施策検索方法を公開する(ctx: ServiceContext) -> None:
+    runner = RealAgentRunner(ctx, FakeModelClient([]))
+    tools = {tool.name: tool for tool in runner._tools(AgentType.PARENT)}
+
+    for name in ("search_long_term_memory", "search_campaigns", "search_posts"):
+        properties = cast(dict[str, Any], tools[name].parameters["properties"])
+        limit = cast(dict[str, Any], properties["limit"])
+        assert limit["maximum"] == ctx.settings.tool_search_limit
+    campaign_properties = cast(dict[str, Any], tools["search_campaigns"].parameters["properties"])
+    created_from = cast(dict[str, Any], campaign_properties["created_from"])
+    assert created_from["anyOf"][0]["pattern"].endswith("Z$")
+    assert "natural-language query" in tools["search_campaigns"].description
+    assert "not wildcard" in tools["search_campaigns"].description
+
+
+async def test_子Agentは自分のモデルと構造化出力設定を使う(
+    account: Account, ctx: ServiceContext, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    parent_id = await account.create_session()
+    child_definition = get_agent_definition(AgentType.CAMPAIGN_PLANNER)
+    monkeypatch.setattr(
+        definitions,
+        "AGENT_DEFINITIONS",
+        {
+            **definitions.AGENT_DEFINITIONS,
+            AgentType.CAMPAIGN_PLANNER: child_definition.model_copy(
+                update={
+                    "model": child_definition.model.model_copy(
+                        update={"model_id": "provider/planner"}
+                    )
+                }
+            ),
+        },
+    )
+    now = ctx.clock.now()
+    async with ctx.session_factory() as session, session.begin():
+        child = AgentSession(
+            marketer_id=account.marketer_id,
+            parent_session_id=parent_id,
+            agent=AgentType.CAMPAIGN_PLANNER,
+            created_at=now,
+            updated_at=now,
+        )
+        session.add(child)
+        await session.flush()
+        turn = await TurnRepository(session).create_turn(child.id, now)
+        await TurnRepository(session).append_item(
+            turn.id,
+            key="child-input",
+            item_type=AgentItemType.USER_MESSAGE,
+            source=AgentContentSource.SYSTEM,
+            content={"request": {"request": "エンジニア採用の案を作って"}},
+            now=now,
+        )
+    context = await AgentContextBuilder(ctx).build(child.id, turn.id)
+    reporter = NullReporter()
+    model = _use_real_runner(
+        ctx,
+        [
+            _final(
+                _rid(ctx, "planner-model"),
+                CampaignPlannerOutput(
+                    missing_information=("募集職種は何ですか？",)
+                ).model_dump_json(),
+            )
+        ],
+    )
+    budget = TurnBudget(now, ctx.clock, 200, 20, Decimal("1"))
+    result = await ctx.agent_runner.run_child(
+        ChildRunInput(
+            agent_type=AgentType.CAMPAIGN_PLANNER,
+            session_id=child.id,
+            turn_id=turn.id,
+            parent_session_id=parent_id,
+            parent_turn_id=turn.id,
+            marketer_id=account.marketer_id,
+            company_id=account.company_id,
+            request={"request": "エンジニア採用の案を作って"},
+            context=context,
+            tools=ToolExecutor(
+                ctx,
+                marketer_id=account.marketer_id,
+                company_id=account.company_id,
+                session_id=child.id,
+                turn_id=turn.id,
+                reporter=reporter,
+                agent_context=context,
+                budget=budget,
+            ),
+            parent_started_at=now,
+            budget=budget,
+        ),
+        reporter,
+    )
+
+    assert isinstance(result.output, CampaignPlannerOutput)
+    assert model.requests[0].model_id == "provider/planner"
+    assert model.requests[0].response_format is not None
+    assert model.requests[0].reasoning_effort == "low"
+    assert all(tool.name != "propose_campaign" for tool in model.requests[0].tools)
+
+
 async def test_実Runnerはmulti_step_loopを実行しLLM生成元を関連付ける(
     account: Account, ctx: ServiceContext
 ) -> None:
@@ -91,6 +238,7 @@ async def test_実Runnerはmulti_step_loopを実行しLLM生成元を関連付�
     assert data["items"][-1]["content"] == {"text": "最終回答です"}
     assert len(model.requests) == 2
     assert model.requests[0].tools
+    assert model.requests[0].model_id == get_agent_definition(AgentType.PARENT).model.model_id
     async with ctx.session_factory() as session:
         calls = list(
             (

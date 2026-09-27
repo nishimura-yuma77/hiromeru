@@ -23,8 +23,8 @@ from agent_runtime.tools import (
 from clients.web_fetch import (
     ContentTooLargeError,
     ResolvedUrl,
-    SafeWebFetcher,
     UnsafeUrlError,
+    WebFetcher,
     WebFetchError,
 )
 from clients.web_search import ProviderSearchResult, WebSearchProvider, WebSearchProviderError
@@ -39,7 +39,7 @@ _ALL_AGENTS = frozenset({AgentType.PARENT, AgentType.CAMPAIGN_PLANNER, AgentType
 class WebToolDependencies:
     session_factory: async_sessionmaker[AsyncSession]
     search_provider: WebSearchProvider
-    fetcher: SafeWebFetcher
+    fetcher: WebFetcher
     new_uuid: Callable[[], uuid.UUID]
 
 

@@ -16,6 +16,7 @@ if TYPE_CHECKING:
 _TRUSTED_FIELD_NAMES = frozenset(
     {
         "agent_type",
+        "agent_context",
         "company_id",
         "marketer_id",
         "parent_activity_id",
@@ -134,6 +135,7 @@ class TrustedToolContext(StrictToolModel):
     turn_status: AgentTurnStatus
     turn_started_at: datetime
     provenance: tuple[ToolProvenanceRef, ...] = ()
+    agent_context: Any = Field(default=None, exclude=True)
     budget: Any = Field(default=None, exclude=True)
     progress_reporter: Any = Field(default=None, exclude=True)
     parent_activity_id: str | None = Field(default=None, exclude=True)

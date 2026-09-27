@@ -11,6 +11,7 @@ from httpx import ASGITransport, AsyncClient
 from pydantic import SecretStr
 
 from agent_runtime.business_tools import ToolHandlerDependencies, build_default_tool_registry
+from agent_runtime.clarification_tools import register_clarification_tool
 from agent_runtime.firewall import FakeAgentFirewall
 from agent_runtime.guardrail import FakeToolResultGuardrail
 from agent_runtime.proposal_tools import register_proposal_tools
@@ -121,6 +122,7 @@ def ctx(
         new_uuid=uuid.uuid4,
     )
     register_proposal_tools(context)
+    register_clarification_tool(registry)
     return context
 
 

@@ -7,7 +7,10 @@ import asyncio
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
+from pydantic import ValidationError
+
 from agent_runtime.budget import TurnBudget
+from agent_runtime.clarification_tools import AskUserOutput
 from agent_runtime.executor import ToolExecutor
 from agent_runtime.runner import AgentRunError, AgentRunInput, ProgressReporter
 from core.errors import DEFAULT_MESSAGES, ERROR_SPECS, AppError, FieldError
@@ -15,7 +18,7 @@ from core.logging import get_logger, safe_error_text
 from core.masking import mask_text
 from domain.constants import SESSION_TITLE_LENGTH
 from domain.enums import AgentContentSource, AgentItemType, AgentTurnStatus
-from domain.requests import MessageRequest
+from domain.requests import ClarificationResponseRequest, MessageRequest
 from repositories.agent import SessionRepository, TurnRepository
 from services.agent_context import AgentContextBuilder, ContextCompactionError
 from services.context import AuthContext, ServiceContext
@@ -59,8 +62,8 @@ class TurnService:
         if current is None or current.archived_at is not None:
             raise AppError("AGENT_SESSION_NOT_FOUND")
         # 3. Request Bodyの検証。不正な場合はTurnを作成しない。
-        message = self._validate_message(await body_loader())
-        masked = mask_text(message)
+        request = validate_model(MessageRequest, parse_json_object(await body_loader()))
+        message = self._validate_message(request.message) if request.message is not None else None
         now = self._ctx.clock.now()
         # 4. Session行をロックし、復旧 → 実行中の確認 → Turn作成を1つの短いTransactionで行う。
         async with self._ctx.session_factory() as session, session.begin():
@@ -81,22 +84,29 @@ class TurnService:
                 )
             if await turns.has_active_chat_turn(session_id):
                 raise AppError("TURN_IN_PROGRESS")
+            if request.clarification_response is not None:
+                message, content = await self._clarification_input(
+                    turns, session_id, request.clarification_response
+                )
+            else:
+                assert message is not None  # noqa: S101 - MessageRequestの排他検証
+                message = mask_text(message)
+                content = {"text": message}
             turn = await turns.create_turn(session_id, now)
             await turns.append_item(
                 turn.id,
                 key="user-message",
                 item_type=AgentItemType.USER_MESSAGE,
                 source=AgentContentSource.USER_INPUT,
-                content={"text": masked},
+                content=content,
                 now=now,
             )
-            title = masked.replace("\r\n", " ").replace("\n", " ").replace("\r", " ")
+            title = message.replace("\r\n", " ").replace("\n", " ").replace("\r", " ")
             await sessions.touch(session_id, now, title=title[:SESSION_TITLE_LENGTH])
-            return PreparedTurn(auth, session_id, turn.id, turn.turn_number, now, masked)
+            return PreparedTurn(auth, session_id, turn.id, turn.turn_number, now, message)
 
-    def _validate_message(self, raw_body: bytes) -> str:
-        request = validate_model(MessageRequest, parse_json_object(raw_body))
-        message = request.message.strip()
+    def _validate_message(self, value: str) -> str:
+        message = value.strip()
         field_error: FieldError | None = None
         if not message:
             field_error = {
@@ -116,6 +126,44 @@ class TurnService:
         if field_error is not None:
             raise AppError("INVALID_ARGUMENT", field_errors=[field_error])
         return message
+
+    async def _clarification_input(
+        self,
+        turns: TurnRepository,
+        session_id: int,
+        reply: ClarificationResponseRequest,
+    ) -> tuple[str, dict[str, object]]:
+        """DB正本の質問で回答を照合し、現在Turnの入力を構築する。"""
+        data = await turns.clarification_questions(session_id, reply.question_turn_id)
+        try:
+            questions = AskUserOutput.model_validate(data).questions
+        except (ValidationError, TypeError):
+            raise AppError("CLARIFICATION_REQUEST_NOT_FOUND") from None
+        if reply.question_turn_id in await turns.answered_question_turn_ids(
+            session_id, [reply.question_turn_id]
+        ):
+            raise AppError("CLARIFICATION_ALREADY_ANSWERED")
+        if len(reply.answers) != len(questions) or any(
+            answer.question_index != index for index, answer in enumerate(reply.answers)
+        ):
+            raise AppError("INVALID_ARGUMENT")
+        answers = [mask_text(answer.answer) for answer in reply.answers]
+        message = "\n".join(
+            f"質問{index + 1}: {question}\n回答{index + 1}: {answers[index]}"
+            for index, question in enumerate(questions)
+        )
+        if len(message) > self._ctx.settings.message_max_length:
+            raise AppError("INVALID_ARGUMENT")
+        return message, {
+            "text": message,
+            "clarification_response": {
+                "question_turn_id": reply.question_turn_id,
+                "answers": [
+                    {"question_index": index, "answer": answer}
+                    for index, answer in enumerate(answers)
+                ],
+            },
+        }
 
     async def execute(self, prepared: PreparedTurn, reporter: ProgressReporter) -> TurnView:
         """Agentのループを実行し、Turnを終端状態へ更新して、最終状態のTurnを返す。

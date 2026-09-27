@@ -7,6 +7,7 @@ from typing import Any
 
 from sqlalchemy import and_, exists, func, literal, or_, select, tuple_, update
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import aliased
 
 from domain.enums import (
     AgentContentSource,
@@ -62,6 +63,7 @@ class TurnBundle:
     notices: list[SecurityEvent]
     approval: ApiIdempotencyRequest | None
     completed_tool_call_ids: frozenset[int] = frozenset()
+    answered_question_turn_ids: frozenset[int] = frozenset()
 
     @property
     def is_approval(self) -> bool:
@@ -164,6 +166,59 @@ class TurnRepository:
     def __init__(self, session: AsyncSession) -> None:
         """セッションを受け取る。"""
         self._session = session
+
+    async def clarification_questions(self, session_id: int, turn_id: int) -> dict[str, Any] | None:
+        """同じ親Sessionの完了済み質問Tool Resultだけを取得する。"""
+        call = aliased(AgentItem)
+        stmt = (
+            select(AgentItem.content)
+            .join(AgentTurn, AgentTurn.id == AgentItem.agent_turn_id)
+            .join(AgentSession, AgentSession.id == AgentTurn.session_id)
+            .join(call, call.id == AgentItem.related_tool_call_item_id)
+            .join(ToolExecution, ToolExecution.tool_call_item_id == call.id)
+            .where(
+                AgentTurn.id == turn_id,
+                AgentTurn.session_id == session_id,
+                AgentTurn.status == AgentTurnStatus.COMPLETED,
+                AgentSession.agent == AgentType.PARENT,
+                AgentSession.parent_session_id.is_(None),
+                AgentItem.item_type == AgentItemType.TOOL_RESULT,
+                AgentItem.context_status == AgentItemContextStatus.ACTIVE,
+                AgentItem.content["success"].as_boolean().is_(True),
+                call.agent_turn_id == turn_id,
+                call.item_type == AgentItemType.TOOL_CALL,
+                call.content["name"].as_string() == "ask_user",
+                ToolExecution.status == ToolExecutionStatus.COMPLETED,
+            )
+        )
+        content = (await self._session.execute(stmt)).scalar_one_or_none()
+        return content.get("data") if isinstance(content, dict) else None
+
+    async def answered_question_turn_ids(
+        self, session_id: int, question_turn_ids: list[int]
+    ) -> frozenset[int]:
+        """完了したTurnのactiveなユーザー回答に紐づく質問Turn IDを返す。"""
+        if not question_turn_ids:
+            return frozenset()
+        question = aliased(AgentTurn)
+        question_id = AgentItem.content["clarification_response"]["question_turn_id"].as_integer()
+        stmt = (
+            select(question.id)
+            .select_from(AgentItem)
+            .join(AgentTurn, AgentTurn.id == AgentItem.agent_turn_id)
+            .join(question, question.id == question_id)
+            .where(
+                question.id.in_(question_turn_ids),
+                question.session_id == session_id,
+                AgentTurn.session_id == session_id,
+                AgentTurn.turn_number > question.turn_number,
+                AgentTurn.status == AgentTurnStatus.COMPLETED,
+                AgentItem.item_type == AgentItemType.USER_MESSAGE,
+                AgentItem.context_status == AgentItemContextStatus.ACTIVE,
+            )
+            .distinct()
+        )
+        return frozenset((await self._session.execute(stmt)).scalars())
 
     @staticmethod
     def _is_api_turn(turn_id_column: Any) -> Any:  # noqa: ANN401 - SQL式のため
@@ -731,6 +786,7 @@ class TurnRepository:
                 )
             ).scalars()
         )
+        answered_question_turn_ids = await self.answered_question_turn_ids(turns[0].session_id, ids)
         return [
             TurnBundle(
                 turn,
@@ -738,6 +794,7 @@ class TurnRepository:
                 notices[turn.id],
                 approvals.get(turn.id),
                 completed_tool_call_ids,
+                answered_question_turn_ids,
             )
             for turn in turns
         ]

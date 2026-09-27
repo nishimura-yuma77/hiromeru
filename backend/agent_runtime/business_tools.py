@@ -135,8 +135,8 @@ def _aware_range(start: str | None, end: str | None) -> tuple[datetime | None, d
 
 
 class SearchCampaignsInput(_SearchInput):
-    created_from: str | None = None
-    created_to: str | None = None
+    created_from: str | None = Field(default=None, pattern=_UTC_PATTERN)
+    created_to: str | None = Field(default=None, pattern=_UTC_PATTERN)
 
     @model_validator(mode="after")
     def _range(self) -> Self:
@@ -146,8 +146,8 @@ class SearchCampaignsInput(_SearchInput):
 
 class SearchPostsInput(_SearchInput):
     campaign_id: int | None = Field(default=None, gt=0)
-    published_from: str | None = None
-    published_to: str | None = None
+    published_from: str | None = Field(default=None, pattern=_UTC_PATTERN)
+    published_to: str | None = Field(default=None, pattern=_UTC_PATTERN)
 
     @model_validator(mode="after")
     def _range(self) -> Self:

@@ -1,0 +1,272 @@
+@use "@/shared/styles/breakpoints" as breakpoints;
+
+.page {
+  min-block-size: 100dvb;
+}
+
+.brandPanel {
+  display: none;
+}
+
+.main {
+  align-items: center;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+  justify-content: center;
+  min-block-size: 100dvb;
+  padding: var(--space-6) var(--space-4);
+}
+
+.mobileBrand {
+  text-align: center;
+
+  p {
+    color: var(--color-text-secondary);
+    font-size: var(--font-size-sm);
+    line-height: var(--line-height-body);
+    margin: var(--space-3) 0 0;
+  }
+}
+
+.card {
+  background: var(--color-surface);
+  border: var(--border-width-thin) solid var(--color-border);
+  border-radius: var(--radius-lg);
+  inline-size: 100%;
+  max-inline-size: var(--login-card-max-width);
+  padding: var(--space-6) var(--space-5);
+
+  h1 {
+    font-size: var(--font-size-xl);
+    line-height: var(--line-height-heading);
+    margin: var(--space-6) 0;
+  }
+}
+
+.cardBrand {
+  display: flex;
+}
+
+.field {
+  margin-block-end: var(--space-5);
+
+  label {
+    display: block;
+    font-size: var(--font-size-sm);
+    font-weight: var(--font-weight-semibold);
+    margin-block-end: var(--space-2);
+  }
+
+  input {
+    background: var(--color-surface);
+    border: var(--border-width-thin) solid var(--color-border-strong);
+    border-radius: var(--radius-sm);
+    color: var(--color-text-primary);
+    inline-size: 100%;
+    min-block-size: var(--control-min-height);
+    padding: var(--space-3) var(--space-4);
+    transition: border-color var(--duration-fast) var(--easing-standard);
+
+    &:hover:not(:disabled) {
+      border-color: var(--color-brand-primary);
+    }
+
+    &:focus-visible {
+      outline: var(--focus-ring-width) solid var(--color-focus-ring);
+      outline-offset: var(--focus-ring-offset);
+    }
+
+    &[aria-invalid="true"] {
+      border-color: var(--color-danger);
+    }
+
+    &:disabled {
+      background: var(--color-surface-disabled);
+      color: var(--color-text-disabled);
+    }
+  }
+}
+
+.passwordLabel {
+  align-items: center;
+  display: flex;
+  justify-content: space-between;
+
+  button {
+    background: transparent;
+    border: 0;
+    color: var(--color-brand-primary);
+    cursor: pointer;
+    min-block-size: var(--control-min-height);
+    padding: 0 var(--space-2);
+
+    &:hover:not(:disabled) {
+      text-decoration: underline;
+    }
+
+    &:focus-visible {
+      outline: var(--focus-ring-width) solid var(--color-focus-ring);
+      outline-offset: var(--focus-ring-offset);
+    }
+  }
+}
+
+.fieldError {
+  color: var(--color-danger);
+  font-size: var(--font-size-sm);
+  line-height: var(--line-height-heading);
+  margin: var(--space-2) 0 0;
+  overflow-wrap: anywhere;
+}
+
+.submit {
+  background: var(--color-brand-primary);
+  border: var(--border-width-thin) solid var(--color-brand-primary);
+  border-radius: var(--radius-sm);
+  color: var(--color-text-on-brand);
+  cursor: pointer;
+  font-weight: var(--font-weight-semibold);
+  inline-size: 100%;
+  min-block-size: var(--control-min-height);
+  padding: var(--space-3) var(--space-4);
+  transition: background-color var(--duration-fast) var(--easing-standard);
+
+  &:hover:not(:disabled) {
+    background: var(--color-brand-strong);
+  }
+
+  &:active:not(:disabled) {
+    opacity: 0.9;
+  }
+
+  &:focus-visible {
+    outline: var(--focus-ring-width) solid var(--color-focus-ring);
+    outline-offset: var(--focus-ring-offset);
+  }
+
+  &:disabled {
+    background: var(--color-surface-disabled);
+    border-color: var(--color-border);
+    color: var(--color-text-disabled);
+    cursor: not-allowed;
+  }
+}
+
+.status {
+  block-size: var(--space-5);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+  margin-block-start: var(--space-2);
+  overflow: hidden;
+}
+
+.formError {
+  background: var(--color-danger-surface);
+  border-inline-start: var(--border-width-medium) solid var(--color-danger);
+  color: var(--color-danger);
+  margin-block-start: var(--space-3);
+  overflow-wrap: anywhere;
+  padding: var(--space-3) var(--space-4);
+
+  p {
+    font-size: var(--font-size-sm);
+    line-height: var(--line-height-body);
+    margin: 0;
+  }
+
+  button {
+    background: transparent;
+    border: 0;
+    color: inherit;
+    cursor: pointer;
+    font-weight: var(--font-weight-semibold);
+    margin-block-start: var(--space-2);
+    padding: var(--space-2) 0;
+    text-decoration: underline;
+
+    &:focus-visible {
+      outline: var(--focus-ring-width) solid var(--color-focus-ring);
+      outline-offset: var(--focus-ring-offset);
+    }
+  }
+}
+
+.cardFooter {
+  border-block-start: var(--border-width-thin) solid var(--color-border);
+  display: flex;
+  flex-wrap: wrap;
+  font-size: var(--font-size-sm);
+  gap: var(--space-2);
+  line-height: var(--line-height-body);
+  margin-block-start: var(--space-6);
+  padding-block-start: var(--space-5);
+
+  a {
+    color: var(--color-brand-primary);
+    font-weight: var(--font-weight-semibold);
+    overflow-wrap: anywhere;
+
+    &:focus-visible {
+      outline: var(--focus-ring-width) solid var(--color-focus-ring);
+      outline-offset: var(--focus-ring-offset);
+    }
+  }
+}
+
+.visuallyHidden {
+  block-size: var(--border-width-thin);
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  inline-size: var(--border-width-thin);
+  overflow: hidden;
+  position: absolute;
+  white-space: nowrap;
+}
+
+@media (min-width: breakpoints.$tablet) {
+  .page {
+    display: grid;
+    grid-template-columns: minmax(var(--login-brand-panel-min-width), 2fr) 3fr;
+  }
+
+  .brandPanel {
+    align-items: flex-start;
+    background: var(--color-brand-strong);
+    color: var(--color-text-on-brand);
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    padding: var(--space-page);
+
+    p {
+      font-size: var(--font-size-heading-sm);
+      font-weight: var(--font-weight-semibold);
+      line-height: var(--line-height-heading);
+      margin: var(--space-7) 0 0;
+    }
+  }
+
+  .main {
+    padding: var(--space-7) var(--space-page);
+  }
+
+  .mobileBrand {
+    display: none;
+  }
+
+  .card {
+    padding: var(--space-7) var(--space-6);
+  }
+
+  .cardFooter {
+    margin-block-start: var(--space-7);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .field input,
+  .submit {
+    transition: none;
+  }
+}

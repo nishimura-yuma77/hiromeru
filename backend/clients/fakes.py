@@ -1,4 +1,4 @@
-"""ローカル開発用の決定的な外部API Fake。Production/Previewでは使用しない。"""
+"""外部通信を行わない決定的な外部API Fake。"""
 
 import hashlib
 import random

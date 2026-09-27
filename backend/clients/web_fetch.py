@@ -94,6 +94,54 @@ class PinnedTransport(Protocol):
         ...
 
 
+class WebFetcher(Protocol):
+    """Web Toolが利用するURL解決・本文取得境界。"""
+
+    async def resolve(self, url: str) -> ResolvedUrl:
+        """URLを検証して取得用表現へ変換する。"""
+        ...
+
+    async def fetch(self, initial: ResolvedUrl) -> tuple[str, str]:
+        """検証済みURLの最終URLと本文を返す。"""
+        ...
+
+
+class FakeWebFetcher:
+    """DNS・HTTP通信を行わず固定本文を返すWeb取得Fake。"""
+
+    async def resolve(self, url: str) -> ResolvedUrl:
+        """HTTPS URLの構文だけを検証し、外部名前解決を行わない。"""
+        try:
+            parts = urlsplit(url)
+            host = parts.hostname
+            port = parts.port or 443
+        except ValueError as error:
+            raise UnsafeUrlError from error
+        if (
+            len(url) > _MAX_URL_LENGTH
+            or any(ord(character) < 32 or ord(character) == 127 for character in url)
+            or parts.scheme.lower() != "https"
+            or host is None
+            or parts.username is not None
+            or parts.password is not None
+            or port != 443
+            or not parts.netloc
+            or "\\" in parts.netloc
+        ):
+            raise UnsafeUrlError
+        try:
+            normalized_host = host.encode("idna").decode("ascii").lower()
+        except UnicodeError as error:
+            raise UnsafeUrlError from error
+        display_host = f"[{normalized_host}]" if ":" in normalized_host else normalized_host
+        normalized = parts._replace(scheme="https", netloc=display_host, fragment="").geturl()
+        return ResolvedUrl(normalized, normalized_host, port, ("93.184.216.34",))
+
+    async def fetch(self, initial: ResolvedUrl) -> tuple[str, str]:
+        """外部へ接続せず決定的な本文を返す。"""
+        return initial.url, "Fake web content for external-client isolation."
+
+
 class HttpxPinnedTransport:
     """httpxの接続URLをIPへ固定しHost/TLS SNIを元hostへ保つ。"""
 

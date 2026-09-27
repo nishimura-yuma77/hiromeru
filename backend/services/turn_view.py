@@ -4,6 +4,7 @@ from typing import Any
 
 from pydantic import ValidationError
 
+from agent_runtime.clarification_tools import AskUserOutput
 from agent_runtime.proposal_tools import ProposeCampaignOutput, ProposeXPostOutput
 from core.errors import DEFAULT_MESSAGES, ERROR_SPECS
 from domain.constants import SECURITY_NOTICES_LIMIT
@@ -44,13 +45,17 @@ def _chat_item(
     completed: bool,
     tool_names: dict[int, str],
     completed_tool_call_ids: frozenset[int],
+    answered: bool,
 ) -> tuple[str, dict[str, Any]] | None:
     """`chat` Turnのアイテムを表示形式へ変換する。表示しないアイテムは None。
 
-    成功した終端提案Toolだけを表示用proposalへ投影する。
+    成功した終端Toolだけを表示用Itemへ投影する。
     """
     if item.item_type == AgentItemType.USER_MESSAGE:
-        return "user_message", {"text": item.content.get("text", "")}
+        content = {"text": item.content.get("text", "")}
+        if "clarification_response" in item.content:
+            content["clarification_response"] = item.content["clarification_response"]
+        return "user_message", content
     if (
         item.item_type == AgentItemType.ASSISTANT_MESSAGE
         and item.llm_call_id is not None
@@ -69,6 +74,7 @@ def _chat_item(
         definitions = {
             "propose_campaign": ("campaign_proposal", ProposeCampaignOutput),
             "propose_x_post": ("x_post_proposal", ProposeXPostOutput),
+            "ask_user": ("clarification_request", AskUserOutput),
         }
         projected = definitions.get(tool_names.get(related, ""))
         if projected is not None:
@@ -76,7 +82,10 @@ def _chat_item(
                 content = projected[1].model_validate(item.content["data"])
             except ValidationError:
                 return None
-            return projected[0], content.model_dump(mode="json")
+            data = content.model_dump(mode="json")
+            if projected[0] == "clarification_request":
+                data["answered"] = answered
+            return projected[0], data
     return None
 
 
@@ -104,6 +113,7 @@ def build_turn_view(bundle: TurnBundle) -> TurnView:
                 completed=completed,
                 tool_names=tool_names,
                 completed_tool_call_ids=bundle.completed_tool_call_ids,
+                answered=turn.id in bundle.answered_question_turn_ids,
             )
         )
         if converted is not None:

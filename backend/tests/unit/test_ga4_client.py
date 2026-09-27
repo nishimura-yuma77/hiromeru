@@ -201,7 +201,7 @@ async def test_GA4_FakeはLive_Requestなしで0を返す() -> None:
         Settings(
             auth_cookie_secret=SecretStr(SECRET),
             cookie_secure=False,
-            external_client_mode="fake",
+            ga4_client_mode="fake",
         )
     )
     assert isinstance(context.ga4, FakeGa4Client)

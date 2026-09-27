@@ -1,0 +1,30 @@
+.root {
+  align-items: center;
+  color: var(--color-brand-strong);
+  display: inline-flex;
+  font-family: var(--font-family-latin);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-bold);
+  gap: var(--space-3);
+  letter-spacing: var(--letter-spacing-wide);
+}
+
+.mark {
+  align-items: center;
+  background: var(--color-brand-strong);
+  border-radius: var(--radius-sm);
+  color: var(--color-text-on-brand);
+  display: inline-flex;
+  inline-size: var(--control-min-height);
+  justify-content: center;
+  min-block-size: var(--control-min-height);
+}
+
+.inverse {
+  color: var(--color-text-on-brand);
+
+  .mark {
+    background: var(--color-accent);
+    color: var(--color-text-primary);
+  }
+}

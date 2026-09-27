@@ -70,11 +70,13 @@ def _configure(ctx: ServiceContext, transport: Transport) -> None:
     fetch = ctx.tool_registry.get("web_fetch")
     assert search is not None and isinstance(search.handler, WebSearchHandler)
     assert fetch is not None and isinstance(fetch.handler, WebFetchHandler)
+    current_fetcher = fetch.handler._deps.fetcher
+    assert isinstance(current_fetcher, SafeWebFetcher)
     search.handler._deps = replace(search.handler._deps, search_provider=Provider())
     fetch.handler._deps = replace(
         fetch.handler._deps,
         fetcher=SafeWebFetcher(
-            resolver=fetch.handler._deps.fetcher._resolver,
+            resolver=current_fetcher._resolver,
             transport=transport,
             max_bytes=1_000,
             max_redirects=2,

@@ -47,8 +47,8 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
 
 async def _run(args: argparse.Namespace) -> int:
     ctx = build_default_context()
-    if ctx.settings.external_client_mode != "real":
-        raise SystemExit("実Embeddingを保存するためEXTERNAL_CLIENT_MODE=realが必要です。")
+    if ctx.settings.embedding_client_mode != "real":
+        raise SystemExit("実Embeddingを保存するためEMBEDDING_CLIENT_MODE=realが必要です。")
     result = await CampaignEmbeddingBackfillService(ctx).run(
         batch_size=args.batch_size,
         after_id=args.after_id,

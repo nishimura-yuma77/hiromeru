@@ -104,7 +104,10 @@
 
 | 項目 | 値 |
 | --- | --- |
-| 施策依頼 | `経験者Webエンジニア採用の施策を考えて` |
+| 施策依頼（情報が揃っている） | `経験者Webエンジニア採用で応募ページへの流入を増やす施策を考えて` |
+| 施策依頼（情報不足） | `新しい採用施策を考える` |
+| 施策立案の質問 | `募集したい職種・必要なスキルは何ですか？`、`現在の採用課題または達成したい目的は何ですか？` |
+| 質問への回答 | `経験者Webエンジニア`、`応募ページへの流入を増やしたい` |
 | 施策タイトル | `経験者Webエンジニア採用` |
 | 手動修正後の目的 | `応募数を月20件まで増やす` |
 | 再相談指示 | `リモート勤務の訴求を強めて` |
@@ -117,7 +120,9 @@
 
 ### 6.3 Agent Fakeの基本応答
 
-- 施策依頼では、`run_campaign_planner`の後に`propose_campaign`を実行し、編集可能な施策案を返す
+- 情報が揃った施策依頼では、`run_campaign_planner`の後に`propose_campaign`を実行し、編集可能な施策案を返す
+- 情報不足の施策依頼では、`run_campaign_planner`が`missing_information`を返し、親Agentが必要な質問を`ask_user`へ渡す。回答後は新しい子Sessionで再実行し、回答済み事項を聞き直さず施策案を返す
+- 親Agentが子Agentを呼ぶ前に不足を判断した場合も、`ask_user`で質問を返せる。コンテンツ制作Agentが不足情報を返した場合も同じ質問カードを使う
 - 再相談では、現在のフォーム値を引き継ぎ、リモート勤務の訴求を追加した新しい施策案を返す
 - 投稿依頼では、`run_content_creator`の後に`propose_x_post`を実行し、編集可能な投稿案を返す
 - 過去記憶を利用するケースでは、`search_long_term_memory`の結果を参照したことを識別可能な固定提案を返す
@@ -139,12 +144,16 @@
 | E2E-010 | 正常系 | 評価記憶を次の施策提案に利用する | 必須 |
 | E2E-011 | 正常系 | 不要な記憶を削除する | 必須 |
 | E2E-012 | 正常系 | ログアウトする | 必須 |
+| E2E-013 | 正常系 | 施策の情報不足を質問カードで確認してから提案する | 必須 |
+| E2E-014 | 正常系 | 親Agentが子Agentを呼ばずに確認事項を尋ねる | 必須 |
+| E2E-015 | 正常系 | 投稿案の情報不足を質問カードで確認する | 必須 |
 | E2E-E01 | 異常系 | 認証切れ後に再ログインして元画面へ戻る | 必須 |
 | E2E-E02 | 異常系 | Agent通信切断後に既存Turnを復元する | 必須 |
 | E2E-E03 | 異常系 | 承認と公開を再送しても重複実行しない | 必須 |
 | E2E-E04 | 異常系 | 施策編集の競合から入力を保持して復帰する | 必須 |
 | E2E-E05 | 異常系 | 存在しないデータと別会社データを同じ表示にする | 必須 |
 | E2E-E06 | 異常系 | X投稿結果不明時に自動再投稿しない | 必須 |
+| E2E-E07 | 異常系 | 質問への回答Turnが失敗しても修正して再回答できる | 必須 |
 
 ## 8. 正常系テストケース
 
@@ -418,6 +427,67 @@
 - 認証CookieとCSRF Token CookieがBrowserから削除されている
 - ログアウトによって業務データとAgent履歴は変更されていない
 
+### E2E-013 施策の情報不足を質問カードで確認してから提案する
+
+**事前条件**
+
+- `MARKETER_A`でログイン済みで、新しい会話を開始できる
+- Agent Fakeが情報不足時には固定の`missing_information`、回答後には固定の施策案を返す
+
+| Step | 操作者 | 操作 | 確認項目 | 関連画面 | 関連API |
+| ---: | --- | --- | --- | --- | --- |
+| 1 | ユーザー | 情報不足の施策依頼を送信する | 親Sessionが作成され、子Agentが`missing_information`を返し、親Agentが同じ親Turn内で`ask_user`を実行する。Campaignと提案フォームは作成されない | SC-02 | `POST /api/v1/agent-sessions`、`POST /api/v1/agent-sessions/{session_id}/turns` |
+| 2 | システム | 質問カードを表示する | 2件の質問とそれぞれの回答欄が表示される。質問のTurnは`completed`、`clarification_request.content.answered = false`であり、質問文の重複した`assistant_message`はない | SC-02 | Turn送信のSSE |
+| 3 | ユーザー | 通常のComposerから別の相談を送信する | 後続`user_message`が保存されても、元の質問カードの`answered = false`で回答欄は残る | SC-02 | `POST /api/v1/agent-sessions/{session_id}/turns` |
+| 4 | ユーザー | 回答を入力する | 空欄・各回答1,000文字超では送信できず、入力中は追加のAPIを呼び出さない。上限内の回答では送信できる | SC-02 | なし |
+| 5 | ユーザー | 固定の質問への回答をまとめて送信する | 元の質問の`agent_turn_id`を`question_turn_id`に、回答を`question_index`順の配列にして、同じ親Sessionの新しいTurnへ送る。通常の`message`は併送せず、送信中は二重送信できない | SC-02 | `POST /api/v1/agent-sessions/{session_id}/turns` |
+| 6 | システム | 回答に基づく施策案を返す | 回答Turnの`user_message`に質問Turn IDと構造化した回答があり、新しい子Sessionの結果から編集可能な施策フォームが表示される。`turn_finished`直後に再読み込みなしで元カードの`answered`が`true`になり、回答Buttonが消える。既に回答した質問を繰り返さない | SC-02 | Turn送信のSSE |
+| 7 | ユーザー | 画面を再読み込みする | 履歴から同じ質問と回答、施策フォームが復元され、元の質問カードは`answered = true`で再送できない | SC-02 | `GET /api/v1/agent-sessions/{session_id}` |
+
+**最終確認**
+
+- 情報不足Turnに成功した`run_campaign_planner`と`ask_user`のTool実行があり、`propose_campaign`はない
+- 回答Turnでは再度`run_campaign_planner`を呼んで`propose_campaign`を実行し、提案はユーザーの承認前には業務テーブルへ保存されない
+- 同じ質問Turnへの二度目の回答は`409 CLARIFICATION_ALREADY_ANSWERED`、他人・他Session・存在しない質問Turnを指定した場合は`404 CLARIFICATION_REQUEST_NOT_FOUND`となり、新しいTurnを作らない。欠けた回答、重複したIndex、`message`との併用は`400 INVALID_ARGUMENT`となる
+- 親Agentが子Agentの質問を言い換えても`ask_user`を呼べる。入力が空、重複、4件以上または各200文字を超える場合は失敗Tool Resultになり、質問カードとして表示しない
+- 回答送信で通信失敗または結果未確定になった場合は入力値を保持し、既存のTurn取得による復旧で送信結果を確認してから再送可否を決める
+- 回答済みの質問へ`409 CLARIFICATION_ALREADY_ANSWERED`が返った場合は、元の質問Turnを再取得してカードを回答済みに同期する
+
+### E2E-014 親Agentが子Agentを呼ばずに確認事項を尋ねる
+
+**事前条件**
+
+- `MARKETER_A`でログイン済みで、新しい会話を開始できる
+- Agent Fakeが、依頼に必要な対象施策が特定できないと判断する
+
+| Step | 操作者 | 操作 | 確認項目 | 関連画面 | 関連API |
+| ---: | --- | --- | --- | --- | --- |
+| 1 | ユーザー | `X投稿案を作りたい`と送信する | 親Agentが対象施策を尋ねるために`ask_user`を呼ぶ。先行する子Agent実行や`missing_information`は不要 | SC-02 | `POST /api/v1/agent-sessions`、`POST /api/v1/agent-sessions/{session_id}/turns` |
+| 2 | システム | 質問カードを表示する | `clarification_request`が1件表示され、Turnは`completed`。投稿案と公開操作は表示されない | SC-02 | Turn送信のSSE |
+| 3 | ユーザー | 対象施策を回答する | 元の質問Turn IDと回答の配列を同じ親Sessionの新しいTurnで受け付け、親Agentは回答を読んでコンテンツ制作へ進む | SC-02 | `POST /api/v1/agent-sessions/{session_id}/turns` |
+
+**最終確認**
+
+- 最初の質問Turnには`ask_user`があるが`run_content_creator`はない。親Agentだけの判断で成功する
+- 質問カードの回答はX投稿の最終承認として扱わない
+
+### E2E-015 投稿案の情報不足を質問カードで確認する
+
+**事前条件**
+
+- `MARKETER_A`でログイン済みで、未Archiveの対象Campaignがある
+- Agent Fakeが`run_content_creator`から固定の`missing_information`を返す
+
+| Step | 操作者 | 操作 | 確認項目 | 関連画面 | 関連API |
+| ---: | --- | --- | --- | --- | --- |
+| 1 | ユーザー | 対象Campaignの投稿案を依頼する | 子Agentから不足情報を受けた親Agentが`ask_user`で確認事項を提示し、投稿案は提示しない | SC-02 | `POST /api/v1/agent-sessions/{session_id}/turns` |
+| 2 | ユーザー | 質問カードに回答して送信する | 質問Turn IDと構造化した回答を既存のメッセージ送信APIへ渡して次のTurnを開始し、回答を踏まえた投稿案を返す | SC-02 | `POST /api/v1/agent-sessions/{session_id}/turns` |
+
+**最終確認**
+
+- 質問Turnは`completed`で`clarification_request`を持ち、`propose_x_post`は実行されない
+- 回答Turnで再度`run_content_creator`を実行してから投稿案を表示し、Xへの公開は承認ボタンまで実行しない
+
 ## 9. 異常系テストケース
 
 ### E2E-E01 認証切れ後に再ログインして元画面へ戻る
@@ -543,6 +613,26 @@
 - 冪等性レコードは`outcome_unknown`で、同じ内容のPostは作成されていない
 - Metrics、Tracking、Post Embeddingは作成されていない
 - 手動照合前に成功または失敗へ推測で確定していない
+
+### E2E-E07 質問への回答Turnが失敗しても修正して再回答できる
+
+**事前条件**
+
+- `MARKETER_A`が完了済みの質問Turnと未回答の質問カードを持つ
+- Agent Fakeは最初の回答Turnで実行エラーを返し、次の回答Turnでは成功する
+
+| Step | 操作者 | 操作 | 確認項目 | 関連画面 | 関連API |
+| ---: | --- | --- | --- | --- | --- |
+| 1 | ユーザー | 質問Turn IDと回答配列を送信する | 回答`user_message`は保存されるがAgentの実行は`failed`で終了し、エラーが表示される。再読み込みなしで質問カードは`answered = false`のままになる | SC-02 | `POST /api/v1/agent-sessions/{session_id}/turns` |
+| 2 | ユーザー | 画面を再読み込みする | 失敗Turnと回答は履歴に残るが、質問カードの`answered = false`で再回答可能。失敗時の回答を入力欄に復元できる | SC-02 | `GET /api/v1/agent-sessions/{session_id}` |
+| 3 | ユーザー | 回答を修正して同じ質問Turn IDで再送する | `CLARIFICATION_ALREADY_ANSWERED`にならず、新しい回答Turnが作成される。失敗Turnの内容は新しいAgent Contextへ混入しない | SC-02 | `POST /api/v1/agent-sessions/{session_id}/turns` |
+| 4 | システム | 再回答のTurnを完了する | 親Agentが新しい回答から処理を続け、`turn_finished`直後に質問カードの`answered`が`true`になり、再読み込みしなくても回答Buttonが消える | SC-02 | Turn送信のSSE |
+
+**最終確認**
+
+- 同じ質問Turnへ失敗した回答Turnと完了した回答Turnが各1件あり、完了した回答Turnだけが回答済み判定と次の会話Contextに使われる
+- 完了後に同じ質問Turnへ再回答すると`409 CLARIFICATION_ALREADY_ANSWERED`となり、新しいTurnは作られない
+- 隔離済みの回答Itemを持つ`completed` Turnのケースは別Fixtureで確認する。`clarification_request.answered`は`false`で、同じ質問Turnへ修正した回答を新しいTurnとして送れる。隔離済みItemの内容は表示とAgent Contextの回答に使用しない
 
 ## 10. 手動動作確認
 

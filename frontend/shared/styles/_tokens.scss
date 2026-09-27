@@ -9,6 +9,7 @@
   --palette-lime-400: #c9f04f;
   --palette-white: #ffffff;
   --palette-red-600: #a13d30;
+  --palette-red-50: #fff2ef;
 
   --color-background-primary: var(--palette-paper-50);
   --color-background-secondary: var(--palette-paper-100);
@@ -23,6 +24,10 @@
   --color-border-strong: rgb(20 33 27 / 28%);
   --color-focus-ring: var(--palette-green-700);
   --color-danger: var(--palette-red-600);
+  --color-danger-surface: var(--palette-red-50);
+  --color-surface-disabled: var(--palette-paper-100);
+  --color-text-disabled: var(--palette-ink-500);
+  --color-overlay: rgb(7 31 22 / 58%);
 
   --font-family-sans: "Noto Sans CJK JP", "Noto Sans JP", "Hiragino Sans", "Yu Gothic UI", "Yu Gothic", Meiryo, sans-serif;
   --font-family-latin: Arial, Helvetica, sans-serif;
@@ -71,6 +76,14 @@
   --layout-max-width: 75rem;
   --layout-text-width: 42rem;
   --header-height: 5.25rem;
+  --login-brand-panel-min-width: 24rem;
+  --login-card-max-width: 28rem;
+  --app-header-height: 4rem;
+  --app-sidebar-width: 14rem;
+  --drawer-width: 20rem;
+  --control-min-height: 2.75rem;
+  --z-index-app-header: 20;
+  --z-index-overlay: 30;
 
   --duration-fast: 140ms;
   --duration-normal: 220ms;

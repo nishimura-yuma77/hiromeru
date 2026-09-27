@@ -384,6 +384,7 @@ class ToolExecutor:
             agent_type=record.agent_type,
             turn_status=record.turn_status,
             turn_started_at=self._budget_started_at or record.started_at,
+            agent_context=self._agent_context,
             budget=self._budget,
         )
 

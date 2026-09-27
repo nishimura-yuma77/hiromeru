@@ -35,6 +35,8 @@ services:
     build:
       context: .
       dockerfile: docker/backend/Dockerfile
+    env_file:
+      - .env
     command:
       - uvicorn
       - api.main:app
@@ -49,7 +51,6 @@ services:
       # ローカルはHTTPのため、Cookieの Secure 属性を付けない。署名鍵は開発用の既定値を使う。
       COOKIE_SECURE: "false"
       ALLOWED_ORIGINS: http://localhost:3000
-      EXTERNAL_CLIENT_MODE: fake
     depends_on:
       migrate:
         condition: service_completed_successfully

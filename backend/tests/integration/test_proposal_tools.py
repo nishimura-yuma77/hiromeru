@@ -234,6 +234,53 @@ async def test_Planner提案は子の最終結果だけを保存しUIへ投影�
     }
 
 
+async def test_Plannerは現在依頼と親会話を分離して子へ渡す(
+    account: Account, ctx: ServiceContext, agent: FakeAgentRunner
+) -> None:
+    session_id = await account.create_session()
+    async with ctx.session_factory() as session, session.begin():
+        previous = await TurnRepository(session).create_turn(session_id, ctx.clock.now())
+        await TurnRepository(session).append_item(
+            previous.id,
+            key="previous-user",
+            item_type=AgentItemType.USER_MESSAGE,
+            source=AgentContentSource.USER_INPUT,
+            content={"text": "エンジニア向け採用施策を考えて"},
+            now=ctx.clock.now(),
+        )
+        await TurnRepository(session).append_item(
+            previous.id,
+            key="previous-assistant",
+            item_type=AgentItemType.ASSISTANT_MESSAGE,
+            source=AgentContentSource.AGENT_OUTPUT,
+            content={"text": "採用施策の草案です"},
+            now=ctx.clock.now(),
+        )
+        await TurnRepository(session).finish_turn(
+            previous.id, status=AgentTurnStatus.COMPLETED, now=ctx.clock.now()
+        )
+    turn_id, request_id = await _turn(ctx, account, session_id)
+    executor = await _executor(ctx, account, session_id, turn_id)
+
+    result = await executor.invoke(
+        ToolCall(
+            name="run_campaign_planner",
+            stable_key="planner-context",
+            arguments={"request_item_id": request_id},
+        )
+    )
+
+    assert result.success is True
+    assert agent.child_inputs[-1].request == {
+        "request_item_id": request_id,
+        "request": "採用施策を提案して",
+        "conversation": [
+            {"role": "user", "text": "エンジニア向け採用施策を考えて"},
+            {"role": "assistant", "text": "採用施策の草案です"},
+        ],
+    }
+
+
 async def test_ContentCreator提案はCampaign時刻を返さず業務表を書き換えない(
     account: Account, ctx: ServiceContext, agent: FakeAgentRunner
 ) -> None:

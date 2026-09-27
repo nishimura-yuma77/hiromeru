@@ -437,6 +437,7 @@ Login Button直下に、特定のInputへ割り当てられないErrorを表示�
 | `user_message` | Inline end | 本文レーンの75% | あなた |
 | `assistant_message` | Inline start | 本文レーンの85% | Hiromeru AI |
 | `campaign_proposal`、`x_post_proposal` | Inline start | 本文レーン全幅 | Hiromeru AI |
+| `clarification_request` | Inline start | 本文レーン全幅 | Hiromeru AI |
 | `approval_action` | Inline end | 本文レーンの85% | あなた |
 | `api_result` | Inline start | 本文レーンの85% | システム |
 | Turn進捗 | Inline start | 本文レーンの85% | Hiromeru AI |
@@ -445,7 +446,7 @@ Login Button直下に、特定のInputへ割り当てられないErrorを表示�
 - 各Turnを時系列のList itemとし、その中のItemを`item_number`順に表示する。APIの順序を画面都合で変更しない
 - Message本文はPlain textとして改行を維持し、Markdownや外部HTMLとして解釈しない。長いURLと連続文字列は`overflow-wrap: anywhere`で折り返す
 - 各Bubbleに`time`要素で日時を表示する。発言者は色だけでなく、配置、Visible label、Surfaceで区別する
-- Tool Call、提案以外のTool Result、Web取得内容、記憶内容、隔離内容、子Sessionの内部履歴は表示しない
+- Tool Call、提案・質問以外のTool Result、Web取得内容、記憶内容、隔離内容、子Sessionの内部履歴は表示しない
 
 **過去履歴とScroll**
 
@@ -467,6 +468,16 @@ Login Button直下に、特定のInputへ割り当てられないErrorを表示�
 - Turn実行中も次のDraftをTextareaへ入力できるが送信はできない。送信受付時の値だけを消し、その後に入力したDraftを消さない
 - Keyboard ShortcutまたはButtonで送信を受け付けた後もComposerへFocusを残す
 
+**質問・回答カード**
+
+- 親Agentが自ら判断した確認事項、または施策立案・コンテンツ制作など子Agentからの不足情報に対する`clarification_request`を受けたら、質問1～3件を番号・Label付きの回答Textareaと「回答をまとめて送信」Buttonで表示する。質問を通常の`assistant_message`として重複表示しない
+- 各Textareaは前後の空白を除いて1～1,000文字とする。「まだ分からない」も回答として入力できる。全項目に回答があり、質問文と回答文からサーバーが生成する本文が5.3の4,000文字上限以内の場合だけ送信可能とする。超過や空欄は該当Field直下に説明を表示し、最初の不正FieldへFocusを移す
+- 送信時はカードを含む親Turnの`agent_turn_id`を`question_turn_id`に設定し、質問の表示順に`{ "question_index", "answer" }`を並べた`clarification_response`を、既存のメッセージ送信APIへ送る。質問文、質問カードの`item_id`、会社IDを送らず、同じRequestに通常の`message`を併記しない。バックエンドが保存済みの質問を読み、Agentへ渡す質問・回答の組を構築する
+- 送信中は質問カードとComposerからの二重送信を抑止し、進捗・Turn結果は通常のSSEと同様に表示する。通信失敗や結果未確定の間は回答の入力値を保持し、既存のTurn確認・復旧後に再送可否を決める。質問カードの回答済み判定は取得した`clarification_request.content.answered`を正とし、`true`のカードは質問を履歴として表示するが再送用Buttonを出さない。通常のComposerからの無関係な後続メッセージではカードを閉じない
+- 回答Turnの`turn_finished`またはJSON応答が`completed`で、表示対象のactiveな`user_message.content.clarification_response.question_turn_id`が表示中の質問Turn IDと一致したら、元の質問Turnを再取得するのを待たず、そのカードを画面上で`answered = true`へ更新し回答Buttonを消す。Turnが完了しても回答Itemが隔離され、Responseの表示対象から除外された場合や、Turnが`failed`・`blocked`・`cancelled`の場合は更新せず未回答のままにする。通信切断など結果が不明な場合は既存のTurn取得による復旧で結果を確認し、回答済み判定を同期する。`409 CLARIFICATION_ALREADY_ANSWERED`を受けた場合は元の質問Turnを再取得してカードを更新する。再読み込み時はサーバーが投影した`answered`を正とする
+- 回答Turnが`failed`、`blocked`、`cancelled`または中断復旧で失敗になった場合は、`answered = false`のまま回答欄を再表示する。既存の失敗Turnには入力とエラーを残し、同じ質問Turnを参照する直近の失敗Turnに構造化回答が保存済みなら、再読み込み後もそのマスク済み回答を入力欄の初期値として復元する。ユーザーが内容を修正して再送すると新しいTurnになる。回答Turnの実行中はカードを再送可能にせず、完了または失敗を確認してから状態を更新する
+- 再読み込み時は5.1の履歴から質問を復元する。未送信の入力値は画面Local stateとし、永続化しない。回答後にも情報が不足する場合、次の`clarification_request`は新しい質問カードとして表示する。通常のComposerは相談を続けるため残す
+
 **送信と進捗**
 
 1. 新しい会話ではSessionを作成し、既存会話では現在の`session_id`を使う
@@ -486,6 +497,7 @@ Login Button直下に、特定のInputへ割り当てられないErrorを表示�
 | `get_post`、`search_posts` | 投稿を確認中 |
 | `get_marketing_metrics` | 計測結果を確認中 |
 | `run_campaign_planner` | 施策を立案中 |
+| `ask_user` | 確認したいことを整理中 |
 | `run_content_creator` | 投稿案を作成中 |
 | `propose_campaign` | 施策案を整理中 |
 | `propose_x_post` | 投稿案を整理中 |
@@ -2379,7 +2391,7 @@ Hiromeru AIが次の施策や投稿を考えるときに参照する記憶です
 - 画面を開き直した場合は、会話の履歴を取得して表示する。実行中のTurnがあれば、終了を待つ
 
 ### 6.6 履歴の表示範囲
-チャットには、会話（`user_message`、`assistant_message`）、提案、承認の結果だけを表示する。Toolの呼び出しと結果、Webの取得内容、隔離された内容は表示しない（`API_DESIGN.md`の5.1）。
+チャットには、会話（`user_message`、`assistant_message`）、質問カード（`clarification_request`）、提案、承認の結果だけを表示する。Toolの呼び出しと、表示用に投影した提案・質問以外の結果、Webの取得内容、隔離された内容は表示しない（`API_DESIGN.md`の5.1）。
 
 ### 6.7 URL state（Frontend規約9.4）
 再読み込み、共有、ブラウザの戻る操作で復元したい状態は、URLに保持する。Secret、個人情報、未確定のフォーム入力は、URLに保持しない。

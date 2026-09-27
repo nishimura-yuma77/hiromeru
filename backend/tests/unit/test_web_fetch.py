@@ -5,6 +5,7 @@ import pytest
 
 from clients.web_fetch import (
     ContentTooLargeError,
+    FakeWebFetcher,
     HttpxPinnedTransport,
     PinnedResponse,
     ResolvedUrl,
@@ -22,6 +23,18 @@ async def _chunks(*values: bytes) -> AsyncIterator[bytes]:
 
 async def _close() -> None:
     return None
+
+
+async def test_Fake_Web_Fetchは外部通信せず固定本文を返す() -> None:
+    fetcher = FakeWebFetcher()
+
+    target = await fetcher.resolve("https://Example.com/path#fragment")
+    final_url, content = await fetcher.fetch(target)
+
+    assert final_url == "https://example.com/path"
+    assert content == "Fake web content for external-client isolation."
+    with pytest.raises(UnsafeUrlError):
+        await fetcher.resolve("http://example.com/path")
 
 
 class Resolver:

@@ -62,6 +62,25 @@ docker compose logs -f frontend
 docker compose logs -f backend
 ```
 
+### Demo Dataset
+
+ローカルで業務画面を確認する場合は、migration適用後にデモデータを明示的に投入できます。本番環境では実行しないでください。
+
+```bash
+docker compose exec backend python scripts/demo_dataset.py seed
+```
+
+ログイン情報:
+
+- メールアドレス: `demo@hiromeru.local`
+- パスワード: `HiromeruDemo2026!`
+
+デモデータだけを削除する場合:
+
+```bash
+docker compose exec backend python scripts/demo_dataset.py remove
+```
+
 ### Database Migration
 
 モデル追加後にmigrationを作成します。
@@ -88,6 +107,7 @@ docker compose run --rm migrate
 | `backend/tests/integration/` | 結合テスト |
 | `backend/migrations/` | DB migration |
 | `backend/main.py` | Vercel Functions用のエントリポイント（`backend/`をimportパスへ追加して`api.main`の`app`を公開する） |
+| `backend/agent_runtime/definitions.py` | 親・子Agentの指示、モデル、公開Tool、出力形式の定義 |
 | `backend/pyproject.toml` | Backendの依存関係とTool設定 |
 | `backend/uv.lock` | Backend依存関係のLockfile |
 | `docker/frontend/Dockerfile` | Frontend開発イメージ |

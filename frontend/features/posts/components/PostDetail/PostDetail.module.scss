@@ -1,0 +1,47 @@
+@use "../../../../shared/styles/breakpoints" as bp;
+
+.page { margin-inline: auto; max-width: var(--layout-max-width); padding: var(--space-6) var(--space-page) var(--space-9); }
+.backLink, .postContent a, .sidebar a { color: var(--color-brand-primary); font-weight: var(--font-weight-semibold); }
+.header { align-items: end; display: flex; gap: var(--space-5); justify-content: space-between; margin-block: var(--space-6); }
+.header h1 { font-size: var(--font-size-heading-sm); letter-spacing: var(--letter-spacing-tight); margin-block: var(--space-2); }
+.header p { color: var(--color-text-secondary); margin: 0; }
+.eyebrow { color: var(--color-brand-primary) !important; font-family: var(--font-family-mono); font-size: var(--font-size-xs); letter-spacing: var(--letter-spacing-wide); text-transform: uppercase; }
+.actions { display: flex; flex-wrap: wrap; gap: var(--space-3); }
+.actions a { border: var(--border-width-thin) solid var(--color-brand-primary); border-radius: var(--radius-pill); color: var(--color-brand-primary); font-weight: var(--font-weight-semibold); padding: var(--space-3) var(--space-4); text-decoration: none; }
+.actions a:last-child { background: var(--color-brand-primary); color: var(--color-text-on-brand); }
+.overview { display: grid; gap: var(--space-5); grid-template-columns: minmax(0, 2fr) minmax(18rem, 1fr); }
+.postContent, .sidebar, .tracking { background: var(--color-surface); border: var(--border-width-thin) solid var(--color-border); }
+.postContent { padding: var(--space-7); }
+.postContent h2, .sidebar h2 { font-size: var(--font-size-lg); margin-block-start: 0; }
+.postContent p { font-size: var(--font-size-lg); line-height: var(--line-height-body); overflow-wrap: anywhere; white-space: pre-wrap; }
+.postContent a { overflow-wrap: anywhere; }
+.sidebar > section { padding: var(--space-5); }
+.sidebar > section + section { border-block-start: var(--border-width-thin) solid var(--color-border); }
+.sidebar dl { display: grid; gap: var(--space-4); margin: 0; }
+.sidebar dt, .urlRow span, .utmList dt { color: var(--color-text-secondary); font-size: var(--font-size-sm); }
+.sidebar dd { margin: var(--space-1) 0 0; overflow-wrap: anywhere; }
+.archivedBadge { background: var(--color-background-secondary); border: var(--border-width-thin) solid var(--color-border-strong); border-radius: var(--radius-pill); display: inline-block; font-size: var(--font-size-xs); font-weight: var(--font-weight-semibold); margin-block-start: var(--space-2); padding: var(--space-1) var(--space-3); }
+.mono, .metricGrid dd { font-family: var(--font-family-mono); }
+.metricGrid { grid-template-columns: repeat(2, 1fr); }
+.metricGrid dd { font-size: var(--font-size-xl); }
+.tracking { margin-block-start: var(--space-7); padding: var(--space-6); }
+.tracking h2 { margin-block-end: var(--space-2); }
+.tracking > div:first-child p { color: var(--color-text-secondary); }
+.urlRow { align-items: center; border-block-start: var(--border-width-thin) solid var(--color-border); display: flex; gap: var(--space-4); justify-content: space-between; padding-block: var(--space-4); }
+.urlRow > div { display: grid; gap: var(--space-2); min-width: 0; }
+.urlRow code { font-family: var(--font-family-mono); overflow-wrap: anywhere; }
+.urlRow button { background: transparent; border: var(--border-width-thin) solid var(--color-brand-primary); border-radius: var(--radius-pill); color: var(--color-brand-primary); cursor: pointer; flex: none; font-weight: var(--font-weight-semibold); padding: var(--space-2) var(--space-4); }
+.tracking summary { color: var(--color-brand-primary); cursor: pointer; font-weight: var(--font-weight-semibold); padding-block: var(--space-4); }
+.utmList { display: grid; gap: var(--space-3); grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.utmList dd { font-family: var(--font-family-mono); margin: var(--space-1) 0 0; overflow-wrap: anywhere; }
+.liveMessage { color: var(--color-brand-primary); min-height: 1lh; }
+.page :is(a, button, summary):focus-visible { outline: var(--focus-ring-width) solid var(--color-focus-ring); outline-offset: var(--focus-ring-offset); }
+
+@media (max-width: bp.$tablet) { .overview { grid-template-columns: 1fr; } }
+@media (max-width: bp.$mobile) {
+  .header, .urlRow { align-items: stretch; flex-direction: column; }
+  .actions { align-items: stretch; flex-direction: column; }
+  .actions a, .urlRow button { text-align: center; }
+  .postContent, .tracking { padding: var(--space-5); }
+  .utmList { grid-template-columns: 1fr; }
+}

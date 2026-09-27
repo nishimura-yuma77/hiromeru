@@ -3,7 +3,7 @@
 ## エージェント一覧
 | エージェント名 | 区分 | 概要 | 利用可能ツール |
 | --- | --- | --- | --- |
-| 親エージェント | メイン | ユーザーとのやり取りを担当し、ツール実行・サブエージェント呼び出し・ユーザーへの回答を担う | セッション履歴の取得、長期記憶の検索・保存、施策・公開済み投稿の参照、Web検索、施策案・投稿案の提示、サブエージェント呼び出し |
+| 親エージェント | メイン | ユーザーとのやり取りを担当し、ツール実行・サブエージェント呼び出し・ユーザーへの回答を担う | セッション履歴の取得、長期記憶の検索・保存、施策・公開済み投稿の参照、Web検索、施策案・投稿案の提示、必要事項の質問、サブエージェント呼び出し |
 | 施策立案エージェント | サブ | 関連する長期記憶や業務データを参照して施策案を作成し、親エージェントへ返す | 長期記憶の検索、施策・投稿・評価指標の参照、Web検索 |
 | コンテンツ制作エージェント | サブ | 承認済み施策をもとにX投稿案を作成し、親エージェントへ返す | 長期記憶の検索、承認済み施策・過去投稿の参照、Web検索 |
 
@@ -28,6 +28,7 @@
 | `propose_x_post` | ○ |  |  | コンテンツ制作エージェントの結果を検証し、ユーザーへ提示する投稿案を作成する |
 | `run_campaign_planner` | ○ |  |  | 施策立案エージェントの使い捨て子セッションを起動する |
 | `run_content_creator` | ○ |  |  | コンテンツ制作エージェントの使い捨て子セッションを起動する |
+| `ask_user` | ○ |  |  | 親Agentが必要な不足事項・確認事項を質問カードとして提示する終端Tool |
 
 ## Agent Tool共通仕様
 - Toolへ`company_id`、`marketer_id`、`session_id`を任意入力させず、認証済みの実行Contextからアプリケーションが決定する
@@ -40,7 +41,8 @@
 - GuardrailでPrompt Injectionを検出したItemは`quarantined`へ変更し、元内容ではなく`context_override`だけをLLMへ渡す
 - 外部サービスの一時的エラーだけを上限付きで再試行し、認可・Schema・業務条件のエラーは再試行しない
 - 施策と投稿の削除、未公開投稿の業務テーブルへの保存、公開済み投稿の更新はMVP対象外とする
-- `askUser`はToolにせず、親エージェントが`assistant_message`へ質問を保存してTurnを完了し、次のユーザーTurnで回答を受け付ける
+- 親エージェントがユーザーへの確認を必要とする場合は`ask_user`を呼ぶ。親自身が判断した不足事項、施策立案・コンテンツ制作などの子Agentが返した`missing_information`のいずれにも使用でき、子Agentの呼び出しや結果との一致は利用条件にしない。子Agent自身はユーザーの回答を待たず、質問の親Turnを完了して次のユーザーTurnで回答を受ける
+- `ask_user`は情報を尋ねるToolであり、施策の確定やX投稿の承認を代行しない。承認は専用のボタンとアプリケーションAPIでのみ実施する
 - `propose_campaign`と`propose_x_post`は実際の提案内容を構造化Tool Resultとして返す終端Toolとし、業務テーブルへの書き込みや外部公開を行わない
 - 施策の登録・更新とX投稿はAgent Toolにせず、承認ボタンからアプリケーションAPIを呼び出して実行する
 - 最終承認後の検証、API処理、完了通知にはLLMを使用しない
@@ -497,9 +499,11 @@ flowchart TD
 flowchart TD
     START([run_campaign_planner開始]) --> VALIDATE{現在のユーザー依頼か}
     VALIDATE -- いいえ --> END_INVALID([INVALID_REQUEST_ITEM])
-    VALIDATE -- はい --> RECALL[類似Campaign・指標・記憶を取得]
-    RECALL --> CHILD[施策立案用の子SessionとTurnを作成]
-    CHILD --> LOOP[[子Agentループを実行]]
+    VALIDATE -- はい --> CHILD[施策立案用の子SessionとTurnを作成]
+    CHILD --> BRIEF{依頼と親会話から募集対象・目的が分かるか}
+    BRIEF -- いいえ --> MISSING[不足情報を最終結果へ設定]
+    BRIEF -- はい --> RECALL[類似Campaign・指標・記憶を取得]
+    RECALL --> LOOP[[子Agentループを実行]]
     LOOP --> RESULT{実行結果}
     RESULT -- 情報不足 --> MISSING[不足情報を最終結果へ設定]
     RESULT -- 失敗 --> FAILURE[マスク済み失敗結果を作成]
@@ -509,12 +513,31 @@ flowchart TD
     PROPOSAL --> END_OK
 ```
 
-子Agentはユーザーを直接待たず、中間履歴を親Contextへ渡さない。出力には`child_session_id`、施策案または不足情報を含める。成功したTool Resultを受けた親エージェントは、実際の施策内容を引数に`propose_campaign`を呼び出す。主な失敗は`INVALID_REQUEST_ITEM`、`SUBAGENT_LIMIT_EXCEEDED`、`INVALID_SUBAGENT_OUTPUT`、`SUBAGENT_FAILED`。
+子Agentはユーザーを直接待たず、中間履歴を親Contextへ渡さない。出力には`child_session_id`、施策案または不足情報を排他的に含める。施策案を受けた親エージェントは、実際の施策内容を引数に`propose_campaign`を呼び出す。主な失敗は`INVALID_REQUEST_ITEM`、`SUBAGENT_LIMIT_EXCEEDED`、`INVALID_SUBAGENT_OUTPUT`、`SUBAGENT_FAILED`。
+
+施策案の代わりに`missing_information`を返した場合は、親エージェントが現在の依頼と会話履歴を踏まえ、必要な事項を`ask_user`で尋ねる。募集対象（職種・職務に必要なスキル）と採用課題または達成したい目的が会話から判断できない場合、特に初手が「新しい採用施策を考える」だけの場合は、確認済みの会社情報や推測で埋めず不足情報を返す。会社の訴求材料・予算・期間など任意情報だけが不明な場合は、必要に応じて仮定を明示して立案できる。過去の会話で回答済みの事項は聞き直さない。
+
+### `ask_user`
+**利用Agent:** 親エージェント
+
+親エージェントが情報不足や確認事項を判断したとき、ユーザーに尋ねる質問を質問カードに変換する終端Tool。親自身の判断でも、施策立案・コンテンツ制作の子Agentの`missing_information`を参考にした場合でも呼べる。子Agentの結果を必須の出所とせず、親は質問を整理・言い換えられる。既に会話で回答済みの事項や判断に不要な事項は聞き直さない。
+
+```json
+{ "questions": ["募集したい職種・必要なスキルは何ですか？", "現在の採用課題または達成したい目的は何ですか？"] }
+```
+
+- `questions`は重複しない1～3件の空でない質問とし、各200文字以内。Tool Runtimeは親Agent・実行中の親Turnという信頼済みContextと入力Schemaを検証する。子Agentを呼んだ事実、`missing_information`の存在、質問文の一致は検証条件としない
+- 入力不正は`INVALID_ARGUMENT`として質問カードを表示しない。業務テーブルへの書き込みと外部への公開は行わない
+- 成功時は検証済みの`{ "questions": [...] }`を成功Tool Resultとして保存し、親Turnを`completed`にする。表示時は、同じ親Turnの完了済みTool実行に紐づく`ask_user`の成功・activeなTool Resultだけを`clarification_request`へ投影し、後続の**completedな回答Turnに属するactiveな回答Item**との対応から`answered`を導出する。元のTool Resultは書き換えず、通常の`assistant_message`にも質問を重複保存しない。失敗時はTool Resultを親Agentが観測して通常のループに戻す
+- 1つの親Turnには成功した質問カードを1件だけ置く。回答は、質問を出した親Turnの`agent_turn_id`（`question_turn_id`）と質問順に対応する回答の配列で受ける（`API_DESIGN.md`の5.3）。質問文は送り返さず、同じ親Sessionの完了済み質問TurnのTool Resultからサーバーが読み出す。質問専用テーブルは作らない
+- 同じ親Sessionの行ロック下で、質問Turnの所有権・`completed`状態・成功したactiveな`ask_user`結果、回答の件数・順序・内容、同じ質問Turnに**completedな回答Turnのactiveな回答Itemがない**ことを検証する。実行中の回答Turnがあれば`TURN_IN_PROGRESS`を返す。回答が有効なら新しい`chat` Turnの`user_message`に`question_turn_id`と構造化した回答を保存し、サーバーで復元した質問文と回答をモデル向けの`text`にも組み立てる。機密情報のマスクは双方に適用する
+- 回答Turnが`failed`、`blocked`、`cancelled`または`TURN_INTERRUPTED`で終了した場合、保存済みの入力は監査履歴に残すが次のAgent Contextには含めない。回答Itemが隔離されてTurnが`completed`になった場合も元の回答はAgentへ届かず、表示・回答済み判定の対象から外す。これらの場合は質問カードを未回答のまま残し、ユーザーが必要に応じて回答を直して新しい回答Turnを作れるようにする。後続の回答Turnが`completed`になり回答Itemがactiveの場合だけ質問を回答済みにし、それ以降の重複送信は新しいTurnを作らず、履歴取得で完了済み回答Turnを確認できるようにする
+- 親Agentは質問文と回答文の組を会話Contextとして参照して処理を再開し、必要なら新しい子Sessionへ渡す。未回答または「まだ分からない」が残れば、必要な事項だけを再確認する。回答により情報が揃えば同じ回答Turnで`propose_campaign`や`propose_x_post`を実行して提案を提示できるが、回答そのものは承認ではなく、Campaign保存とX公開は承認ボタンからのみ実行する
 
 ### `run_content_creator`
 **利用Agent:** 親エージェント
 
-承認済み施策をもとにコンテンツ制作エージェントの使い捨て子Sessionを作成し、投稿案だけを親へ返す。
+承認済み施策をもとにコンテンツ制作エージェントの使い捨て子Sessionを作成し、投稿案または不足情報を親へ返す。
 
 ```json
 { "campaign_id": 12, "request_item_id": 1850 }
@@ -537,7 +560,7 @@ flowchart TD
     PROPOSAL --> END_OK
 ```
 
-投稿案はAgent履歴にだけ保存し、X公開成功まで`posts`へ保存しない。出力には`child_session_id`、`campaign_id`、投稿本文案、遷移先URLまたは不足情報を含める。成功したTool Resultを受けた親エージェントは、実際の投稿内容を引数に`propose_x_post`を呼び出す。主な失敗は`CAMPAIGN_NOT_FOUND`、`INVALID_REQUEST_ITEM`、`SUBAGENT_LIMIT_EXCEEDED`、`INVALID_SUBAGENT_OUTPUT`、`SUBAGENT_FAILED`。
+投稿案はAgent履歴にだけ保存し、X公開成功まで`posts`へ保存しない。出力には`child_session_id`、`campaign_id`、投稿本文案、遷移先URLまたは不足情報を含める。投稿案が返った場合だけ、親エージェントは実際の投稿内容を引数に`propose_x_post`を呼び出す。不足情報が返った場合は必要な確認を`ask_user`で行う。主な失敗は`CAMPAIGN_NOT_FOUND`、`INVALID_REQUEST_ITEM`、`SUBAGENT_LIMIT_EXCEEDED`、`INVALID_SUBAGENT_OUTPUT`、`SUBAGENT_FAILED`。
 
 ## Toolにしない処理
 以下はLLMに実行可否を選択させず、アプリケーションの決定論的処理または内部ジョブとして実行する。
@@ -562,11 +585,13 @@ flowchart TD
 - 定期処理は投稿IDを使って冪等に実行し、同じ評価指標や記憶の重複保存を防止する。実行時刻、Claim、Lease、部分成功、再試行および評価記憶の生成は`CRON.md`を正本とする
 
 ## 過去施策の想起
-施策立案では、過去施策を検索するかどうかをLLMの任意判断にせず、`run_campaign_planner`の実行フローで類似する過去施策、評価指標、Long-term Memoryを必ず取得する。取得した過去施策を再利用、差別化または無視する判断は施策立案エージェントへ委ねる。
+施策立案では、まず現在の依頼と親会話から募集対象と採用課題または目的を確認する。不足する場合は無理に検索Queryや提案を生成せず、`missing_information`を親へ返す。判断に必要な情報が揃った後は、過去施策を検索するかどうかをLLMの任意判断にせず、`run_campaign_planner`の実行フローで類似する過去施策、評価指標、Long-term Memoryを取得する。取得した過去施策を再利用、差別化または無視する判断は施策立案エージェントへ委ねる。
 
 ```mermaid
 flowchart TD
-    START([施策立案開始]) --> INITIAL_QUERY[ユーザー依頼から検索Queryを作成]
+    START([施策立案開始]) --> BRIEF{募集対象と課題または目的は分かるか}
+    BRIEF -- いいえ --> REQUEST_INFO[不足情報を親エージェントへ返す]
+    BRIEF -- はい --> INITIAL_QUERY[ユーザー依頼から検索Queryを作成]
     INITIAL_QUERY --> INITIAL_SEARCH[類似する過去施策を意味検索]
     INITIAL_SEARCH --> LOAD_METRICS[関連する投稿結果と評価指標を取得]
     LOAD_METRICS --> LOAD_MEMORY[関連するLong-term Memoryを検索]
@@ -585,7 +610,8 @@ flowchart TD
     REUSE --> PRESENT[最終案を親エージェントへ返す]
     DIFFERENTIATE --> PRESENT
     KEEP --> PRESENT
-    REQUEST_INFO --> END_WAIT([親がユーザーへ質問])
+    REQUEST_INFO --> ASK[親がask_userで質問]
+    ASK --> END_WAIT([親Turn完了・次Turnで回答])
     PRESENT --> END_COMPLETE([施策立案完了])
 ```
 
@@ -716,9 +742,6 @@ flowchart TD
     OUTPUT_TYPE -- 最終回答 --> SAVE_ANSWER[assistant_messageを保存]
     SAVE_ANSWER --> END_COMPLETED([Turn終了: completed])
 
-    OUTPUT_TYPE -- ユーザーへの質問 --> SAVE_QUESTION[assistant_messageを保存]
-    SAVE_QUESTION --> END_QUESTION([Turn終了: completed<br/>次Turnでユーザー回答受付])
-
     OUTPUT_TYPE -- Tool Call --> SAVE_TOOL_CALL[tool_call Itemを保存]
     SAVE_TOOL_CALL --> CREATE_EXECUTION[tool_executionをpendingで作成]
     CREATE_EXECUTION --> AUTHORIZE{権限・業務条件を満たすか}
@@ -746,7 +769,10 @@ flowchart TD
     EXECUTE_TOOL --> TOOL_RESULT{実行結果}
 
     TOOL_RESULT -- 成功 --> SAVE_TOOL_RESULT[成功Tool Resultを保存]
-    SAVE_TOOL_RESULT --> UPDATE_CONTEXT
+    SAVE_TOOL_RESULT --> TERMINAL_TOOL{終端Toolか}
+    TERMINAL_TOOL -- ask_user --> END_QUESTION([質問カードを投影しTurn完了<br/>次Turnでユーザー回答受付])
+    TERMINAL_TOOL -- propose_campaign / propose_x_post --> END_COMPLETED
+    TERMINAL_TOOL -- いいえ --> UPDATE_CONTEXT
 
     TOOL_RESULT -- 再試行可能 --> RETRY{再試行上限内か}
     RETRY -- はい --> EXECUTE_TOOL
@@ -849,7 +875,7 @@ flowchart TD
     SUFFICIENT -- はい --> END_CONTINUE([通常のAgent処理を継続])
     SUFFICIENT -- いいえ --> HAS_SOURCE{source_item_idsがあるか}
 
-    HAS_SOURCE -- いいえ --> ASK_USER[親Agentがユーザーへ確認]
+    HAS_SOURCE -- いいえ --> ASK_USER[親Agentがask_userでユーザーへ確認]
     ASK_USER --> END_WAIT([Turn終了: completed<br/>次Turnで回答受付])
 
     HAS_SOURCE -- はい --> SAVE_CALL[get_session_itemsのTool Callを保存]
@@ -882,7 +908,7 @@ flowchart TD
 - 取得件数と出力量に上限を設け、子セッションの内部Itemは取得しない
 - `context_status`が`active`の場合は`content`、`quarantined`の場合は`context_override`を返す
 - Tool Call、実行状態、Tool Resultは現在の親Turnへ保存する
-- 元履歴を取得しても情報が不足する場合は、親エージェントがユーザーへ質問する
+- 元履歴を取得しても情報が不足する場合は、親エージェントが`ask_user`でユーザーへ質問する
 
 ### 長期記憶の想起
 - 親エージェント、施策立案エージェント、コンテンツ制作エージェントは、タスクに必要な場合だけ長期記憶を検索する
@@ -895,5 +921,5 @@ flowchart TD
 - サブエージェントは親から渡された依頼と必要最小限のContextを使い、親と同じ内部ループを独立して実行する
 - サブエージェントは必要に応じて長期記憶、業務データ、Web情報を取得できる
 - サブエージェントの中間メッセージ、LLM Call、Tool Call、Tool Resultは親のContextへ自動的に追加しない
-- サブエージェントが追加情報を必要とする場合は待機せず、不足情報を最終結果として親へ返し、親がユーザーへ質問する
+- サブエージェントが追加情報を必要とする場合は待機せず、不足情報を最終結果として親へ返す。親エージェントは依頼と会話履歴を踏まえ、ユーザーへの確認が必要なら`ask_user`を実行する。親自身が不足に気づいた場合も同じToolを使用できる
 - サブエージェントが返した最終結果だけを、親エージェントのTool Resultとして保存してループを再開する
