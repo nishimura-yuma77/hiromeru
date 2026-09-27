@@ -153,21 +153,22 @@ flowchart TD
 
 ### 5.4 基本フロー
 1. バックエンドはユーザー依頼を親Sessionの新しいTurnへ保存する
-2. 親Agentは類似する過去施策、評価指標、Long-term Memoryを取得する
+2. 親Agentは判断に使える条件がある場合に類似する過去施策、評価指標、Long-term Memoryを取得する。条件が不明な場合は検索Queryを捏造しない
 3. 親Agentは必要に応じてWeb情報を取得する
 4. 親Agentは`run_campaign_planner`を実行する
-5. 施策立案エージェントは使い捨て子Sessionで施策案を作成する
-6. 子Agentの最終結果だけを親AgentのTool Resultへ返す
-7. 親Agentは実際の施策内容を引数に`propose_campaign`を実行する
-8. UIは`propose_campaign`のTool Resultを編集可能なフォームとして表示する
-9. ユーザーは共通レビューを行う
-10. 最終承認時、UIは承認操作用の`Idempotency-Key`とフォーム値（既存施策の変更では`expected_updated_at`を含む）を指定して`POST /api/v1/agent-sessions/{session_id}/campaigns`を呼び出す
-11. APIは認証、CSRF、親Session所有権、冪等性を検証し、実行権を得たRequestの最終内容を指定親Sessionの新しいTurnへ保存する
-12. APIはRequest Bodyを施策Schemaと業務条件で検証する
-13. Request Bodyの`id`が省略または`null`なら新規作成として処理する
-14. `id`に値があれば、同じ会社の既存Campaignの`updated_at`が`expected_updated_at`と一致する場合だけ、全項目を上書きする
-15. APIはCampaign、検索用Embedding、成功API Result、Turn完了、冪等性の成功状態を同一Transactionで保存する
-16. UIは保存結果をユーザーへ表示する
+5. 施策立案エージェントは使い捨て子Sessionで、現在の依頼と過去の親会話を踏まえ、施策案または不足情報を最終結果として作成する
+6. 子Agentの最終結果だけを親AgentのTool Resultへ返す。募集対象と採用課題または目的が不明な依頼では`missing_information`を返し、推測だけで提案を確定しない
+7. 不足情報がある場合、親Agentは現在の依頼・会話履歴と子Agentの結果を踏まえて`ask_user`を呼び、必要な1～3問を質問カードとして表示して親Turnを完了する。子Agentを呼ぶ前に親自身が不足に気づいた場合も、同じToolで確認できる。ユーザーは質問TurnのIDと質問順に対応する回答を構造化して同じ親Sessionの新しいTurnに送信し、親Agentは必要なら新しい子Sessionで再度`run_campaign_planner`を実行する。未回答の事項だけを再質問し、必要な情報が揃えば同じ回答Turnで提案できる。回答自体は施策保存の承認ではない
+8. 施策案が返った場合、親Agentは実際の施策内容を引数に`propose_campaign`を実行する
+9. UIは`propose_campaign`のTool Resultを編集可能なフォームとして表示する
+10. ユーザーは共通レビューを行う
+11. 最終承認時、UIは承認操作用の`Idempotency-Key`とフォーム値（既存施策の変更では`expected_updated_at`を含む）を指定して`POST /api/v1/agent-sessions/{session_id}/campaigns`を呼び出す
+12. APIは認証、CSRF、親Session所有権、冪等性を検証し、実行権を得たRequestの最終内容を指定親Sessionの新しいTurnへ保存する
+13. APIはRequest Bodyを施策Schemaと業務条件で検証する
+14. Request Bodyの`id`が省略または`null`なら新規作成として処理する
+15. `id`に値があれば、同じ会社の既存Campaignの`updated_at`が`expected_updated_at`と一致する場合だけ、全項目を上書きする
+16. APIはCampaign、検索用Embedding、成功API Result、Turn完了、冪等性の成功状態を同一Transactionで保存する
+17. UIは保存結果をユーザーへ表示する
 
 ### 5.5 完了条件
 - 新規作成ではCampaignとCampaign Embeddingが作成されている
@@ -179,7 +180,9 @@ flowchart TD
 ### 5.6 代替・エラーフロー
 | 条件 | 処理 |
 | --- | --- |
-| 情報不足 | 親Agentがユーザーへ追加質問し、回答を新しいTurnで受け付ける |
+| 情報不足・確認事項 | 親Agentが自ら判断した、または子Agentが返した不足情報を参考に`ask_user`で質問する。子Agentの結果との一致は不要。回答は質問Turn IDで対応付けて同じ親Sessionの新しいTurnで受け付け、質問時はCampaignと提案フォームを作らない |
+| 質問Turnが不正・回答済み | 同じ親Sessionの完了済み質問Turnがなければ`404 CLARIFICATION_REQUEST_NOT_FOUND`、同じ質問へのcompletedな回答Turnにactiveな回答Itemが既にあれば`409 CLARIFICATION_ALREADY_ANSWERED`とし、新しい回答Turnは作らない。失敗・Blockされた回答Turnや隔離済み回答Itemは回答済みとみなさず、修正した回答を新しいTurnで送れる |
+| 質問入力が不正 | `ask_user`は`INVALID_ARGUMENT`として失敗し、質問カードを作らない。親Agentは失敗Tool Resultを観測する |
 | 手書き修正 | UIローカル状態を更新し、共通レビューへ戻る |
 | Agentと再相談 | 現在値と修正指示から新しい子Sessionと提案Toolを実行する |
 | 施策詳細（SC-05）からの直接編集 | ユーザーが保存済みの施策を、Agentを経由せずフォームで書き換える。UIは、施策詳細の取得時点の`updated_at`を`expected_updated_at`に設定し、`PUT /api/v1/campaigns/{campaign_id}`で保存する（Agent履歴・親Session・`Idempotency-Key`に関わらない）。競合した場合は、入力を残したまま最新の内容を読み込み、再度保存できる |
@@ -201,14 +204,18 @@ flowchart TD
 
 ```mermaid
 flowchart TD
-    REQUEST([ユーザーが施策作成・変更を依頼]) --> RECALL[過去施策・指標・記憶を取得]
+    REQUEST([ユーザーが施策作成・変更を依頼]) --> NEED_INFO{親Agentが確認を必要とするか}
+    NEED_INFO -- いいえ --> RECALL[過去施策・指標・記憶を取得]
+    NEED_INFO -- はい --> ASK
     RECALL --> WEB{Web情報が必要か}
     WEB -- はい --> FETCH[Web情報を取得]
     WEB -- いいえ --> PLANNER[run_campaign_planner]
     FETCH --> PLANNER
     PLANNER --> PLAN_RESULT{施策立案結果}
-    PLAN_RESULT -- 情報不足 --> ASK[親Agentが追加質問]
-    ASK --> REQUEST
+    PLAN_RESULT -- 情報不足 --> ASK[親Agentがask_userを実行]
+    ASK --> QUESTION[質問カードを表示し親Turn完了]
+    QUESTION --> ANSWER[ユーザーが同じ親Sessionで回答を送信]
+    ANSWER --> NEED_INFO
     PLAN_RESULT -- 失敗 --> PARENT_AGENT_ERROR[親Agentが失敗Tool Resultを観測]
     PARENT_AGENT_ERROR --> AGENT_GUIDANCE([親Agentが原因と次の選択肢を補足])
     PLAN_RESULT -- 成功 --> PROPOSE[propose_campaign]
@@ -298,7 +305,7 @@ flowchart TD
 | 条件 | 処理 |
 | --- | --- |
 | AgentによるCampaign取得失敗 | 失敗Tool Resultを現在の親Agentが観測し、対象の選び直しや作成をユーザーへ補足する |
-| 情報不足 | 親Agentがユーザーへ追加質問し、回答を新しいTurnで受け付ける |
+| 情報不足・確認事項 | 親Agentが自ら判断した、または`run_content_creator`が返した不足情報を参考に`ask_user`で質問カードを提示し、質問Turn IDで対応付けた回答を同じ親Sessionの新しいTurnで受け付ける。質問TurnでX投稿案を作らない |
 | 手書き修正 | UIローカル状態を更新し、共通レビューへ戻る |
 | Agentと再相談 | 現在値と修正指示から新しい子Sessionと提案Toolを実行する |
 | 子Agent失敗 | 失敗Tool Resultを現在の親Agentが観測し、ユーザーへ原因と次の選択肢を補足する。X投稿は行わない |
@@ -324,7 +331,9 @@ flowchart TD
 
 ```mermaid
 flowchart TD
-    REQUEST([ユーザーがX投稿内容を依頼]) --> CAMPAIGN[対象Campaignを取得]
+    REQUEST([ユーザーがX投稿内容を依頼]) --> NEED_INFO{親Agentが確認を必要とするか}
+    NEED_INFO -- はい --> ASK
+    NEED_INFO -- いいえ --> CAMPAIGN[対象Campaignを取得]
     CAMPAIGN --> EXISTS{同じ会社のCampaignか}
     EXISTS -- いいえ --> PARENT_CAMPAIGN_ERROR[親Agentが失敗Tool Resultを観測]
     PARENT_CAMPAIGN_ERROR --> AGENT_GUIDANCE([親Agentが対象の選び直しや作成を補足])
@@ -333,8 +342,10 @@ flowchart TD
     ACTIVE -- はい --> CONTEXT[過去Post・指標・記憶を取得]
     CONTEXT --> CREATOR[run_content_creator]
     CREATOR --> CONTENT_RESULT{コンテンツ制作結果}
-    CONTENT_RESULT -- 情報不足 --> ASK[親Agentが追加質問]
-    ASK --> REQUEST
+    CONTENT_RESULT -- 情報不足 --> ASK[親Agentがask_userで質問]
+    ASK --> QUESTION[質問カードを表示し親Turn完了]
+    QUESTION --> ANSWER[ユーザーが同じ親Sessionで回答を送信]
+    ANSWER --> REQUEST
     CONTENT_RESULT -- 失敗 --> PARENT_AGENT_ERROR[親Agentが失敗Tool Resultを観測]
     PARENT_AGENT_ERROR --> AGENT_GUIDANCE
     CONTENT_RESULT -- 成功 --> PROPOSE[propose_x_post]

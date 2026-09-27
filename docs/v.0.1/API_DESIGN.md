@@ -836,7 +836,7 @@ Pathの`campaign_id`は、上書き対象の施策IDである。Request Bodyに`
       "item_id": 9001,
       "item_number": 1,
       "type": "user_message",
-      "content": { "text": "経験者Webエンジニア採用の施策を考えて" },
+      "content": { "text": "経験者Webエンジニア採用で応募ページへの流入が減っています。当社の柔軟な働き方を訴求して流入を増やす施策を考えて" },
       "created_at": "2026-09-21T10:00:00Z"
     },
     {
@@ -847,10 +847,10 @@ Pathの`campaign_id`は、上書き対象の施策IDである。Request Bodyに`
         "id": null,
         "expected_updated_at": null,
         "title": "経験者Webエンジニア採用",
-        "target_profile": "20代後半のWebエンジニア",
-        "background": "経験者採用の応募数が減少している",
-        "objective": "応募数を増やす",
-        "plan": "柔軟な働き方をXで訴求する"
+        "target_profile": "経験者Webエンジニア",
+        "background": "応募ページへの流入が減っている",
+        "objective": "応募ページへの流入を増やす",
+        "plan": "確認済みの柔軟な働き方をXで訴求し、応募ページへ誘導する"
       },
       "created_at": "2026-09-21T10:00:40Z"
     },
@@ -862,6 +862,62 @@ Pathの`campaign_id`は、上書き対象の施策IDである。Request Bodyに`
       "created_at": "2026-09-21T10:00:42Z"
     }
   ]
+}
+```
+
+親Agentが情報不足や確認事項のため`ask_user`を実行したTurnでは、提案の代わりに以下の`clarification_request`を返す（例は施策立案の場合）。`status = completed`、`error = null`であり、子Sessionの内部履歴とRaw Tool Resultは含めない。子Agentを呼ばず親Agentだけで確認した場合も同じ形式とする。
+
+```json
+{
+  "agent_turn_id": 1903,
+  "turn_number": 4,
+  "kind": "chat",
+  "status": "completed",
+  "error": null,
+  "approval_state": null,
+  "started_at": "2026-09-21T10:05:00Z",
+  "completed_at": "2026-09-21T10:05:10Z",
+  "security_notices": [],
+  "items": [
+    {
+      "item_id": 9010,
+      "item_number": 1,
+      "type": "user_message",
+      "content": { "text": "新しい採用施策を考える" },
+      "created_at": "2026-09-21T10:05:00Z"
+    },
+    {
+      "item_id": 9013,
+      "item_number": 4,
+      "type": "clarification_request",
+      "content": {
+        "answered": false,
+        "questions": [
+          "募集したい職種・必要なスキルは何ですか？",
+          "現在の採用課題または達成したい目的は何ですか？"
+        ]
+      },
+      "created_at": "2026-09-21T10:05:09Z"
+    }
+  ]
+}
+```
+
+回答Turnでは、保存済みの質問からサーバーが生成した`text`に加えて、元の質問Turnと構造化された回答を`user_message`へ投影する。`text`と`answer`はどちらもマスク済みとする。
+
+```json
+{
+  "type": "user_message",
+  "content": {
+    "text": "質問1: 募集したい職種・必要なスキルは何ですか？\n回答1: 経験者Webエンジニアです。\n質問2: 現在の採用課題または達成したい目的は何ですか？\n回答2: 応募ページへの流入を増やしたいです。",
+    "clarification_response": {
+      "question_turn_id": 1903,
+      "answers": [
+        { "question_index": 0, "answer": "経験者Webエンジニアです。" },
+        { "question_index": 1, "answer": "応募ページへの流入を増やしたいです。" }
+      ]
+    }
+  }
 }
 ```
 
@@ -881,14 +937,15 @@ Pathの`campaign_id`は、上書き対象の施策IDである。Request Bodyに`
 
 | `type` | `content` | 元のItem |
 | --- | --- | --- |
-| `user_message` | `{ "text": "..." }` | `chat`Turnのユーザー入力（`item_type = user_message`） |
-| `assistant_message` | `{ "text": "..." }` | Agentの回答または質問（`item_type = assistant_message`、`llm_call_id`あり） |
+| `user_message` | `{ "text": "..." }`。質問カードへの回答では`clarification_response: { "question_turn_id": 1903, "answers": [{ "question_index": 0, "answer": "..." }] }`も含む | `chat`Turnのユーザー入力（`item_type = user_message`）。`text`は回答時、サーバーが保存済みの質問と回答から生成したマスク済み本文 |
+| `assistant_message` | `{ "text": "..." }` | Agentの通常回答（`item_type = assistant_message`、`llm_call_id`あり）。過去の自由文の質問も従来どおり表示する |
 | `campaign_proposal` | `propose_campaign`の`data`（`AGENT_DESIGN.md`の「提案Tool出力」） | `propose_campaign`の成功`tool_result` |
 | `x_post_proposal` | `propose_x_post`の`data` | `propose_x_post`の成功`tool_result` |
+| `clarification_request` | `{ "questions": ["質問1", "質問2"], "answered": false }`（質問は重複なし、1～3件、各200文字以内） | 同じ親Turnの完了したTool実行に紐づく、成功・activeな`ask_user`の`tool_result`。`answered`は同じ親Sessionにあるcompletedな回答Turnの**activeな**`user_message.clarification_response.question_turn_id`から取得時に導出する |
 | `approval_action` | `{ "id", "type", "request" }`（2.4の`action`） | `approval`Turnの`user_message` |
 | `api_result` | `{ "operation", "success", "error" }`（2.4の`api_result`） | `approval`Turnの`api_result`（`content_source = system`の`assistant_message`） |
 
-- 上記以外のItemは返さない。`tool_call`、提案以外の`tool_result`、失敗した提案の`tool_result`、Web検索・Web取得・長期記憶などの外部データ、サブエージェントの内部履歴（子Session）は返さない（情報漏えいとResponseサイズの抑制のため）。監査用の完全な履歴は、DBで確認する
+- 上記以外のItemは返さない。`tool_call`、提案・質問以外の`tool_result`、失敗したToolの`tool_result`、Web検索・Web取得・長期記憶などの外部データ、サブエージェントの内部履歴（子Session）は返さない（情報漏えいとResponseサイズの抑制のため）。監査用の完全な履歴は、DBで確認する
 - `context_status = quarantined`のItemは返さない
 - `security_notices`は、`security_events`のうち、このTurn（`agent_turn_id`）で検出したものから作る。各要素は`event_type`（`prompt_injection`、`sensitive_data`、`unauthorized_tool_call`、`unsafe_external_action`）、`enforcement`（`observed`、`sanitized`、`blocked`）、`detected_at`だけとし、`detected_at`の昇順で最大20件返す。`summary`、`metadata`、`detector`、`external_event_id`は、検出した内容や内部の識別子の漏えいを防ぐため返さない。UIは、`event_type`と`enforcement`から固定の文言を表示する（`SCREEN_DESIGN.md`のSC-02）
 - サブエージェント（子Session）のTurnで検出したイベントは、親Turnと関連付ける情報がないため、`security_notices`に含めない。子Agentの検出は、失敗した`tool_result`として親Agentが観測し、回答で伝える（`AGENT_DESIGN.md`の「セキュリティ通知」）
@@ -913,6 +970,7 @@ Pathの`campaign_id`は、上書き対象の施策IDである。Request Bodyに`
 - `status`が`completed`ではないTurnは、`items`として`user_message`（`approval`Turnでは`approval_action`）だけを返す（`security_notices`と`approval_state`は返す）。完了していないTurnの出力は、次のContextにも含まれないため（`AGENT_DESIGN.md`の「中断されたTurnの復旧」）、表示もしない
 - `approval`Turnは、確定可能なAPI処理が失敗しても`api_result`を保存して`completed`になる（2.4）。承認APIの成否は、`api_result`の`success`で判別する。`X_POST_SAVE_FAILED`だけは暫定Errorのため、同じキーの再送で確定するまで`processing`のままとする
 - 提案（`campaign_proposal`、`x_post_proposal`）は、UIがフォームの初期値として使う。承認は3章・4.1のAPIで行う。施策の直接編集（4.2）と記憶の忘却（7章）は、画面の操作からAgent履歴に関わらないAPIで行う
+- `clarification_request`は質問カードの初期値として使う。`ask_user`は終端Toolであり、同じTurnに`campaign_proposal`または`x_post_proposal`を含めない。質問は通常の`assistant_message`として二重表示しない。回答は5.3の`clarification_response`として同じ親Sessionの新しいTurnに送り、質問カードを持つ`agent_turn_id`で対応付ける。`answered`は対応する回答Turnが`completed`かつ回答の`user_message`が`active`の場合だけ`true`となる取得時のProjectionであり、元のTool Resultは書き換えない。`failed`・`blocked`・`cancelled`など完了に至らなかった回答Turn、隔離済みの回答Itemや無関係な後続`user_message`だけでは回答済みとみなさない。回答は施策確定やX公開の承認としては扱わない
 - `agent_turn_id`、`item_id`は、履歴の表示・取得のための識別子であり、業務データの識別子（`campaign_id`など）とは別である
 
 ### 5.2 Session作成
@@ -948,19 +1006,38 @@ Response: `201 Created`
 ### 5.3 メッセージ送信
 `POST /api/v1/agent-sessions/{session_id}/turns`
 
-ユーザーのメッセージを入力として、親AgentのTurnを実行する。`Accept: text/event-stream`では、Turnの実行中に進捗をSSEで返し、最後にTurnを返す。それ以外では、Turnが終了してから、結果を1回のResponseで返す。
+ユーザーの通常メッセージまたは質問カードへの回答を入力として、親AgentのTurnを実行する。`Accept: text/event-stream`では、Turnの実行中に進捗をSSEで返し、最後にTurnを返す。それ以外では、Turnが終了してから、結果を1回のResponseで返す。
 
-Request Body
+Request Body（通常メッセージ）
 
 ```json
 {
-  "message": "経験者Webエンジニア採用の施策を考えて"
+  "message": "経験者Webエンジニア採用で応募ページへの流入が減っています。当社の柔軟な働き方を訴求して流入を増やす施策を考えて"
 }
 ```
 
 | Field | Type | 必須 | 説明 |
 | --- | --- | :---: | --- |
-| `message` | string | ○ | ユーザーの入力。前後の空白を除いて1文字以上とし、上限はアプリケーション設定とする（既定4,000文字）。添付ファイルは扱わない |
+| `message` | string | 条件付き | 通常のユーザー入力。前後の空白を除いて1文字以上とし、上限はアプリケーション設定とする（既定4,000文字）。添付ファイルは扱わない |
+
+Request Body（質問カードへの回答）
+
+```json
+{
+  "clarification_response": {
+    "question_turn_id": 1903,
+    "answers": [
+      { "question_index": 0, "answer": "経験者Webエンジニアです。" },
+      { "question_index": 1, "answer": "応募ページへの流入を増やしたいです。" }
+    ]
+  }
+}
+```
+
+- `message`と`clarification_response`は排他的にいずれか一方だけ指定し、余分なFieldを拒否する。`clarification_response.question_turn_id`は回答対象の親Turnの正整数IDであり、質問Tool ResultのItem IDではない。各回答は前後の空白を除いて1～1,000文字、`question_index`は0始まりの整数とし、保存済み質問1～3件の全Indexを順序どおり各1回だけ指定する
+- サーバーは同じ親Sessionの完了済み`question_turn_id`から、完了した`ask_user`実行に紐づく成功・activeなTool Resultの質問文を取得する。子Session・他のマーケターのSession・存在しない/未完了の質問Turnは`404 CLARIFICATION_REQUEST_NOT_FOUND`とし、質問文や存在の違いを返さない。クライアントから質問文や会社IDを受け取らない
+- 同じ親Sessionの行ロック下で、質問Turnに対応するcompletedな回答Turnにactiveな回答`user_message`が未保存であることを確認し、存在すれば`409 CLARIFICATION_ALREADY_ANSWERED`を返してTurnを作成しない。`pending`または`running`の回答Turnは既存の`409 TURN_IN_PROGRESS`で拒否する。`failed`・`blocked`・`cancelled`の回答Turnや、完了していても回答Itemが隔離済みのTurnは監査履歴に残すが重複扱いせず、内容を修正した新しい回答Turnを許可する。回答数・Index・文字数またはサーバーが質問文と回答から組み立てる本文が`message`上限（既定4,000文字）を超える場合は`400 INVALID_ARGUMENT`とする。認証・CSRF・親Session確認が失敗した場合もTurnを作成しない
+- 有効な回答では、新しい親`chat` Turnの`user_message.content`へマスク済みの`clarification_response`（`question_turn_id`と回答配列）と、保存済み質問を元に生成したマスク済みの`text`を保存する。質問文は元のTool Resultを正本とし、`text`はAgent Context・履歴・画面用に導出する。回答を保存後に親Agentは通常どおり実行し、情報が揃えば同じ回答Turnで提案を返せるが、回答そのものは施策保存やX公開の承認ではない
 
 #### 応答の形式
 1つのエンドポイントで、`Accept` Headerにより応答の形式を選ぶ。
@@ -978,7 +1055,7 @@ Request Bodyは、どちらの形式でも同じとする。
 
 #### Response（JSON）: `201 Created`
 
-`data`は、5.1のTurnとする。`status`は`completed`であり、`items`には、このTurnの`user_message`と、Agentの回答・提案が含まれる。Agentがユーザーへ質問した場合も、`assistant_message`を返してTurnは`completed`になる（`AGENT_DESIGN.md`）。
+`data`は、5.1のTurnとする。`status`は`completed`であり、`items`には、このTurnの`user_message`と、Agentの回答・提案、または`ask_user`による質問が含まれる。施策立案、コンテンツ制作、親Agent自身による不足事項・確認事項のいずれも`clarification_request`を返す（`AGENT_DESIGN.md`）。質問のTurnは`completed`とする。
 
 ```json
 {
@@ -1049,13 +1126,21 @@ flowchart TD
     AUTH -- 失敗 --> E_AUTH([401 / 403: 履歴へ保存しない])
     AUTH -- 成功 --> SESSION{親Sessionを所有しているか}
     SESSION -- いいえ --> E_404([404 AGENT_SESSION_NOT_FOUND])
-    SESSION -- はい --> VALIDATE{messageが正しいか}
+    SESSION -- はい --> VALIDATE{messageかclarification_responseのいずれかが正しいか}
     VALIDATE -- いいえ --> E_400([400 INVALID_ARGUMENT])
     VALIDATE -- はい --> LOCK[Session行をロック]
     LOCK --> RECOVER[同じSessionの中断されたTurnを復旧]
     RECOVER --> RUNNING{pendingまたはrunningのchat Turnがあるか}
     RUNNING -- はい --> E_409([409 TURN_IN_PROGRESS: 履歴へ保存しない])
-    RUNNING -- いいえ --> CREATE[Turnをrunningで作成し、user_messageを保存]
+    RUNNING -- いいえ --> REPLY{質問への回答か}
+    REPLY -- いいえ --> CREATE[Turnをrunningで作成し、user_messageを保存]
+    REPLY -- はい --> QUESTION{同じ親Sessionの完了済み質問Turnか}
+    QUESTION -- いいえ --> E_QUESTION([404 CLARIFICATION_REQUEST_NOT_FOUND: Turnなし])
+    QUESTION -- はい --> ANSWERED{completedな回答Turnにactiveな回答Itemはあるか}
+    ANSWERED -- はい --> E_ANSWERED([409 CLARIFICATION_ALREADY_ANSWERED: Turnなし])
+    ANSWERED -- いいえ --> ANSWERS{回答の件数・順序・長さは正常か}
+    ANSWERS -- いいえ --> E_400
+    ANSWERS -- はい --> CREATE
     CREATE --> COMMIT[Transactionを確定]
     COMMIT --> MODE{Accept}
     MODE -- JSON --> LOOP[[Agentのループを実行]]
@@ -1070,13 +1155,14 @@ flowchart TD
 
 1. 認証とCSRFを検証する（2.8）。失敗した場合は、履歴へ保存せずResponseだけを返す
 2. `session_id`が正の整数で、認証済みマーケターの親Sessionであることを検証する。アーカイブ済みのSessionには新しいTurnを開始できず、`404 AGENT_SESSION_NOT_FOUND`とする（2.2）
-3. Request Bodyを検証する。不正な場合は、Turnを作成せず`400 INVALID_ARGUMENT`を返す（`agent_turn_id = null`）
+3. Request Bodyが通常の`message`か構造化された`clarification_response`の一方だけか検証する。不正な場合は、Turnを作成せず`400 INVALID_ARGUMENT`を返す（`agent_turn_id = null`）。回答先の所有権と重複は次のSession行ロック下で検証する
 4. 1つの短いTransactionで、次を行う。Session行を`SELECT ... FOR UPDATE`でロックしたうえで行う
    - 同じSessionの中断されたTurnを復旧する（`AGENT_DESIGN.md`の「中断されたTurnの復旧」）
    - `pending`または`running`のAgent Turnが残っている場合は、`409 TURN_IN_PROGRESS`を返す（2.10）。Turnは作成せず、履歴へ保存しない（`agent_turn_id = null`）
+   - `clarification_response`では、現在の親Sessionの完了済み質問Turnと成功・activeな`ask_user` Tool Resultを検証し、同じ質問Turnへのcompletedな回答Turnにactiveな回答Itemがあれば`409 CLARIFICATION_ALREADY_ANSWERED`、対象がない・所有していないなら`404 CLARIFICATION_REQUEST_NOT_FOUND`、回答の件数・順序・内容や生成本文が不正なら`400 INVALID_ARGUMENT`を返す。いずれも新しいTurnを作らない。過去の回答Turnが失敗・Blockされている、または回答Itemが隔離済みの場合は新しい回答Turnを許可する
    - 新しいTurnを`running`で作成する（`turn_number`はSession内の最大値に1を加える。`started_at`を設定する）
-   - 入力をマスクし、`user_message`として保存する。`content = { "text": "<マスク済みのmessage>" }`、`content_source = user_input`、`context_class = conversation`、`context_status = active`とする
-   - Sessionの`updated_at`を更新する。`title`が`null`の場合は、マスク済みの`message`の先頭50文字（改行は空白へ置き換える）を設定する。タイトルの生成にLLMは使用しない
+   - 入力をマスクし、`user_message`として保存する。通常は`content = { "text": "<マスク済みのmessage>" }`、質問への回答は`content = { "text": "<保存済み質問と回答から生成したマスク済み本文>", "clarification_response": { "question_turn_id": ..., "answers": [...] } }`とする。`content_source = user_input`、`context_class = conversation`、`context_status = active`とする。回答Turnへの`question_turn_id`保存により再取得後も元質問との対応を判定でき、追加テーブルは作らない
+   - Sessionの`updated_at`を更新する。`title`が`null`の場合は、マスク済みの`text`の先頭50文字（改行は空白へ置き換える）を設定する。タイトルの生成にLLMは使用しない
 5. Transactionを確定してから、Agentのループを実行する（`AGENT_DESIGN.md`の「ループ設計」）。SSEでは、Transactionの確定後に`200 OK`でストリームを開始し、`turn_started`を送ってから、ループを実行する。ループは、ToolまたはサブエージェントのCallの前後で進捗を通知する（`AGENT_DESIGN.md`の「進捗イベント」）。Turnの実行中は、DBのTransactionとロックを保持しない。LLM呼び出しやTool実行などの外部呼び出しを、Transactionの中で行わない
 6. ループの終了時に、Turnを終端状態（`completed`、`failed`、`blocked`）へ更新する。更新は`status = running`を条件とする。更新できなかった場合（中断されたTurnとして復旧済み）は、Turnの現在の状態から`TURN_INTERRUPTED`のエラーResponseを返す
 7. JSONでは、`completed`のTurnを`201 Created`で返す。`failed`または`blocked`のTurnは、下記のエラーResponseを返す。Responseの`agent_turn_id`は、そのTurnのIDとする。SSEでは、どの終端状態でも、`turn_finished`でTurnを送ってからストリームを閉じる
@@ -1084,11 +1170,13 @@ flowchart TD
 #### エラーコード
 | HTTP Status | Code | 条件 | 再試行 |
 | --- | --- | --- | :---: |
-| `400` | `INVALID_ARGUMENT` | JSON、型、`message`が不正（空、または文字数が上限超過）。Turnは作成しない | × |
+| `400` | `INVALID_ARGUMENT` | JSON・型、`message`と`clarification_response`の併用・欠落、回答の件数・Index・長さ・生成本文の上限違反。Turnは作成しない | × |
 | `401` | `UNAUTHENTICATED` | 未認証、または期限切れ | × |
 | `403` | `CSRF_VALIDATION_FAILED` | CSRF検証に失敗した | ○（Token再発行後に1回だけ） |
 | `404` | `AGENT_SESSION_NOT_FOUND` | 親Sessionが存在しない、所有していない、またはアーカイブ済み | × |
+| `404` | `CLARIFICATION_REQUEST_NOT_FOUND` | 指定した質問Turnが同じ親Sessionの完了済み質問ではない（存在しない、他人のSession、子Session、未完了や質問以外のTurnを区別しない）。Turnは作成しない | × |
 | `409` | `TURN_IN_PROGRESS` | 同じSessionで前のAgent Turnが実行中 | ○（前のTurnの完了後） |
+| `409` | `CLARIFICATION_ALREADY_ANSWERED` | 同じ質問Turnに対するcompletedな回答Turnにactiveな回答Itemが保存済み。新しいTurnは作成せず、履歴取得で既存の回答を確認する | × |
 | `422` | `TURN_BLOCKED` | 入力がGuardrailでBlockされ、Turnを続行できない（`blocked`） | × |
 | `422` | `TURN_STEP_LIMIT_EXCEEDED` | ステップ数の上限に達した（`failed`） | × |
 | `422` | `TURN_COST_LIMIT_EXCEEDED` | コストの上限に達した（`failed`） | × |
@@ -1098,7 +1186,7 @@ flowchart TD
 | `500` | `TURN_INTERRUPTED` | 実行中に中断され、他の処理がTurnを終了させた（`failed`） | ○ |
 
 - SSEでは、ストリームを開始する前（Turnの作成前）のエラー（`400`、`401`、`403`、`404`、`409`）だけが、上記のHTTP Statusと2.6のエラーResponse（JSON）で返る。ストリームの開始後は、HTTP Statusを変更できないため、`TURN_BLOCKED`から`TURN_INTERRUPTED`までは、HTTP Statusが`200`のまま、`turn_finished`の`data.status`と`data.error`で示す
-- `TURN_BLOCKED`から`TURN_INTERRUPTED`までのエラーは、Turnを`failed`または`blocked`で保存した後に返すため、`agent_turn_id`を含める。`TURN_IN_PROGRESS`と、認証・Session・Request Bodyのエラーは、履歴へ保存しないため`agent_turn_id = null`とする
+- `TURN_BLOCKED`から`TURN_INTERRUPTED`までのエラーは、Turnを`failed`または`blocked`で保存した後に返すため、`agent_turn_id`を含める。`TURN_IN_PROGRESS`、`CLARIFICATION_REQUEST_NOT_FOUND`、`CLARIFICATION_ALREADY_ANSWERED`と、認証・Session・Request Bodyのエラーは、履歴へ保存しないため`agent_turn_id = null`とする
 - 「再試行」が○のエラーでも、自動で再実行しない。UIはエラーを表示し、ユーザーが同じ依頼を再送する。再送は、新しいTurnとして実行する。失敗したTurnは、次のContextへ含めない
 - エラーの`message`は、マスク済みの利用者向けの説明とし、内部情報を含めない
 
@@ -1108,7 +1196,7 @@ flowchart TD
 - SSEの接続が、`turn_finished`を受け取る前に切れた場合（通信の切断、関数の最大実行時間、本文のない`504`）も、同じく再送せず、`turn_started`で受け取った`agent_turn_id`（受け取れなかった場合は履歴取得API（5.6））で、Turn取得API（5.4）を呼んで最終状態を確認する。途中の進捗は、再取得できない
 - クライアントの切断を検知しても、サーバーはTurnを中止せず、終了まで実行する（進捗の送信だけを止める）。ただし、関数がその後も動き続けることは、Vercelの動作としては確認できていない【要検証】。Turnが止まった場合は、復旧判定時間（330秒）の後に`TURN_INTERRUPTED`で終了する（`AGENT_DESIGN.md`の「中断されたTurnの復旧」）
 - ブラウザの`EventSource`は、GETだけで、自動で再接続するため使用しない。UIは、`fetch`でRequest Bodyを送り、ストリームを読み取る（`docs/frontend/CODING_STANDARDS.md`の11.3、16章）
-- 確認せずに同じメッセージを再送し、前のTurnがすでに完了していた場合は、同じ内容の2つ目のTurnが作成される。会話の履歴には両方が表示されるため、利用者が確認できる。この重複を防ぐ`Idempotency-Key`は、MVPでは設けない
+- 確認せずに同じ通常の`message`を再送し、前のTurnがすでに完了していた場合は、同じ内容の2つ目のTurnが作成される。会話の履歴には両方が表示されるため、利用者が確認できる。この重複を防ぐ`Idempotency-Key`は、MVPでは設けない。`clarification_response`は、同じ質問Turnへのcompletedな回答Turnにactiveな回答Itemがあれば`409 CLARIFICATION_ALREADY_ANSWERED`となる。失敗・Block・中断された回答Turn、または隔離済みの回答Itemは次のContextの回答として使われないため、履歴で状態を確認後、必要に応じて回答を修正して新しい回答Turnで再送できる
 
 ### 5.4 Turn取得
 `GET /api/v1/agent-sessions/{session_id}/turns/{turn_id}`
@@ -1149,7 +1237,7 @@ Response: `200 OK`
     "sessions": [
       {
         "session_id": 21,
-        "title": "経験者Webエンジニア採用の施策を考えて",
+        "title": "経験者Webエンジニア採用で応募ページへの流入が減っています。当社の柔軟な働き方を訴求して流入を増や",
         "created_at": "2026-09-21T10:00:00Z",
         "updated_at": "2026-09-21T10:00:42Z"
       }
@@ -1183,7 +1271,7 @@ Response: `200 OK`
   "data": {
     "session": {
       "session_id": 21,
-      "title": "経験者Webエンジニア採用の施策を考えて",
+      "title": "経験者Webエンジニア採用で応募ページへの流入が減っています。当社の柔軟な働き方を訴求して流入を増や",
       "created_at": "2026-09-21T10:00:00Z",
       "updated_at": "2026-09-21T10:00:42Z"
     },
@@ -1856,7 +1944,9 @@ APIが返すエラーコードの一覧である。`docs/backend/CODING_STANDARD
 | --- | --- | :---: | --- |
 | `AGENT_SESSION_SAVE_FAILED` | `500` | ○ | 5.2 |
 | `AGENT_TURN_NOT_FOUND` | `404` | × | 5.4 |
+| `CLARIFICATION_REQUEST_NOT_FOUND` | `404` | × | 5.3 |
 | `TURN_IN_PROGRESS` | `409` | ○（前のTurnの完了後） | 2.10、5.3 |
+| `CLARIFICATION_ALREADY_ANSWERED` | `409` | × | 5.3 |
 | `TURN_BLOCKED` | `422` | × | 5.3 |
 | `TURN_STEP_LIMIT_EXCEEDED` | `422` | × | 5.3 |
 | `TURN_COST_LIMIT_EXCEEDED` | `422` | × | 5.3 |
