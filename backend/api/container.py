@@ -7,6 +7,7 @@ from urllib.parse import urlsplit
 from fastapi import Request
 
 from agent_runtime.business_tools import ToolHandlerDependencies, build_default_tool_registry
+from agent_runtime.clarification_tools import register_clarification_tool
 from agent_runtime.compactor import StubContextCompactor
 from agent_runtime.definitions import validate_agent_definitions
 from agent_runtime.firewall import FakeAgentFirewall, OrcaRouterAgentFirewall
@@ -124,6 +125,7 @@ def build_default_context(  # noqa: PLR0912 - Clientごとの独立した組み�
         new_uuid=uuid.uuid4,
     )
     register_proposal_tools(context)
+    register_clarification_tool(registry)
     validate_agent_definitions(registry, turn_time_limit_seconds=resolved.turn_time_limit_seconds)
     if resolved.agent_client_mode == "real":
         model_client = OrcaRouterModelClient(

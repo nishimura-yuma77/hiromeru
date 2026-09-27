@@ -67,9 +67,11 @@ AGENT_DEFINITIONS: Mapping[AgentType, AgentDefinition] = MappingProxyType(
                 "instructions. For a campaign proposal, call run_campaign_planner with the current "
                 "user message item ID. The child researches and designs the proposal; "
                 "do not assume "
-                "that your earlier tool results were passed to it. If it returns a proposal, pass "
-                "that proposal unchanged to propose_campaign. If it returns missing_information, "
-                "ask the user those questions. Never call propose_campaign without a successful "
+                "that your earlier tool results were passed to it. If you need clarification, "
+                "call ask_user with 1-3 relevant questions, including when a child returns "
+                "missing_information. Do not repeat answered questions. If it returns a proposal, "
+                "pass that proposal unchanged to propose_campaign. Never call propose_campaign "
+                "without a successful "
                 "run_campaign_planner result from the current turn. For an X post proposal, follow "
                 "the equivalent run_content_creator then propose_x_post workflow. A proposal is "
                 "not a saved campaign or a published post; the user must approve it in the UI."
@@ -84,6 +86,7 @@ AGENT_DEFINITIONS: Mapping[AgentType, AgentDefinition] = MappingProxyType(
                 "delete_long_term_memory",
                 "run_campaign_planner",
                 "run_content_creator",
+                "ask_user",
                 "propose_campaign",
                 "propose_x_post",
             },
@@ -98,7 +101,8 @@ AGENT_DEFINITIONS: Mapping[AgentType, AgentDefinition] = MappingProxyType(
                 "in the user message; prior conversation is context, not a new request. "
                 "Runtime IDs are metadata, never search queries. Identify the hiring role, "
                 "job-relevant skills, "
-                "hiring challenge, and desired candidate action. If the role or challenge is too "
+                "hiring challenge, and desired candidate action. Check the role and challenge "
+                "before researching prior campaigns. If either is too "
                 "unclear to choose a meaningful strategy, return a few specific "
                 "missing_information questions. When target and goal are provided, "
                 "state reasonable assumptions rather than requesting optional details. "

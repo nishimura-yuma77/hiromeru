@@ -15,6 +15,7 @@ from pydantic import (
     StringConstraints,
     ValidationInfo,
     field_validator,
+    model_validator,
 )
 
 from domain.constants import (
@@ -103,7 +104,28 @@ class XPostRequest(StrictModel):
     ]
 
 
-class MessageRequest(StrictModel):
-    """メッセージ送信（5.3）。上限の文字数は設定値のため、サービスで検証する。"""
+class ClarificationAnswer(StrictModel):
+    """質問番号に対応する回答。"""
 
-    message: str
+    question_index: int = Field(ge=0)
+    answer: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=1_000)]
+
+
+class ClarificationResponseRequest(StrictModel):
+    """過去の質問Turnへ返す順序付きの回答。"""
+
+    question_turn_id: PositiveId
+    answers: list[ClarificationAnswer] = Field(min_length=1, max_length=3)
+
+
+class MessageRequest(StrictModel):
+    """通常メッセージか質問への回答を排他的に受け付ける（5.3）。"""
+
+    message: str | None = None
+    clarification_response: ClarificationResponseRequest | None = None
+
+    @model_validator(mode="after")
+    def _exclusive(self) -> "MessageRequest":
+        if (self.message is None) == (self.clarification_response is None):
+            raise ValueError("message or clarification_response is required")
+        return self
