@@ -1,4 +1,4 @@
-import type { AgentSession, AgentTurn, ApiError, ApprovalState, SessionHistory, SessionList, TurnItem } from "./types";
+import type { AgentSession, AgentTurn, ApiError, ApprovalState, ClarificationResponse, SessionHistory, SessionList, TurnItem } from "./types";
 
 function record(input: unknown): Record<string, unknown> {
   if (typeof input !== "object" || input === null || Array.isArray(input)) throw new Error("Invalid object");
@@ -57,6 +57,18 @@ function parseApprovalState(input: unknown): ApprovalState | null {
   };
 }
 
+function parseClarificationResponse(input: unknown): ClarificationResponse {
+  const value = record(input);
+  if (!Array.isArray(value.answers)) throw new Error("Invalid clarification answers");
+  return {
+    question_turn_id: number(value.question_turn_id),
+    answers: value.answers.map((input) => {
+      const answer = record(input);
+      return { question_index: number(answer.question_index), answer: string(answer.answer) };
+    }),
+  };
+}
+
 export function parseSession(input: unknown): AgentSession {
   const value = record(input);
   return {
@@ -76,8 +88,22 @@ function parseItem(input: unknown): TurnItem {
   };
   const type = string(value.type);
   const content = record(value.content);
-  if (type === "user_message" || type === "assistant_message") {
+  if (type === "user_message") {
+    return { ...base, type, content: {
+      text: string(content.text),
+      ...(content.clarification_response === undefined ? {} : {
+        clarification_response: parseClarificationResponse(content.clarification_response),
+      }),
+    } };
+  }
+  if (type === "assistant_message") {
     return { ...base, type, content: { text: string(content.text) } };
+  }
+  if (type === "clarification_request") {
+    if (!Array.isArray(content.questions) || typeof content.answered !== "boolean") throw new Error("Invalid clarification request");
+    return { ...base, type, content: {
+      questions: content.questions.map(string), answered: content.answered,
+    } };
   }
   if (type === "campaign_proposal") {
     return { ...base, type, content: {

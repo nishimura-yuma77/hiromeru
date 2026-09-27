@@ -8,7 +8,7 @@ import { ApiError } from "@/shared/api/ApiError";
 import { createSession, getHistory, getTurn, streamTurn } from "./api";
 import { chatReducer, initialChatState } from "./state";
 import { parseTurn } from "./parsers";
-import type { Activity, SessionHistory, SseEvent } from "./types";
+import type { Activity, ClarificationAnswer, SessionHistory, SseEvent, TurnRequest } from "./types";
 
 const MAX_MESSAGE_LENGTH = 4000;
 const POLL_INTERVAL_MS = 3000;
@@ -24,6 +24,7 @@ export function useChatController(initialHistory: SessionHistory | null) {
   const router = useRouter();
   const [state, dispatch] = useReducer(chatReducer, initialHistory, initialChatState);
   const abortRef = useRef<AbortController | null>(null);
+  const sendingRef = useRef(false);
   const sessionIdRef = useRef(initialHistory?.session.session_id ?? null);
   const turnIdRef = useRef<number | null>(null);
 
@@ -49,7 +50,7 @@ export function useChatController(initialHistory: SessionHistory | null) {
     if (!signal.aborted) dispatch({ type: "failed", message: "結果を確認できません。会話を再読み込みしてください。" });
   }
 
-  async function recover(sessionId: number, signal: AbortSignal) {
+  async function recover(sessionId: number, signal: AbortSignal, input: TurnRequest) {
     dispatch({ type: "recovering" });
     if (turnIdRef.current !== null) {
       await pollTurn(sessionId, turnIdRef.current, signal);
@@ -59,6 +60,18 @@ export function useChatController(initialHistory: SessionHistory | null) {
     const history = await getHistory(sessionId, signal);
     dispatch({ type: "history_replaced", history });
     const latest = history.turns.at(-1);
+    if (latest && "clarification_response" in input && latest.items.some((item) =>
+      item.type === "user_message" && item.content.clarification_response?.question_turn_id === input.clarification_response.question_turn_id
+    )) {
+      if (TERMINAL_STATUSES.has(latest.status)) {
+        dispatch({ type: "turn_finished", turn: latest });
+        window.dispatchEvent(new Event("chat:sessions-changed"));
+      } else {
+        turnIdRef.current = latest.agent_turn_id;
+        await pollTurn(sessionId, latest.agent_turn_id, signal);
+      }
+      return;
+    }
     if (latest && !TERMINAL_STATUSES.has(latest.status)) {
       turnIdRef.current = latest.agent_turn_id;
       await pollTurn(sessionId, latest.agent_turn_id, signal);
@@ -100,20 +113,11 @@ export function useChatController(initialHistory: SessionHistory | null) {
     }
   }
 
-  async function send(explicitMessage?: string) {
-    const source = explicitMessage ?? state.draft;
-    const message = source.trim();
-    if (!message) {
-      dispatch({ type: "validation", message: "メッセージを入力してください。" });
-      return;
-    }
-    if (source.length > MAX_MESSAGE_LENGTH) {
-      dispatch({ type: "validation", message: "メッセージは4,000文字以内で入力してください。" });
-      return;
-    }
-    if (state.sending) return;
-
-    dispatch({ type: "send_started", message: source });
+  async function sendRequest(input: TurnRequest, preview: string, clearDraft: boolean) {
+    if (state.sending || sendingRef.current) return;
+    if ("clarification_response" in input && sessionIdRef.current === null) return;
+    sendingRef.current = true;
+    dispatch({ type: "send_started", message: preview, clearDraft });
     const controller = new AbortController();
     abortRef.current?.abort();
     abortRef.current = controller;
@@ -131,15 +135,25 @@ export function useChatController(initialHistory: SessionHistory | null) {
       }
 
       let finished = false;
-      await streamTurn(sessionId, message, controller.signal, (event) => {
+      await streamTurn(sessionId, input, controller.signal, (event) => {
         receiveEvent(event);
         if (event.event === "turn_finished") finished = true;
       });
-      if (!finished && !controller.signal.aborted) await recover(sessionId, controller.signal);
+      if (!finished && !controller.signal.aborted) await recover(sessionId, controller.signal, input);
     } catch (error) {
       if (controller.signal.aborted) return;
       if (error instanceof ApiError && error.agentTurnId !== null) {
         turnIdRef.current = error.agentTurnId;
+      }
+      if (error instanceof ApiError && error.code === "CLARIFICATION_ALREADY_ANSWERED" && "clarification_response" in input && sessionIdRef.current !== null) {
+        try {
+          const question = await getTurn(sessionIdRef.current, input.clarification_response.question_turn_id, controller.signal);
+          dispatch({ type: "question_refreshed", turn: question });
+        } catch {
+          // The original API error is still shown if the question cannot be refreshed.
+        }
+        dispatch({ type: "failed", message: error.message });
+        return;
       }
       if (
         error instanceof ApiError &&
@@ -151,7 +165,7 @@ export function useChatController(initialHistory: SessionHistory | null) {
       }
       if (sessionIdRef.current !== null) {
         try {
-          await recover(sessionIdRef.current, controller.signal);
+          await recover(sessionIdRef.current, controller.signal, input);
           return;
         } catch (recoveryError) {
           if (controller.signal.aborted) return;
@@ -161,8 +175,28 @@ export function useChatController(initialHistory: SessionHistory | null) {
       }
       dispatch({ type: "failed", message: errorMessage(error) });
     } finally {
+      sendingRef.current = false;
       if (createdSessionId !== null) router.replace(`/chat/${createdSessionId}`);
     }
+  }
+
+  async function send(explicitMessage?: string) {
+    const source = explicitMessage ?? state.draft;
+    const message = source.trim();
+    if (!message) {
+      dispatch({ type: "validation", message: "メッセージを入力してください。" });
+      return;
+    }
+    if (source.length > MAX_MESSAGE_LENGTH) {
+      dispatch({ type: "validation", message: "メッセージは4,000文字以内で入力してください。" });
+      return;
+    }
+    await sendRequest({ message }, source, true);
+  }
+
+  async function sendClarification(questionTurnId: number, questions: string[], answers: ClarificationAnswer[]) {
+    const preview = questions.map((question, index) => `質問${index + 1}: ${question}\n回答${index + 1}: ${answers[index].answer}`).join("\n");
+    await sendRequest({ clarification_response: { question_turn_id: questionTurnId, answers } }, preview, false);
   }
 
   async function loadEarlier() {
@@ -188,5 +222,5 @@ export function useChatController(initialHistory: SessionHistory | null) {
     window.dispatchEvent(new Event("chat:sessions-changed"));
   }
 
-  return { state, dispatch, send, loadEarlier, refreshHistory, maxLength: MAX_MESSAGE_LENGTH };
+  return { state, dispatch, send, sendClarification, loadEarlier, refreshHistory, maxLength: MAX_MESSAGE_LENGTH };
 }

@@ -7,9 +7,10 @@ import { getCampaign } from "@/features/campaigns/api/getCampaign";
 import type { CampaignListItem } from "@/features/campaigns/types/campaign";
 import { ApiError } from "@/shared/api/ApiError";
 
+import { ClarificationCard } from "./ClarificationCard";
 import { approveCampaign, approveXPost, searchActiveCampaigns } from "../api";
 import { useChatController } from "../controller";
-import type { AgentTurn, ApprovalAction, ApprovalState, CampaignProposal, SecurityNotice, SessionHistory, TurnItem, XPostProposal } from "../types";
+import type { AgentTurn, ApprovalAction, ApprovalState, CampaignProposal, ClarificationAnswer, SecurityNotice, SessionHistory, TurnItem, XPostProposal } from "../types";
 import styles from "../styles/Chat.module.scss";
 
 const dateFormatter = new Intl.DateTimeFormat("ja-JP", { hour: "2-digit", minute: "2-digit" });
@@ -32,6 +33,7 @@ const activityLabels: Record<string, string> = {
   search_posts: "投稿を確認中",
   get_marketing_metrics: "計測結果を確認中",
   run_campaign_planner: "施策を立案中",
+  ask_user: "確認したいことを整理中",
   run_content_creator: "投稿案を作成中",
   propose_campaign: "施策案を整理中",
   propose_x_post: "投稿案を整理中",
@@ -493,7 +495,10 @@ function ProposalField({ autoComplete = "off", disabled, error, idPrefix, inputM
     : <input aria-describedby={error ? `${id}-error` : undefined} aria-invalid={Boolean(error)} autoComplete={autoComplete} disabled={disabled} id={id} inputMode={inputMode} maxLength={maxLength} min={type === "number" ? 1 : undefined} name={name} onChange={(event) => onChange(name, event.target.value)} required type={type} value={value} />}{error ? <small id={`${id}-error`}>{error}</small> : null}</label>;
 }
 
-function Item({ actionable, item, sessionId, audits, refreshHistory, sendRevision, sending }: { actionable: boolean; item: TurnItem; sessionId: number; audits: ApprovalAudit[]; refreshHistory: () => Promise<void>; sendRevision: (message: string) => Promise<void>; sending: boolean }) {
+function Item({ actionable, item, sessionId, questionTurnId, previousAnswers, maxMessageLength, audits, refreshHistory, sendRevision, sendClarification, sending }: { actionable: boolean; item: TurnItem; sessionId: number; questionTurnId: number; previousAnswers?: ClarificationAnswer[]; maxMessageLength: number; audits: ApprovalAudit[]; refreshHistory: () => Promise<void>; sendRevision: (message: string) => Promise<void>; sendClarification: (questionTurnId: number, questions: string[], answers: ClarificationAnswer[]) => Promise<void>; sending: boolean }) {
+  if (item.type === "clarification_request") {
+    return <ClarificationCard item={item} questionTurnId={questionTurnId} previousAnswers={previousAnswers} sending={sending} maxMessageLength={maxMessageLength} onSubmit={sendClarification} />;
+  }
   if (item.type === "user_message" || item.type === "assistant_message") {
     const user = item.type === "user_message";
     return (
@@ -573,17 +578,17 @@ function ApprovalStatus({ state }: { state: ApprovalState }) {
   return <div className={`${styles.approvalState} ${state.status === "failed" || state.status === "outcome_unknown" ? styles.approvalWarning : ""}`} role="status"><strong>{message}</strong>{state.recovery === "retry_same_key" ? <span>同じ処理キーで保存のみ再試行できます。</span> : null}</div>;
 }
 
-function Turn({ turn, restore, sessionId, audits, latestProposalIds, refreshHistory, sendRevision, sending }: { turn: AgentTurn; restore: (message: string) => void; sessionId: number; audits: ApprovalAudit[]; latestProposalIds: Set<number>; refreshHistory: () => Promise<void>; sendRevision: (message: string) => Promise<void>; sending: boolean }) {
+function Turn({ turn, restore, sessionId, previousAnswers, maxMessageLength, audits, latestProposalIds, refreshHistory, sendRevision, sendClarification, sending }: { turn: AgentTurn; restore: (message: string) => void; sessionId: number; previousAnswers?: ClarificationAnswer[]; maxMessageLength: number; audits: ApprovalAudit[]; latestProposalIds: Set<number>; refreshHistory: () => Promise<void>; sendRevision: (message: string) => Promise<void>; sendClarification: (questionTurnId: number, questions: string[], answers: ClarificationAnswer[]) => Promise<void>; sending: boolean }) {
   const userText = turn.items.find((item) => item.type === "user_message");
   return (
     <li className={styles.turn}>
-      {[...turn.items].sort((a, b) => a.item_number - b.item_number).map((item) => <Item actionable={latestProposalIds.has(item.item_id)} audits={audits} item={item} key={item.item_id} refreshHistory={refreshHistory} sendRevision={sendRevision} sending={sending} sessionId={sessionId} />)}
+      {[...turn.items].sort((a, b) => a.item_number - b.item_number).map((item) => <Item actionable={latestProposalIds.has(item.item_id)} audits={audits} item={item} key={item.item_id} questionTurnId={turn.agent_turn_id} previousAnswers={previousAnswers} maxMessageLength={maxMessageLength} refreshHistory={refreshHistory} sendRevision={sendRevision} sendClarification={sendClarification} sending={sending} sessionId={sessionId} />)}
       {turn.approval_state ? <ApprovalStatus state={turn.approval_state} /> : null}
       <Notices notices={turn.security_notices} />
       {turn.error ? (
         <div className={styles.turnError} role="alert">
           <p>{turn.error.message}</p>
-          {userText?.type === "user_message" ? <button onClick={() => restore(userText.content.text)} type="button">同じ内容を入力欄へ戻す</button> : null}
+          {userText?.type === "user_message" && !userText.content.clarification_response ? <button onClick={() => restore(userText.content.text)} type="button">同じ内容を入力欄へ戻す</button> : null}
         </div>
       ) : null}
     </li>
@@ -591,7 +596,7 @@ function Turn({ turn, restore, sessionId, audits, latestProposalIds, refreshHist
 }
 
 export function Conversation({ initialHistory, initialDraft = "" }: { initialHistory: SessionHistory | null; initialDraft?: string }) {
-  const { state, dispatch, send, loadEarlier, refreshHistory, maxLength } = useChatController(initialHistory);
+  const { state, dispatch, send, sendClarification, loadEarlier, refreshHistory, maxLength } = useChatController(initialHistory);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const messagesRef = useRef<HTMLDivElement>(null);
 
@@ -632,6 +637,16 @@ export function Conversation({ initialHistory, initialDraft = "" }: { initialHis
     }
   }
   const latestProposalIds = new Set(latestByType.values());
+  const failedClarificationAnswers = new Map<number, ClarificationAnswer[]>();
+  for (const turn of state.turns) {
+    if (!(turn.status === "failed" || turn.status === "blocked" || turn.status === "cancelled")) continue;
+    for (const item of turn.items) {
+      if (item.type === "user_message" && item.content.clarification_response) {
+        const { question_turn_id, answers } = item.content.clarification_response;
+        failedClarificationAnswers.set(question_turn_id, answers);
+      }
+    }
+  }
 
   return (
     <div className={styles.conversation}>
@@ -656,7 +671,7 @@ export function Conversation({ initialHistory, initialDraft = "" }: { initialHis
           </button>
         ) : null}
         <ol className={styles.turns}>
-          {state.turns.map((turn) => <Turn audits={audits} key={turn.agent_turn_id} latestProposalIds={latestProposalIds} refreshHistory={refreshHistory} restore={restore} sendRevision={send} sending={state.sending} sessionId={state.session?.session_id ?? 0} turn={turn} />)}
+          {state.turns.map((turn) => <Turn audits={audits} key={turn.agent_turn_id} latestProposalIds={latestProposalIds} previousAnswers={failedClarificationAnswers.get(turn.agent_turn_id)} maxMessageLength={maxLength} refreshHistory={refreshHistory} restore={restore} sendRevision={send} sendClarification={sendClarification} sending={state.sending} sessionId={state.session?.session_id ?? 0} turn={turn} />)}
         </ol>
         {state.pendingMessage ? (
           <div className={styles.pendingTurn}>

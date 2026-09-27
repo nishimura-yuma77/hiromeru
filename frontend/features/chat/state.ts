@@ -17,12 +17,13 @@ export type ChatState = {
 export type ChatAction =
   | { type: "draft"; value: string }
   | { type: "validation"; message: string | null }
-  | { type: "send_started"; message: string }
+  | { type: "send_started"; message: string; clearDraft: boolean }
   | { type: "session_created"; session: AgentSession }
   | { type: "activity_started"; activity: Activity }
   | { type: "activity_finished"; id: string; status: Activity["status"] }
   | { type: "recovering" }
   | { type: "turn_finished"; turn: AgentTurn }
+  | { type: "question_refreshed"; turn: AgentTurn }
   | { type: "history_replaced"; history: SessionHistory }
   | { type: "history_loading" }
   | { type: "history_prepended"; history: SessionHistory }
@@ -51,6 +52,20 @@ function upsertTurn(turns: AgentTurn[], turn: AgentTurn) {
   );
 }
 
+function withAnsweredQuestion(turns: AgentTurn[], answerTurn: AgentTurn): AgentTurn[] {
+  if (answerTurn.status !== "completed") return turns;
+  const questionTurnId = answerTurn.items.find((item) => item.type === "user_message")
+    ?.content.clarification_response?.question_turn_id;
+  if (questionTurnId === undefined) return turns;
+  return turns.map((turn) => turn.agent_turn_id !== questionTurnId ? turn : {
+    ...turn,
+    items: turn.items.map((item) => item.type !== "clarification_request" ? item : {
+      ...item,
+      content: { ...item.content, answered: true },
+    }),
+  });
+}
+
 export function chatReducer(state: ChatState, action: ChatAction): ChatState {
   switch (action.type) {
     case "draft":
@@ -60,7 +75,7 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
     case "send_started":
       return {
         ...state,
-        draft: state.draft === action.message ? "" : state.draft,
+        draft: action.clearDraft && state.draft === action.message ? "" : state.draft,
         pendingMessage: action.message,
         activities: [],
         sending: true,
@@ -84,12 +99,17 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
     case "turn_finished":
       return {
         ...state,
-        turns: upsertTurn(state.turns, action.turn),
+        turns: withAnsweredQuestion(upsertTurn(state.turns, action.turn), action.turn),
         pendingMessage: null,
         activities: [],
         sending: false,
         recovering: false,
         requestError: null,
+      };
+    case "question_refreshed":
+      return {
+        ...state,
+        turns: state.turns.map((turn) => turn.agent_turn_id === action.turn.agent_turn_id ? action.turn : turn),
       };
     case "history_replaced":
       return {

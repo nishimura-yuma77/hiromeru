@@ -10,6 +10,7 @@ import type {
   SessionHistory,
   SessionList,
   SseEvent,
+  TurnRequest,
   XPostProposal,
 } from "./types";
 
@@ -72,20 +73,20 @@ function readCookie(name: string) {
   return entry ? decodeURIComponent(entry.slice(prefix.length)) : null;
 }
 
-async function openTurnStream(sessionId: number, message: string, signal: AbortSignal, csrfToken: string | null) {
+async function openTurnStream(sessionId: number, input: TurnRequest, signal: AbortSignal, csrfToken: string | null) {
   const headers = new Headers({ Accept: "text/event-stream", "Content-Type": "application/json" });
   if (csrfToken) headers.set("X-CSRF-Token", csrfToken);
   return fetch(`${BASE_PATH}/${sessionId}/turns`, {
     method: "POST",
-    body: JSON.stringify({ message }),
+    body: JSON.stringify(input),
     credentials: "same-origin",
     headers,
     signal,
   });
 }
 
-async function turnStreamResponse(sessionId: number, message: string, signal: AbortSignal) {
-  let response = await openTurnStream(sessionId, message, signal, readCookie("csrf_token"));
+async function turnStreamResponse(sessionId: number, input: TurnRequest, signal: AbortSignal) {
+  let response = await openTurnStream(sessionId, input, signal, readCookie("csrf_token"));
   let retriedCsrf = false;
   if (response.status === 403) {
     try {
@@ -99,7 +100,7 @@ async function turnStreamResponse(sessionId: number, message: string, signal: Ab
       retryCsrf: false,
       signal,
     });
-    response = await openTurnStream(sessionId, message, signal, token);
+    response = await openTurnStream(sessionId, input, signal, token);
     retriedCsrf = true;
   }
   if (!response.ok || !response.headers.get("content-type")?.startsWith("text/event-stream")) {
@@ -134,11 +135,11 @@ function parseBlock(block: string): SseEvent | null {
 
 export async function streamTurn(
   sessionId: number,
-  message: string,
+  input: TurnRequest,
   signal: AbortSignal,
   onEvent: (event: SseEvent) => void,
 ) {
-  const response = await turnStreamResponse(sessionId, message, signal);
+  const response = await turnStreamResponse(sessionId, input, signal);
 
   if (!response.body) {
     throw new Error("ストリームを開始できませんでした。");

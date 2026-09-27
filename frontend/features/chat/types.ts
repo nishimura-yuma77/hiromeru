@@ -45,6 +45,10 @@ export type XPostProposal = {
   landing_url: string;
 };
 
+export type ClarificationAnswer = { question_index: number; answer: string };
+export type ClarificationResponse = { question_turn_id: number; answers: ClarificationAnswer[] };
+export type TurnRequest = { message: string } | { clarification_response: ClarificationResponse };
+
 export type ApprovalOperation = "upsert_campaign" | "publish_x_post";
 export type ApprovalStatus = "processing" | "succeeded" | "failed" | "outcome_unknown";
 export type ApprovalState = {
@@ -62,8 +66,9 @@ export type ApprovalAction = {
 };
 
 export type TurnItem = TurnItemBase & (
-  | { type: "user_message"; content: { text: string } }
+  | { type: "user_message"; content: { text: string; clarification_response?: ClarificationResponse } }
   | { type: "assistant_message"; content: { text: string } }
+  | { type: "clarification_request"; content: { questions: string[]; answered: boolean } }
   | { type: "campaign_proposal"; content: CampaignProposal }
   | { type: "x_post_proposal"; content: XPostProposal }
   | { type: "approval_action"; content: ApprovalAction }
