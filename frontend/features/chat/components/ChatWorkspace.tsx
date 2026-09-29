@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useEffect, useReducer, useRef } from "react";
+import { useEffect, useReducer, useRef, useState } from "react";
 
 import { listSessions } from "../api";
 import type { AgentSession, SessionList } from "../types";
@@ -33,6 +33,7 @@ const dateFormatter = new Intl.DateTimeFormat("ja-JP", {
   day: "numeric",
   hour: "2-digit",
   minute: "2-digit",
+  timeZone: "Asia/Tokyo",
 });
 
 function SessionLink({ session, active }: { session: AgentSession; active: boolean }) {
@@ -54,12 +55,22 @@ function SessionLink({ session, active }: { session: AgentSession; active: boole
 
 export function ChatWorkspace({ initialSessions, children }: { initialSessions: SessionList; children: React.ReactNode }) {
   const pathname = usePathname();
+  const [isSessionListOpen, setIsSessionListOpen] = useState(true);
   const [state, dispatch] = useReducer(listReducer, {
     ...initialSessions,
     loading: false,
     error: null,
   });
   const abortRef = useRef<AbortController | null>(null);
+
+  useEffect(() => {
+    const mobileLayout = window.matchMedia("(max-width: 64rem)");
+    const restoreMobileList = () => {
+      if (mobileLayout.matches) setIsSessionListOpen(true);
+    };
+    mobileLayout.addEventListener("change", restoreMobileList);
+    return () => mobileLayout.removeEventListener("change", restoreMobileList);
+  }, []);
 
   useEffect(() => {
     async function refresh() {
@@ -91,37 +102,54 @@ export function ChatWorkspace({ initialSessions, children }: { initialSessions: 
   }
 
   return (
-    <div className={styles.workspace}>
+    <div className={`${styles.workspace}${isSessionListOpen ? "" : ` ${styles.workspaceCollapsed}`}`}>
       <aside aria-label="会話一覧" className={styles.sidebar}>
         <div className={styles.listHeader}>
-          <h1>会話</h1>
+          <h1>会話一覧</h1>
+          <button
+            aria-controls="chat-session-list"
+            aria-expanded={isSessionListOpen}
+            aria-label={isSessionListOpen ? "会話一覧を閉じる" : "会話一覧を開く"}
+            className={styles.listToggle}
+            onClick={() => setIsSessionListOpen((open) => !open)}
+            title={isSessionListOpen ? "会話一覧を閉じる" : "会話一覧を開く"}
+            type="button"
+          >
+            <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+              <rect x="3" y="4" width="18" height="16" rx="2" />
+              <path d="M9 4v16" />
+              <path d={isSessionListOpen ? "m16 9-3 3 3 3" : "m14 9 3 3-3 3"} />
+            </svg>
+          </button>
+        </div>
+        <div className={styles.sidebarBody} id="chat-session-list" inert={isSessionListOpen ? undefined : true}>
           <Link className={styles.newButton} href="/chat/new">
             <span aria-hidden="true">＋</span> 新しい会話
           </Link>
-        </div>
-        {state.sessions.length === 0 ? (
-          <div className={styles.emptyList}>
-            <p>まだ会話がありません。マーケティングの依頼から始めましょう。</p>
-            <Link href="/chat/new">新しい会話を始める</Link>
+          {state.sessions.length === 0 ? (
+            <div className={styles.emptyList}>
+              <p>まだ会話がありません。マーケティングの依頼から始めましょう。</p>
+              <Link href="/chat/new">新しい会話を始める</Link>
+            </div>
+          ) : (
+            <ul className={styles.sessionList}>
+              {state.sessions.map((session) => (
+                <SessionLink
+                  active={pathname === `/chat/${session.session_id}`}
+                  key={session.session_id}
+                  session={session}
+                />
+              ))}
+            </ul>
+          )}
+          <div className={styles.loadMore} aria-live="polite">
+            {state.error ? <p role="alert">{state.error}</p> : null}
+            {state.next_cursor ? (
+              <button disabled={state.loading} onClick={loadMore} type="button">
+                {state.loading ? "読み込み中" : state.error ? "もう一度読み込む" : "さらに読み込む"}
+              </button>
+            ) : null}
           </div>
-        ) : (
-          <ul className={styles.sessionList}>
-            {state.sessions.map((session) => (
-              <SessionLink
-                active={pathname === `/chat/${session.session_id}`}
-                key={session.session_id}
-                session={session}
-              />
-            ))}
-          </ul>
-        )}
-        <div className={styles.loadMore} aria-live="polite">
-          {state.error ? <p role="alert">{state.error}</p> : null}
-          {state.next_cursor ? (
-            <button disabled={state.loading} onClick={loadMore} type="button">
-              {state.loading ? "読み込み中" : state.error ? "もう一度読み込む" : "さらに読み込む"}
-            </button>
-          ) : null}
         </div>
       </aside>
       <section aria-label="会話内容" className={styles.content} id="main-content" tabIndex={-1}>

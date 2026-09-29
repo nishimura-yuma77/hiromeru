@@ -13,7 +13,7 @@ import { useChatController } from "../controller";
 import type { AgentTurn, ApprovalAction, ApprovalState, CampaignProposal, ClarificationAnswer, SecurityNotice, SessionHistory, TurnItem, XPostProposal } from "../types";
 import styles from "../styles/Chat.module.scss";
 
-const dateFormatter = new Intl.DateTimeFormat("ja-JP", { hour: "2-digit", minute: "2-digit" });
+const dateFormatter = new Intl.DateTimeFormat("ja-JP", { hour: "2-digit", minute: "2-digit", timeZone: "Asia/Tokyo" });
 const examples = [
   "新しい採用施策を考える",
   "既存の施策から投稿案を作る",
@@ -688,26 +688,28 @@ export function Conversation({ initialHistory, initialDraft = "" }: { initialHis
         {state.requestError ? <p className={styles.requestError} role="alert">{state.requestError}</p> : null}
       </div>
       <form className={styles.composer} onSubmit={(event) => { event.preventDefault(); void send(); }}>
-        <label htmlFor="chat-message">メッセージ</label>
-        <textarea
-          aria-describedby="chat-counter chat-error chat-status"
-          id="chat-message"
-          name="message"
-          autoComplete="off"
-          onChange={(event) => dispatch({ type: "draft", value: event.target.value })}
-          onKeyDown={handleKeyDown}
-          placeholder="相談したいことを入力してください"
-          ref={textareaRef}
-          rows={3}
-          value={state.draft}
-        />
-        <div className={styles.composerFooter}>
-          <div>
-            <span className={state.draft.length > maxLength ? styles.counterError : ""} id="chat-counter">{state.draft.length.toLocaleString("ja-JP")} / {maxLength.toLocaleString("ja-JP")}</span>
-            <span className={styles.validationError} id="chat-error">{state.composerError}</span>
-            <span className={styles.srOnly} id="chat-status" aria-live="polite">{state.sending ? "回答が完了すると送信できます" : ""}</span>
+        <label className={styles.srOnly} htmlFor="chat-message">メッセージ</label>
+        <div className={styles.composerBox}>
+          <textarea
+            aria-describedby="chat-counter chat-error chat-status"
+            id="chat-message"
+            name="message"
+            autoComplete="off"
+            onChange={(event) => dispatch({ type: "draft", value: event.target.value })}
+            onKeyDown={handleKeyDown}
+            placeholder="相談したいことを入力してください"
+            ref={textareaRef}
+            rows={3}
+            value={state.draft}
+          />
+          <div className={styles.composerFooter}>
+            <div>
+              <span className={state.draft.length > maxLength ? styles.counterError : ""} id="chat-counter">{state.draft.length.toLocaleString("ja-JP")} / {maxLength.toLocaleString("ja-JP")}</span>
+              <span className={styles.validationError} id="chat-error">{state.composerError}</span>
+              <span className={styles.srOnly} id="chat-status" aria-live="polite">{state.sending ? "回答が完了すると送信できます" : ""}</span>
+            </div>
+            <button disabled={invalid || state.sending} type="submit">{state.sending ? "送信中" : "送信"}</button>
           </div>
-          <button disabled={invalid || state.sending} type="submit">{state.sending ? "送信中" : "送信"}</button>
         </div>
         <p className={styles.shortcut}>Ctrl / ⌘ + Enter で送信</p>
       </form>

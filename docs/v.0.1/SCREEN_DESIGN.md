@@ -286,16 +286,16 @@ Login Button直下に、特定のInputへ割り当てられないErrorを表示�
 | Audience | 採用Xの施策と投稿を継続運用するマーケター |
 | Primary job | 会話を再開または開始し、提案を編集・再相談・最終承認する |
 | 情報の優先順位 | 選択中の会話、最新Turn、未承認の提案、Composer、会話一覧、過去履歴 |
-| Palette | Paper背景、UserとAgentで異なるSurface、Greenの主要Action、状態別のSuccess・Warning・Danger |
+| Palette | Whiteの3列と細い区切り線、Userは淡いGreen Surface、AgentはWhite Card、Greenの主要Action、状態別のSuccess・Warning・Danger |
 | Typography | Message本文とFormはSans、IDや補助的な数値だけMono。本文はMobileでも`--font-size-md`以上 |
-| Layout | PCはGlobal Sidebar、会話一覧、会話の3列。SPは会話一覧と会話をRouteで分離する |
-| Motion | Spinner、Error、最新Messageへの移動など、状態と位置関係を伝えるFeedbackに限定する |
+| Layout | PCは全幅でGlobal Sidebar、開閉可能な会話一覧、会話の3列。SPは会話一覧と会話をRouteで分離する |
+| Motion | 会話一覧の開閉、Spinner、Error、最新Messageへの移動など、状態と位置関係を伝えるFeedbackに限定する |
 
 **PCワイヤー**
 
 ```text
 ┌──────────────┬─────────────────────┬────────────────────────────────────┐
-│ Global nav   │ 会話                │ 選択中の会話タイトル               │
+│ Global nav   │ 会話一覧    [開閉]  │ 選択中の会話タイトル               │
 │              │ [＋ 新しい会話]     ├────────────────────────────────────┤
 │ チャット     │                     │ [以前の会話を読み込む]             │
 │ 施策         │ ● 選択中の会話     │                                    │
@@ -320,8 +320,12 @@ Login Button直下に、特定のInputへ割り当てられないErrorを表示�
 └──────────────┴─────────────────────┴────────────────────────────────────┘
 ```
 
-- `tablet`以上では6.15のGlobal Sidebar、会話一覧、会話の3列とする。会話一覧は`--conversation-list-width`、会話列は`minmax(0, 1fr)`とする
-- Workspace全体を`100dvb`に収め、会話一覧と会話履歴を独立してScrollさせる。会話HeaderとComposerは会話列に残す
+- `tablet`を超える幅では6.15の白いGlobal Sidebar、会話一覧、会話の3列とする。ChatのMainには共通Pageの余白・最大幅を適用しない。会話一覧は`--conversation-list-width`（`13rem`）、会話列は`minmax(0, 1fr)`とする
+- 会話一覧の右上に開閉Buttonを置く。閉じると`--conversation-list-rail-width`の細いRailとButtonだけを残し、会話列へ空いた幅を渡す。再度押すと会話一覧を開く
+- 開閉は`--duration-normal`と`--easing-standard`で横幅・一覧の移動をアニメーションさせる。閉じても会話一覧をUnmountせず、追加読み込み結果とScroll位置を保つ。`prefers-reduced-motion: reduce`ではアニメーションしない
+- Buttonは状態ごとに「会話一覧を閉じる」「会話一覧を開く」という名前と`aria-expanded`、`aria-controls`を持たせる。閉じた一覧のLinkやButtonはFocusと支援技術の対象から外す
+- Workspace全体を`100dvb`に収め、会話一覧と会話履歴を独立してScrollさせる。会話HeaderとComposerは会話列に残す。Composerは罫線で履歴と分け、入力枠内の下部に文字数と送信Buttonを置く
+- 会話一覧はWhite、選択中の会話は淡いGreen SurfaceとInline start Borderで示す。User Messageは淡いGreen Surface、Agentの回答と提案はBorderを持つWhite Cardとする
 - 会話本文は最大Inline size`--conversation-content-width`（`52rem`）として会話列の中央へ置く。Proposal Bubbleはこの幅まで使用できる
 - `/chat`の会話列と`/chat/new`は新しい会話、`/chat/{session_id}`は選択中の会話を表示する
 
@@ -331,7 +335,7 @@ Login Button直下に、特定のInputへ割り当てられないErrorを表示�
 ┌─────────────────────────────────┐
 │ [Menu] Hiromeru                 │
 ├─────────────────────────────────┤
-│ 会話            [新しい会話]   │
+│ 会話一覧        [新しい会話]   │
 │                                 │
 │ ┌─────────────────────────────┐ │
 │ │ 経験者採用の施策            │ │
@@ -375,13 +379,13 @@ Login Button直下に、特定のInputへ割り当てられないErrorを表示�
 └─────────────────────────────────┘
 ```
 
-- `tablet`未満では、`/chat`に会話一覧だけ、`/chat/new`と`/chat/{session_id}`に会話だけを表示する
+- `tablet`以下では、`/chat`に会話一覧だけ、`/chat/new`と`/chat/{session_id}`に会話だけを表示する。会話一覧の開閉Buttonは表示しない
 - 会話画面のHeaderには「会話一覧へ戻る」と会話タイトルを表示する。戻る操作は`/chat`へ移動する
 - Headerを除くWorkspaceを`calc(100dvb - var(--app-header-height))`に収め、履歴だけをScrollさせる
 
 **会話一覧**
 
-- Headerは`h1`「会話」と「新しい会話」で構成する。選択すると`/chat/new`へ移動し、Sessionは最初のMessage送信時まで作成しない
+- Headerは`h1`「会話一覧」と（PCでは）開閉Buttonで構成し、その下の「新しい会話」を選択すると`/chat/new`へ移動する。Sessionは最初のMessage送信時まで作成しない
 - Sessionは`updated_at`の新しい順に、タイトルと更新日時を表示する。日時は`Intl.DateTimeFormat`を使用する
 - タイトルは表示上2行までとするが、Accessible Nameには完全な文字列を使う。`title = null`は「無題の会話」とする
 - 選択中の会話はBrand Surface、Inline start Border、Text weight、`aria-current="page"`で示す。色だけに依存しない
@@ -2888,7 +2892,7 @@ SC-02、SC-04からSC-09で共有する画面外枠である。SC-01とLPには�
 | Audience | 採用Xを継続運用するマーケター |
 | Primary job | 現在地とログイン状態を失わず、主要5機能へ移動する |
 | 情報の優先順位 | Page content、現在地、主要Navigation、Account、通知 |
-| Palette | Paper背景、White Surface、Greenの現在地、Limeは主要Actionの限定的な強調、状態色 |
+| Palette | WhiteのSidebarとSurface、淡いGreenの現在地、状態色 |
 | Typography | Navigationと本文はSans、IDや補助的な数値だけMono |
 | Layout | DesktopはSidebarとMain、MobileはHeaderとMain。SC-02だけDesktopのMainを会話一覧と会話へ分割する |
 | Motion | DrawerとNotification Toastの空間関係だけに使用し、Page遷移へ装飾Motionを追加しない |
@@ -2911,11 +2915,11 @@ SC-02、SC-04からSC-09で共有する画面外枠である。SC-01とLPには�
 └──────────────────┴──────────────────────────────────────────┘
 ```
 
-- `tablet`以上では、Inline startにSidebarを常設する。`--app-sidebar-width`は`tablet`以上`14rem`、`desktop`以上`16rem`とし、Block sizeは`100dvb`、Block startにSticky配置する
+- `tablet`以上では、Inline startに白いSidebarを常設する。`--app-sidebar-width`は`11rem`とし、Block sizeは`100dvb`、Block startにSticky配置する。Logo、Navigation、Accountは全認証済み画面で同じ見た目とする
 - Sidebarは上からLogo、Main navigation、可変の空白、ログイン中のメールアドレス、ログアウトの順とする。Navigation領域だけを必要に応じてScroll可能にし、Accountとログアウトは下端に残す
 - Main navigationは`<nav aria-label="メインメニュー">`とLinkのListで構成する。順序は、チャット、施策、投稿、計測結果、記憶とする
-- 現在地のLinkには`aria-current="page"`を設定し、Brand Surface、Inline startのBorder、Text weightで示す。Hoverとの違いを色だけに依存させない
-- Mainは`min-inline-size: 0`、`min-block-size: 100dvb`とする。通常画面のContentは`--layout-max-width`までとし、`tablet`で`--space-5`、`desktop`で`--space-6`のPage paddingを設ける
+- 現在地のLinkには`aria-current="page"`を設定し、淡いGreen Surface、Inline startのBorder、Text weightで示す。Hoverとの違いを色だけに依存させない
+- Mainは`min-inline-size: 0`、`min-block-size: 100dvb`とする。通常画面のContentは`--layout-max-width`までとし、`tablet`で`--space-5`、`desktop`で`--space-6`のPage paddingを設ける。SC-02ではPage paddingと最大幅を解除し、3列をViewport全体へ広げる
 - Page全体をDocument scrollさせ、SidebarはViewportに残す。SC-02のWorkspaceだけは、下記の専用Scrollを使う
 - Footerは設けない。Notification Toastは6.14.6に従い、Sidebarを含むViewport全体の上部中央へ表示する
 
@@ -2972,7 +2976,7 @@ SC-02、SC-04からSC-09で共有する画面外枠である。SC-01とLPには�
 └──────────────┴──────────────────┴────────────────────────────┘
 ```
 
-- `tablet`以上では、Global Sidebar、会話一覧、会話の3列とする。`--conversation-list-width`は`tablet`以上`18rem`、`desktop`以上`20rem`とし、会話列は`minmax(0, 1fr)`とする
+- `tablet`を超える幅では、Global Sidebar、会話一覧、会話の3列とする。`--conversation-list-width`は`13rem`、閉じたRailは`--conversation-list-rail-width`（`3.5rem`）とし、会話列は`minmax(0, 1fr)`とする
 - Workspaceは`100dvb`に収め、Document全体をScrollさせない。会話一覧と会話履歴を独立したScroll領域とし、Message composerは会話列のBlock endに残す
 - `/chat`の会話列には新しい会話の入力を表示する。`/chat/new`と`/chat/{session_id}`では、新しい会話または選択中の会話を表示する
 - `tablet`未満では、`/chat`に会話一覧だけ、`/chat/new`と`/chat/{session_id}`に会話だけを表示する。会話画面には「会話一覧へ戻る」を表示し、Headerを除いた`calc(100dvb - var(--app-header-height))`をWorkspaceの高さとする

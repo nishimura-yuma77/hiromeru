@@ -93,7 +93,7 @@ export function AppShell({
       <a className="skipLink" href="#main-content">本文へ移動する</a>
 
       <aside className={styles.sidebar}>
-        <Brand inverse />
+        <Brand />
         <Navigation items={navigationItems} activeId={activeNavigationId} />
         <Account email={email} isPending={logoutLoading} onLogout={onLogout} />
       </aside>
@@ -114,7 +114,7 @@ export function AppShell({
           </button>
           <Brand />
         </header>
-        <div className={styles.main}>{children}</div>
+        <div className={`${styles.main}${activeNavigationId === "chat" ? ` ${styles.chatMain}` : ""}`}>{children}</div>
       </div>
 
       {drawerOpen ? (
