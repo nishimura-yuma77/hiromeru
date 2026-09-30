@@ -1,4 +1,5 @@
 import type { FormEvent, RefObject } from "react";
+import { Input } from "@/shared/components/Input/Input";
 
 import styles from "./LoginView.module.scss";
 
@@ -47,7 +48,7 @@ export function LoginFormCard({
         <form noValidate onSubmit={onSubmit}>
           <div className={styles.field}>
             <label htmlFor="email">メールアドレス</label>
-            <input
+            <Input
               ref={emailRef}
               id="email"
               name="email"
@@ -67,7 +68,7 @@ export function LoginFormCard({
           <div className={styles.field}>
             <label htmlFor="password">パスワード</label>
             <div className={styles.passwordControl}>
-              <input
+              <Input
                 ref={passwordRef}
                 id="password"
                 name="password"
@@ -79,10 +80,10 @@ export function LoginFormCard({
                 aria-describedby={passwordError ? "password-error" : undefined}
                 disabled={isPending}
                 onChange={(event) => onPasswordChange(event.currentTarget.value)}
+                trailingAction={<button type="button" onClick={onPasswordVisibilityToggle} disabled={isPending}>
+                  {isPasswordVisible ? "隠す" : "表示"}
+                </button>}
               />
-              <button type="button" onClick={onPasswordVisibilityToggle} disabled={isPending}>
-                {isPasswordVisible ? "隠す" : "表示"}
-              </button>
             </div>
             {passwordError ? <p id="password-error" className={styles.fieldError}>{passwordError}</p> : null}
           </div>

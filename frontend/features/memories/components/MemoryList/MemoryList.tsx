@@ -14,8 +14,10 @@ import type {
   MemoryListResponse,
   MemoryPost,
 } from "@/features/memories/types/memory";
+import type { CampaignOption } from "@/features/memories/api/searchCampaigns";
 import { memoryPageHref, type MemoryListParams } from "@/features/memories/utils/memoryParams";
 
+import { CampaignFilter } from "./CampaignFilter";
 import styles from "./MemoryList.module.scss";
 
 const dateFormat = new Intl.DateTimeFormat("ja-JP", {
@@ -50,10 +52,10 @@ function RelatedCampaigns({ memory }: { memory: Memory }) {
   }
 
   return (
-    <section aria-label="関連する施策">
-      <h3>関連する施策</h3>
+    <div className={styles.relationRow}>
+      <span>関連施策:</span>
       {campaigns.length ? (
-        <ul>
+        <ul className={styles.campaignChips}>
           {campaigns.map((campaign) => (
             <li key={campaign.id}>
               <Link href={`/campaigns/${campaign.id}`}>{campaign.title}</Link>
@@ -61,7 +63,7 @@ function RelatedCampaigns({ memory }: { memory: Memory }) {
             </li>
           ))}
         </ul>
-      ) : <p>関連する施策はありません。</p>}
+      ) : <span>なし</span>}
       {cursor ? (
         <button className={styles.loadMore} type="button" onClick={() => void loadMore()} disabled={isLoading}>
           {isLoading ? "読み込み中" : "施策をさらに表示"}
@@ -70,7 +72,7 @@ function RelatedCampaigns({ memory }: { memory: Memory }) {
       <p className={styles.relationStatus} role={error ? "alert" : "status"} aria-live="polite">
         {error || (isLoading ? "関連する施策を読み込んでいます。" : "")}
       </p>
-    </section>
+    </div>
   );
 }
 
@@ -96,30 +98,32 @@ function RelatedPosts({ memory }: { memory: Memory }) {
   }
 
   return (
-    <section aria-label="関連する投稿">
-      <h3>関連する投稿</h3>
-      {posts.length ? (
-        <ul>
-          {posts.map((post) => (
-            <li key={post.post_id}>
-              <Link href={`/posts/${post.post_id}`}>{formatDate(post.published_at)}の投稿</Link>
-            </li>
-          ))}
-        </ul>
-      ) : <p>関連する投稿はありません。</p>}
-      {cursor ? (
-        <button className={styles.loadMore} type="button" onClick={() => void loadMore()} disabled={isLoading}>
-          {isLoading ? "読み込み中" : "投稿をさらに表示"}
-        </button>
-      ) : null}
-      <p className={styles.relationStatus} role={error ? "alert" : "status"} aria-live="polite">
-        {error || (isLoading ? "関連する投稿を読み込んでいます。" : "")}
-      </p>
-    </section>
+    <div className={styles.postRelations}>
+      {posts.length || cursor ? (
+        <details>
+          <summary>関連投稿: {posts.length}件{cursor ? "以上" : ""}</summary>
+          <ul>
+            {posts.map((post) => (
+              <li key={post.post_id}>
+                <Link href={`/posts/${post.post_id}`}>{formatDate(post.published_at)}の投稿</Link>
+              </li>
+            ))}
+          </ul>
+          {cursor ? (
+            <button className={styles.loadMore} type="button" onClick={() => void loadMore()} disabled={isLoading}>
+              {isLoading ? "読み込み中" : "投稿をさらに表示"}
+            </button>
+          ) : null}
+          <p className={styles.relationStatus} role={error ? "alert" : "status"} aria-live="polite">
+            {error || (isLoading ? "関連する投稿を読み込んでいます。" : "")}
+          </p>
+        </details>
+      ) : <span>関連投稿: 0件</span>}
+    </div>
   );
 }
 
-export function MemoryList({ response, params }: { response: MemoryListResponse; params: MemoryListParams }) {
+export function MemoryList({ response, params, selectedCampaign }: { response: MemoryListResponse; params: MemoryListParams; selectedCampaign: CampaignOption | null }) {
   const controller = useMemoryDeleteController();
   const selectedMemory = response.memories.find((memory) => memory.id === controller.state.selectedId);
   const visibleMemories = response.memories.filter((memory) => memory.id !== controller.state.deletedId);
@@ -127,52 +131,38 @@ export function MemoryList({ response, params }: { response: MemoryListResponse;
   return (
     <main id="main-content" className={styles.page}>
       <header className={styles.header}>
-        <p className={styles.eyebrow}>Long-term memory</p>
         <h1>記憶</h1>
-        <p>投稿の結果から得た知見と、その根拠になった施策・投稿を確認できます。</p>
+        <p>AIが参照する採用文脈の長期記憶</p>
       </header>
 
       <section className={styles.search} aria-labelledby="memory-search-title">
-        <h2 id="memory-search-title">記憶を検索</h2>
-        <form action="/memories" method="get">
-          <label>
-            <span>検索語</span>
-            <input type="search" name="query" defaultValue={params.query} maxLength={1000} placeholder="蓄積した知見を自然な言葉で検索" />
-          </label>
-          <label className={styles.campaignField}>
-            <span>施策ID</span>
-            <input type="text" name="campaign_id" inputMode="numeric" pattern="[1-9][0-9]*" defaultValue={params.campaignId ?? ""} />
-          </label>
-          <button type="submit">検索</button>
-          <Link href="/memories">検索をクリア</Link>
-        </form>
+        <h2 id="memory-search-title" className={styles.visuallyHidden}>記憶を探す</h2>
+        <CampaignFilter key={`${params.campaignId ?? ""}:${params.query}`} initialCampaign={selectedCampaign} query={params.query} />
       </section>
 
       <section aria-labelledby="memory-results-title">
-        <div className={styles.resultHeading}>
-          <div><p className={styles.eyebrow}>Knowledge base</p><h2 id="memory-results-title">{params.query ? `「${params.query}」に近い記憶` : params.campaignId ? `施策ID ${params.campaignId} の記憶` : "蓄積した記憶"}</h2></div>
-          <p>{params.query ? "記憶の内容をもとに関連度順で表示しています。" : "新しい記憶から表示"}</p>
+        <div className={params.query || params.campaignId ? styles.resultHeading : styles.visuallyHidden}>
+          <h2 id="memory-results-title">{params.query ? `「${params.query}」に近い記憶` : params.campaignId ? `${selectedCampaign?.title ?? `施策ID ${params.campaignId}`} の記憶` : "蓄積した記憶"}</h2>
+          {params.query ? <p>記憶の内容をもとに関連度順で表示しています。</p> : null}
         </div>
 
         {visibleMemories.length === 0 ? (
           <div className={styles.empty}>
             <h3>{params.query || params.campaignId ? "条件に合う記憶がありません" : "まだ記憶がありません"}</h3>
-            <p>{params.query || params.campaignId ? "検索語や施策IDを変更してください。" : "投稿の計測が完了すると、結果から得た知見が蓄積されます。"}</p>
+            <p>{params.query || params.campaignId ? "検索語や施策を変更してください。" : "投稿の計測が完了すると、結果から得た知見が蓄積されます。"}</p>
             {params.query || params.campaignId ? <Link href="/memories">検索条件をクリア</Link> : null}
           </div>
         ) : (
           <div className={styles.list}>
             {visibleMemories.map((memory) => (
               <article className={styles.card} key={memory.id}>
-                <div className={styles.memoryText}>
-                  <p className={styles.recordId}>Memory {memory.id}</p>
-                  <p>{memory.content}</p>
-                </div>
+                <p className={styles.memoryText}>{memory.content}</p>
+                <button className={styles.deleteButton} type="button" aria-label={`記憶ID ${memory.id}を削除する`} onClick={() => controller.open(memory.id)}>削除</button>
                 <div className={styles.related}>
                   <RelatedCampaigns memory={memory} />
                   <RelatedPosts memory={memory} />
                 </div>
-                <button className={styles.deleteButton} type="button" onClick={() => controller.open(memory.id)}>この記憶を削除</button>
+                <p className={styles.recordId}>MEM-{String(memory.id).padStart(3, "0")}</p>
               </article>
             ))}
           </div>

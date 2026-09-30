@@ -1891,7 +1891,7 @@ Hiromeru AIが次の施策や投稿を考えるときに参照する長期記憶
 | 情報の優先順位 | 記憶本文、関連する施策と投稿、記憶ID、削除操作 |
 | Palette | Paper背景、Whiteの記憶Card、GreenのNavigation、Dangerの削除Action |
 | Typography | 記憶本文を読みやすいSans、記憶IDだけMono、関連先は明示的なLinkとする |
-| Layout | PC・SPとも1列のCard一覧。PCのCard内だけ本文と関連情報を2列にする |
+| Layout | PC・SPとも1列の横長Card一覧。本文、関連施策Chip、関連投稿数、記憶IDを縦に並べる |
 | Motion | 検索・削除のLoading、Modal、Error Feedbackだけに限定し、Cardを装飾目的で動かさない |
 
 **PCワイヤー**
@@ -1899,70 +1899,31 @@ Hiromeru AIが次の施策や投稿を考えるときに参照する長期記憶
 ```text
 ┌──────────────┬────────────────────────────────────────────────────────────────────────────┐
 │ Global nav   │                                                                            │
-│              │  記憶                                             [チャットで記憶を追加]   │
-│ チャット     │  Hiromeru AIが次の施策や投稿を考えるときに参照する記憶です                  │
-│ 施策         │                                                                            │
-│ 投稿         │  ┌──────────────────────────────────────────────────────────────────────┐  │
-│ 計測結果     │  │ 記憶を検索                                                         │  │
-│ 記憶 ●       │  │ [ 記憶の内容を自然な言葉で検索...                      ][検索]      │  │
-│              │  │                                                                      │  │
-│              │  │ 対象施策                                                            │  │
-│              │  │ [ 経験者Webエンジニア採用を検索して選択...             ▾]          │  │
-│              │  │                                      [条件を適用] [条件をクリア]    │  │
+│              │  記憶                                                                      │
+│ チャット     │  AIが参照する採用文脈の長期記憶                                          │
+│ 施策         ├────────────────────────────────────────────────────────────────────────────┤
+│ 投稿         │  [記憶を検索           ] [施策で絞り込み       ▾] [検索] [条件をクリア]  │
+│ 計測結果     ├────────────────────────────────────────────────────────────────────────────┤
+│ 記憶 ●       │  ┌──────────────────────────────────────────────────────────────────────┐  │
+│              │  │ 柔軟な働き方の訴求は経験者層に効果的。採用文脈を次回も参照する。削除│  │
+│              │  │ 関連施策: [経験者Webエンジニア採用] [採用広報改善]                  │  │
+│              │  │ 関連投稿: 2件                                                       │  │
+│              │  │ MEM-025                                                              │  │
 │              │  └──────────────────────────────────────────────────────────────────────┘  │
-│              │                                                                            │
-│              │  [施策: 経験者Webエンジニア採用 ×]                                       │
-│              │  「柔軟な働き方」に近い記憶                                               │
-│              │  記憶の内容をもとに関連度順で表示しています                               │
-│              │                                                                            │
-│              │  ┌──────────────────────────────────────────┬────────────────────────────┐ │
-│              │  │ 記憶ID 25                               │ 関連情報                   │ │
-│              │  │                                          │                            │ │
-│              │  │ 柔軟な働き方の訴求は、経験者層の       │ 関連する施策              │ │
-│              │  │ 反応が良かった。次回の経験者採用でも   │ 経験者Webエンジニア採用 →│ │
-│              │  │ 働き方の自由度を具体的に伝える。       │                            │ │
-│              │  │                                          │ 関連する投稿              │ │
-│              │  │                                          │ 2026/09/21公開            │ │
-│              │  │                                          │ 投稿ID 45 →               │ │
-│              │  │                                          │                            │ │
-│              │  │                                          │ [削除する]                │ │
-│              │  └──────────────────────────────────────────┴────────────────────────────┘ │
-│              │                                                                            │
-│              │  ┌──────────────────────────────────────────┬────────────────────────────┐ │
-│              │  │ 記憶ID 24                               │ 関連情報                   │ │
-│              │  │                                          │                            │ │
-│              │  │ 技術スタックだけでなく、開発体制や     │ 関連する施策              │ │
-│              │  │ レビュー文化も伝えると反応が良い。     │ 採用広報改善 →            │ │
-│              │  │                                          │ 若手向け認知拡大 →        │ │
-│              │  │                                          │ エンジニア採用 →          │ │
-│              │  │                                          │ [関連施策をさらに表示]    │ │
-│              │  │                                          │                            │ │
-│              │  │                                          │ 関連する投稿              │ │
-│              │  │                                          │ 2026/09/20 投稿ID 44 →   │ │
-│              │  │                                          │ 2026/09/18 投稿ID 42 →   │ │
-│              │  │                                          │ 2026/09/15 投稿ID 39 →   │ │
-│              │  │                                          │ [関連投稿をさらに表示]    │ │
-│              │  │                                          │                            │ │
-│              │  │                                          │ [削除する]                │ │
-│              │  └──────────────────────────────────────────┴────────────────────────────┘ │
-│              │                                                                            │
-│              │  ┌──────────────────────────────────────────┬────────────────────────────┐ │
-│              │  │ 記憶ID 23                               │ 関連情報                   │ │
-│              │  │                                          │                            │ │
-│              │  │ 具体的な施策や投稿とは関係なく         │ 関連する施策・投稿は       │ │
-│              │  │ 覚えておく内容。                        │ ありません                 │ │
-│              │  │                                          │                            │ │
-│              │  │                                          │ [削除する]                │ │
-│              │  └──────────────────────────────────────────┴────────────────────────────┘ │
+│              │  ┌──────────────────────────────────────────────────────────────────────┐  │
+│              │  │ 技術スタックだけでなく開発体制も伝える。                        削除│  │
+│              │  │ 関連施策: [エンジニア採用] [若手向け認知拡大]                      │  │
+│              │  │ 関連投稿: 3件以上（開くと投稿Link・続きを表示）                     │  │
+│              │  │ MEM-024                                                              │  │
+│              │  └──────────────────────────────────────────────────────────────────────┘  │
 │              │                                                                            │
 │ Account      │  [先頭へ]                                             [次の20件 →]      │
 └──────────────┴────────────────────────────────────────────────────────────────────────────┘
 ```
 
-- App Shell内のMain contentを使用し、SC-04・SC-06と同じPage最大幅、Gutter、Document scrollを使用する
-- Headerは`h1`「記憶」、説明、「チャットで記憶を追加」で構成する。Header Actionは`/chat/new`へのLinkとし、初期文の設定、自動送信、Session作成を行わない
-- 記憶Cardは1列に並べる。`desktop`以上ではCard内を本文`minmax(0, 2fr)`、関連情報`minmax(16rem, 1fr)`の2列とし、`desktop`未満は1列にする
-- CardをMasonryまたは複数列にせず、APIの順序と読み上げ順を一致させる。Card全体をClick可能にせず、関連先のLinkと削除Buttonだけを操作可能にする。PCでも削除Buttonは関連情報の後へ置き、SPと同じDOM順にする
+- App Shell内のMain contentを使用し、Header・検索・Card一覧を利用可能な幅へ広げる。Document scrollを使用する
+- Headerは`h1`「記憶」と説明で構成する
+- 記憶Cardは1列に並べ、本文と右側の削除、関連施策Chip、関連投稿数、記憶IDの順に表示する。Card全体をClick可能にしない
 
 **SPワイヤー**
 
@@ -1971,65 +1932,37 @@ Hiromeru AIが次の施策や投稿を考えるときに参照する長期記憶
 │ [Menu] Hiromeru                 │
 ├─────────────────────────────────┤
 │ 記憶                            │
-│ Hiromeru AIが次の施策や投稿を   │
-│ 考えるときに参照する記憶です    │
+│ AIが参照する採用文脈の長期記憶  │
 │                                 │
-│ [チャットで記憶を追加]          │
-│                                 │
-│ 記憶を検索                      │
-│ [記憶の内容を検索...........]   │
+│ [記憶を検索.................]   │
+│ [施策で絞り込み.............]   │
 │ [検索]                          │
-│                                 │
-│ 対象施策                        │
-│ [施策を検索して選択.........]   │
-│ [条件を適用]                    │
 │ [条件をクリア]                  │
-│                                 │
-│ [経験者Webエンジニア採用 ×]     │
 │                                 │
 │ 「柔軟な働き方」に近い記憶      │
 │ 記憶の内容をもとに              │
 │ 関連度順で表示しています        │
 │                                 │
 │ ┌─────────────────────────────┐ │
-│ │ 記憶ID 25                  │ │
-│ │                             │ │
-│ │ 柔軟な働き方の訴求は、      │ │
+│ │ 柔軟な働き方の訴求は、  削除│ │
 │ │ 経験者層の反応が良かった。  │ │
 │ │ 次回の経験者採用でも        │ │
 │ │ 働き方の自由度を具体的に    │ │
 │ │ 伝える。                    │ │
-│ │                             │ │
-│ │ 関連する施策                │ │
-│ │ 経験者Webエンジニア採用 →  │ │
-│ │                             │ │
-│ │ 関連する投稿                │ │
-│ │ 2026/09/21公開              │ │
-│ │ 投稿ID 45 →                 │ │
-│ │                             │ │
-│ │ [削除する]                  │ │
+│ │ 関連施策: [経験者採用]       │ │
+│ │ 関連投稿: 1件              │ │
+│ │ MEM-025                     │ │
 │ └─────────────────────────────┘ │
 │                                 │
 │ ┌─────────────────────────────┐ │
-│ │ 記憶ID 24                  │ │
-│ │                             │ │
-│ │ 技術スタックだけでなく、    │ │
+│ │ 技術スタックだけでなく、削除│ │
 │ │ 開発体制やレビュー文化も    │ │
 │ │ 伝えると反応が良い。        │ │
-│ │                             │ │
-│ │ 関連する施策                │ │
-│ │ 採用広報改善 →             │ │
-│ │ 若手向け認知拡大 →         │ │
-│ │ エンジニア採用 →           │ │
+│ │ 関連施策: [採用広報改善]     │ │
+│ │ [若手向け認知拡大]          │ │
 │ │ [関連施策をさらに表示]     │ │
-│ │                             │ │
-│ │ 関連する投稿                │ │
-│ │ 2026/09/20 投稿ID 44 →    │ │
-│ │ 2026/09/18 投稿ID 42 →    │ │
-│ │ 2026/09/15 投稿ID 39 →    │ │
-│ │ [関連投稿をさらに表示]     │ │
-│ │                             │ │
-│ │ [削除する]                  │ │
+│ │ 関連投稿: 3件以上          │ │
+│ │ MEM-024                     │ │
 │ └─────────────────────────────┘ │
 │                                 │
 │ [先頭へ]                        │
@@ -2037,19 +1970,18 @@ Hiromeru AIが次の施策や投稿を考えるときに参照する長期記憶
 └─────────────────────────────────┘
 ```
 
-- `tablet`未満では、記憶ID、本文、関連施策、関連投稿、削除操作の順に1列で表示する
-- 「削除する」はCard末尾へ全幅で置き、関連先のNavigation Linkと視覚的に分ける。320px幅でも本文、施策名、投稿Label、Buttonを省略しない
+- SPも本文の右上に「削除」を置き、関連施策Chipと投稿数を折り返す。320px幅でも本文、施策名、投稿Label、Buttonを省略しない
 
 **検索と施策Filter**
 
-- Label「記憶を検索」、検索Field、Button「検索」で構成する。Placeholderは「記憶の内容を自然な言葉で検索」とする
+- Label「記憶を検索」、検索Field、Button「検索」で構成する。Placeholderは「記憶を検索」とする
 - Trim後1文字以上の`query`を確定したときだけ`router.push`でURLを更新する。Enterでも検索でき、空文字は`query`を取り除く
 - 意味検索は`agent_memories.embedding`を対象に、関連度順で最大20件を表示する。`similarity`の数値は表示しない
-- 結果見出しは、条件なしを「保存されている記憶」、`campaign_id`だけを「{施策名}に関連する記憶」、`query`だけを「『{query}』に近い記憶」、併用時を「{施策名}で『{query}』に近い記憶」とする
+- 結果見出しは、条件なしを「蓄積した記憶」（視覚上は非表示）、`campaign_id`だけを「{施策名} の記憶」、`query`を「『{query}』に近い記憶」とする
 - `query`がある場合の補足は「記憶の内容をもとに関連度順で表示しています」とする。`query`がない場合は並び順の説明を表示しない
 - `query`と`campaign_id`は併用できる。検索または施策Filterを確定したときは`cursor`をURLから取り除き、意味検索中はPaginationを表示しない
-- 対象施策は6.11の検索付きComboboxを使用する。選択だけではURLを更新せず、「条件を適用」で`campaign_id`を確定する
-- 適用中の施策はFilter外へCondition Chipとして表示する。Chipの解除は`campaign_id`だけを取り除き、検索語を維持する
+- 対象施策は既存の`GET /campaigns?query=...&limit=20`を使う検索付きComboboxで選ぶ。候補からの選択だけではURLを更新せず、「検索」で`campaign_id`を確定する
+- 適用中の施策名は`GET /campaigns/{campaign_id}`で復元する。候補の選択を解除した場合は検索時に`campaign_id`を取り除く
 - 「条件をクリア」は`query`、`campaign_id`、`cursor`を取り除く
 
 **施策ComboboxのLoading**
@@ -2072,7 +2004,7 @@ Hiromeru AIが次の施策や投稿を考えるときに参照する長期記憶
 
 **記憶Card**
 
-- 1件を`article`として、見出し「記憶ID {id}」、本文、関連情報、削除操作で構成する。記憶IDは補助情報としてMonoで表示する
+- 1件を`article`として本文、削除操作、関連情報、記憶IDで構成する。記憶IDは`MEM-{id}`の補助情報としてMonoで表示する
 - `content`は表示用の信頼できないPlain textとして扱い、改行を維持する。Markdown、HTML、命令として解釈せず、`dangerouslySetInnerHTML`を使用しない
 - 本文は省略せず、行数制限と「続きを読む」を設けない。長いURLと連続文字列は`overflow-wrap: anywhere`で折り返す
 - 作成日時、更新日時、種別、重要度はAPIとDBにないため表示せず、それらによる並べ替えやFilterも設けない
@@ -2083,8 +2015,8 @@ Hiromeru AIが次の施策や投稿を考えるときに参照する長期記憶
 - `campaigns`は施策名を`/campaigns/{id}`へのLinkにする。`posts`は「{公開日}公開の投稿（投稿ID {post_id}）」を`/posts/{post_id}`へのLinkにする
 - 関連施策の`archived_at`がある場合は、Linkの近くへBadge「アーカイブ済み」を表示する
 - 投稿日時は`time`要素と`Intl.DateTimeFormat`を使用する。投稿本文はAPIにないため推測または追加取得しない
-- 関連する施策と投稿がともに0件の場合は「関連する施策・投稿はありません」と表示する
-- `GET /memories`が返す各種類の先頭3件を直接表示する。`campaigns_next_cursor`または`posts_next_cursor`がある場合だけ、それぞれ「関連する施策をさらに表示」「関連する投稿をさらに表示」を表示する。全件数と「他N件」は表示しない
+- 関連する施策と投稿がともに0件の場合は、それぞれ「関連施策: なし」「関連投稿: 0件」と表示する
+- `GET /memories`が返す関連施策の先頭3件をChipとして表示する。関連投稿は通常「関連投稿: N件」と表示し、開くと先頭3件のLinkを表示する。`posts_next_cursor`がある場合は件数を「N件以上」とし、「投稿をさらに表示」を使えるようにする。全件数を推測しない
 - 「さらに表示」は、対応する`GET /memories/{memory_id}/campaigns`または`GET /memories/{memory_id}/posts`を現在のCursorで呼び、20件ずつ既存List末尾へ追加する。Responseの`next_cursor`が`null`になるまで同じButtonで続けられる
 - 読み込み中は操作したButtonへSpinnerと「関連する施策を読み込み中」または「関連する投稿を読み込み中」を表示し、他のCardとPage全体をLoadingへ戻さない
 - 読み込みErrorでは取得済み項目を残し、該当List内へ「関連する施策を読み込めませんでした」または「関連する投稿を読み込めませんでした」と「もう一度読み込む」を表示する
@@ -2490,66 +2422,57 @@ type ButtonProps = Omit<
 - Reduced MotionでSpinnerが回転しなくても、静止RingとLoading labelから処理中と判断できる
 - Loadingの開始と完了は、利用側のStatus領域またはToastでも支援技術へ通知される
 
-#### 6.14.2 TextField
+#### 6.14.2 Input
 
-メールアドレス、パスワード、検索語、URLなどの単一行入力に使う。複数行の本文は`TextArea`、選択は`Select`または`Combobox`として別に定義し、`TextField`へModeを追加しない。
+メールアドレス、パスワード、検索語、URL、日付などの単一行入力に使う。画面ごとの入力値・検証・検索・送信は利用側が管理し、`Input`はnative `input`のPropsと見た目を提供する。`hidden`は使用せずnativeの`input`を使う。`select`と`textarea`は異なる操作としてInputへ統合しないが、Focusの外観は揃える。
 
 **公開API**
 
 ```tsx
-type TextFieldProps = Omit<
+type InputProps = Omit<
   React.ComponentPropsWithRef<"input">,
-  "className" | "name" | "size" | "style"
+  "children" | "className" | "style" | "type"
 > & {
-  name: string;
-  label: string;
-  description?: string;
-  error?: string;
+  type?: "text" | "search" | "email" | "password" | "url" | "date" | "number";
+  leadingIcon?: React.ReactNode;
   trailingAction?: React.ReactNode;
 };
 ```
 
-- `label`は常に表示する。PlaceholderをLabelの代わりにせず、入力例が必要な場合だけ使用する
-- `id`がなければ`useId()`で生成し、Visible labelの`htmlFor`と一致させる。`name`、用途に合う`type`、`autocomplete`、`inputmode`は利用側が必ず指定する
-- `description`と`error`には別のIDを割り当て、入力の`aria-describedby`へ存在するものだけを結合する
-- `error`がある場合は`aria-invalid="true"`とし、入力直後ではなく、Blur後またはSubmit後に利用側が渡す。Error文は入力の直下へ表示し、Inputの`aria-describedby`で関連付ける
-- 必須項目はnativeの`required`に加え、Labelの横に「必須」とTextで表示する。任意項目に記号だけの説明を使わない
-- `trailingAction`は表示上InputのInline endへ置くが、Inputと重ねない。Passwordの表示切替など、Fieldに直接関係する1つの操作だけに使用する
-- `TextField`は`trailingAction`の処理や文言を知らない。SC-01のログイン専用FormではPassword Input右端に「表示／隠す」Buttonを配置し、表示状態をForm側で管理する
+- Label、`name`、`id`、補足・Error文と`aria-describedby`の関連付け、`required`、`autocomplete`、`inputmode`は利用側が管理する。PlaceholderはLabelの代わりにしない
+- `type`の既定は`text`とする。`ref`はnative `input`に渡す。`leadingIcon`は装飾として読み上げを抑止し、`trailingAction`はInputと重ならない独立の操作として置く
+- `trailingAction`の文言と挙動は利用側が管理する。Passwordの「表示／隠す」などFieldに直接関係する操作だけに使う
+- Errorでは利用側が`aria-invalid="true"`とError文との関連を設定する。コンポーネントはBorderをDangerにし、Error文や検証のタイミングは決めない
 
 **Anatomyと状態**
 
 ```text
-Label   必須
-┌──────────────────────────────┐
-│ Value / placeholder [action] │
-└──────────────────────────────┘
-Description または Error
+┌───────────────────────────────────┐
+│ [icon] Value / placeholder [action] │
+└───────────────────────────────────┘
+Label・Description・Errorは利用側が配置する
 ```
 
-| 状態 | Border | 補助表示 | DOM |
+| 状態 | BorderとFocus | DOM |
 | --- | --- | --- | --- |
-| `default` | `--color-border` | Description | 通常の`input` |
-| `hover` | `--color-border-strong` | 変更なし | 変更なし |
-| `focus-visible` | Brand borderと共通Focus ring | 変更なし | native Focus |
-| `error` | `--color-border-danger` | Danger icon、具体的なErrorと修正方法 | `aria-invalid="true"`、`aria-describedby` |
-| `disabled` | Disabled SurfaceとText | Descriptionを残す | native `disabled` |
-| `readOnly` | Secondary Surface、通常のText Contrast | 「変更できません」が必要ならDescriptionへ表示 | native `readOnly` |
+| `default` | `--color-border` | native `input` |
+| `hover` | `--color-border-strong` | 変更なし |
+| `focus-visible` | 緑の`--color-focus-ring` Borderと、隙間なしの淡い緑の2px Halo | native Focus |
+| `error` | Danger Border。Focus中もBorderは赤、Haloは緑 | `aria-invalid="true"`、`aria-describedby` |
+| `disabled` | Disabled SurfaceとText。Focus Haloなし | native `disabled` |
+| `readOnly` | Secondary Surface、通常のText Contrast | native `readOnly` |
 
-- 入力の最小の高さは`--control-min-height`、Inline paddingは`--space-3`、Labelとの間隔は`--space-2`、補助表示との間隔は`--space-1`とする
-- Errorは枠の色だけで示さず、Iconと文言を併記する。DescriptionはError表示中も必要なら残し、Errorと重複する文言は削る
-- Error領域はInput直下に置き、想定する文言の最小Block sizeを確保する。`overflow: clip`の内側で、Error文を`translateY(calc(var(--motion-distance-md) * -1))`と`opacity: 0`から最終位置へ表示する
-- Errorの表示は`--duration-normal`と`--easing-emphasized`、解除は`--duration-fast`と`--easing-standard`を使う。DOMへの追加、読み上げ、Focus移動はAnimation完了を待たない
-- `prefers-reduced-motion: reduce`ではErrorの移動とFadeを行わず、最終位置へ即時表示・非表示する
-- FormのSubmit失敗時は、画面仕様に従い、最初のError InputまたはForm上部のError summaryへFocusを移す。Toastだけで入力Errorを伝えない
+- Input外側のBorderだけをFocus時に強調し、内側のnative Inputには二重のOutlineを出さない。黒い標準Outlineや枠から離れた大きなRingを重ねない
+- `select`と`textarea`も緑のBorderと同じ2px Haloに揃える。Error中は赤Border・緑Haloとし、チャットのComposerなど独自の外枠がある場合もFocus表示は外枠の一箇所だけとする
+- 最小の高さは`--control-min-height`、Inline paddingは`--space-3`とする。Error文の表示とFocus移動は画面側の仕様に従い、色だけでErrorを伝えない
 
 **受け入れ条件**
 
-- Label、Description、Errorの関連をAccessible NameとDescriptionで取得できる
+- 利用側が付けるLabel、Description、Errorの関連をAccessible NameとDescriptionで取得できる
 - Email、Password、URL、検索で適切なKeyboardとAutocompleteを指定できる
 - 貼り付けを禁止せず、長い入力、空文字、日本語変換中でもLayoutと入力を壊さない
 - Errorの追加が読み上げられ、修正後に`aria-invalid`とError文が取り除かれる
-- Error文がInputの下端から表示され、Reduced Motionでは即時表示される
+- Error中にFocusしても赤Borderと緑Haloの両方が識別できる
 - `trailingAction`が入力値を覆わず、KeyboardでInputの次に操作できる
 - Tab順はDOM順と一致し、Focus時にSticky headerやOverlayで全体が隠れない
 

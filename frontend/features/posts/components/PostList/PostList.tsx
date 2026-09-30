@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { Input } from "@/shared/components/Input/Input";
 
 import type { PostListResponse, PostMetrics } from "@/features/posts/types/post";
 import { postPageHref, type PostListParams } from "@/features/posts/utils/postParams";
@@ -85,19 +86,19 @@ export function PostList({ response, params }: { response: PostListResponse; par
         <form action="/posts" method="get" className={styles.filterForm}>
           <label className={styles.searchField}>
             <span>投稿を検索</span>
-            <input type="search" name="query" defaultValue={params.query} maxLength={1000} placeholder="投稿本文を自然な言葉で検索" />
+            <Input type="search" name="query" defaultValue={params.query} maxLength={1000} placeholder="投稿本文を自然な言葉で検索" />
           </label>
           <label>
             <span>施策ID</span>
-            <input type="text" inputMode="numeric" pattern="[1-9][0-9]*" name="campaign_id" defaultValue={params.campaignId ?? ""} />
+            <Input type="text" inputMode="numeric" pattern="[1-9][0-9]*" name="campaign_id" defaultValue={params.campaignId ?? ""} />
           </label>
           <label>
             <span>公開日の開始</span>
-            <input type="date" name="published_from" defaultValue={params.publishedFrom} />
+            <Input type="date" name="published_from" defaultValue={params.publishedFrom} />
           </label>
           <label>
             <span>公開日の終了</span>
-            <input type="date" name="published_to" defaultValue={params.publishedTo} />
+            <Input type="date" name="published_to" defaultValue={params.publishedTo} />
           </label>
           <label>
             <span>並び順</span>

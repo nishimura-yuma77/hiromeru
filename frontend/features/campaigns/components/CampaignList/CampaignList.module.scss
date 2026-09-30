@@ -46,35 +46,11 @@
 }
 
 .searchField {
-  align-items: center;
-  border: var(--border-width-thin) solid var(--color-border);
-  border-radius: var(--radius-sm);
-  display: flex;
+  display: block;
   inline-size: min(100%, 18rem);
-  min-block-size: var(--control-min-height);
-  padding-inline: var(--space-3);
-
-  svg { color: var(--color-text-secondary); flex: none; inline-size: var(--space-4); }
-  &:focus-within { outline: var(--focus-ring-width) solid var(--color-focus-ring); outline-offset: var(--focus-ring-offset); }
 }
 
-.searchField input {
-  background: transparent;
-  border: 0;
-  color: var(--color-text-primary);
-  font: inherit;
-  font-size: var(--font-size-sm);
-  inline-size: 100%;
-  min-inline-size: 0;
-  padding: var(--space-2);
-
-  &:focus { outline: none; }
-  &::placeholder { color: var(--color-text-secondary); }
-}
-
-.statusField select,
-.advancedFields input,
-.idForm input {
+.statusField select {
   background: var(--color-surface);
   border: var(--border-width-thin) solid var(--color-border);
   border-radius: var(--radius-sm);
@@ -299,7 +275,7 @@
   white-space: nowrap;
 }
 
-.page :is(a, button, input, select, summary):focus-visible {
+.page :is(a, button, summary):focus-visible {
   outline: var(--focus-ring-width) solid var(--color-focus-ring);
   outline-offset: var(--focus-ring-offset);
 }

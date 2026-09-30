@@ -25,17 +25,6 @@
   gap: var(--space-2);
 }
 .periodForm label { color: var(--color-text-secondary); display: grid; font-size: var(--font-size-xs); gap: var(--space-1); }
-.periodForm input {
-  background: var(--color-login-background);
-  border: var(--border-width-thin) solid var(--color-border);
-  border-radius: var(--radius-sm);
-  color: var(--color-text-primary);
-  font: inherit;
-  font-size: var(--font-size-xs);
-  min-block-size: var(--control-min-height);
-  min-inline-size: 0;
-  padding-inline: var(--space-2);
-}
 .periodSeparator { color: var(--color-text-secondary); margin-block-end: var(--space-3); }
 .periodForm button, .periodForm a, .disabledAction {
   align-items: center;
@@ -145,7 +134,7 @@
 .pagination a { color: var(--color-brand-strong); font-weight: var(--font-weight-semibold); }
 .mobileCards { display: none; }
 .visuallyHidden { block-size: 1px; clip-path: inset(50%); inline-size: 1px; overflow: hidden; position: absolute; white-space: nowrap; }
-.page :is(a, button, input):focus-visible { outline: var(--focus-ring-width) solid var(--color-focus-ring); outline-offset: var(--focus-ring-offset); }
+.page :is(a, button):focus-visible { outline: var(--focus-ring-width) solid var(--color-focus-ring); outline-offset: var(--focus-ring-offset); }
 
 @media (min-width: bp.$tablet) {
   .page { margin: calc(-1 * var(--space-6)) calc(-1 * var(--space-5)); min-block-size: 100dvb; }
@@ -172,7 +161,6 @@
   .header { padding-inline: var(--space-4); }
   .periodForm { inline-size: 100%; }
   .periodForm label { flex: 1 1 7rem; }
-  .periodForm input { inline-size: 100%; }
   .body { padding: var(--space-4); }
   .summaryMetrics { gap: var(--space-2); }
   .summaryMetrics > div { padding: var(--space-3); }

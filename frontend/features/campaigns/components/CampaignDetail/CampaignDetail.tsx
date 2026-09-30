@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { Input } from "@/shared/components/Input/Input";
 
 import { useCampaignFormController } from "@/features/campaigns/controllers/useCampaignFormController";
 import type { CampaignDetailResponse } from "@/features/campaigns/types/campaign";
@@ -182,7 +183,7 @@ export function CampaignDetail({ detail }: { detail: CampaignDetailResponse }) {
             ) : null}
             <label>
               <span>施策タイトル</span>
-              <input
+              <Input
                 name="title"
                 value={controller.state.form.title}
                 onChange={(event) => controller.changeField("title", event.currentTarget.value)}

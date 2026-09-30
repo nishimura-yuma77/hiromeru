@@ -111,39 +111,16 @@
     font-weight: var(--font-weight-semibold);
     margin-block-end: var(--space-2);
   }
-
-  input {
-    background: var(--color-surface);
-    border: var(--border-width-thin) solid var(--color-border);
-    border-radius: var(--radius-sm);
-    color: var(--color-text-primary);
-    inline-size: 100%;
-    min-block-size: var(--control-min-height);
-    padding: var(--space-2) var(--space-3);
-    transition: border-color var(--duration-fast) var(--easing-standard);
-
-    &:hover:not(:disabled) { border-color: var(--color-brand-primary); }
-    &:focus-visible { outline: var(--focus-ring-width) solid var(--color-focus-ring); outline-offset: var(--focus-ring-offset); }
-    &[aria-invalid="true"] { border-color: var(--color-danger); }
-    &:disabled { background: var(--color-surface-disabled); color: var(--color-text-disabled); }
-  }
 }
 
 .passwordControl {
-  position: relative;
-
-  input { padding-inline-end: var(--space-9); }
-
   button {
     background: transparent;
     border: 0;
     color: var(--color-text-secondary);
     cursor: pointer;
-    inset-block-start: 0;
-    inset-inline-end: 0;
     min-block-size: var(--control-min-height);
     padding: 0 var(--space-3);
-    position: absolute;
 
     &:hover:not(:disabled) { color: var(--color-brand-primary); }
     &:focus-visible { outline: var(--focus-ring-width) solid var(--color-focus-ring); outline-offset: var(--focus-ring-offset); }

@@ -6,6 +6,7 @@ import { useEffect, useEffectEvent, useReducer, useRef, useState } from "react";
 import { getCampaign } from "@/features/campaigns/api/getCampaign";
 import type { CampaignListItem } from "@/features/campaigns/types/campaign";
 import { ApiError } from "@/shared/api/ApiError";
+import { Input } from "@/shared/components/Input/Input";
 
 import { ClarificationCard } from "./ClarificationCard";
 import { approveCampaign, approveXPost, searchActiveCampaigns } from "../api";
@@ -245,7 +246,7 @@ function CampaignCombobox({ disabled, error, idPrefix, onChange, onArchived, val
   return (
     <div className={styles.campaignCombobox}>
       <label htmlFor={inputId}>対象施策</label>
-      <input
+      <Input
         aria-activedescendant={open && activeIndex >= 0 ? `${listId}-${activeIndex}` : undefined}
         aria-autocomplete="list"
         aria-controls={listId}
@@ -487,12 +488,12 @@ function ProposalForm({ actionable, item, sessionId, audits, refreshHistory, sen
 
 function ProposalField({ autoComplete = "off", disabled, error, idPrefix, inputMode, label, maxLength, multiline = false, name, onChange, type = "text", value }: {
   autoComplete?: string; disabled: boolean; error?: string; idPrefix: number; inputMode?: React.HTMLAttributes<HTMLInputElement>["inputMode"]; label: string; maxLength?: number; multiline?: boolean; name: string;
-  onChange: (name: string, value: string) => void; type?: string; value: string;
+  onChange: (name: string, value: string) => void; type?: "text" | "url" | "number"; value: string;
 }) {
   const id = `proposal-${idPrefix}-${name}`;
   return <label className={styles.proposalField} htmlFor={id}><span>{label}</span>{multiline
     ? <textarea aria-describedby={error ? `${id}-error` : undefined} aria-invalid={Boolean(error)} autoComplete={autoComplete} disabled={disabled} id={id} maxLength={maxLength} name={name} onChange={(event) => onChange(name, event.target.value)} required rows={3} value={value} />
-    : <input aria-describedby={error ? `${id}-error` : undefined} aria-invalid={Boolean(error)} autoComplete={autoComplete} disabled={disabled} id={id} inputMode={inputMode} maxLength={maxLength} min={type === "number" ? 1 : undefined} name={name} onChange={(event) => onChange(name, event.target.value)} required type={type} value={value} />}{error ? <small id={`${id}-error`}>{error}</small> : null}</label>;
+    : <Input aria-describedby={error ? `${id}-error` : undefined} aria-invalid={Boolean(error)} autoComplete={autoComplete} disabled={disabled} id={id} inputMode={inputMode} maxLength={maxLength} min={type === "number" ? 1 : undefined} name={name} onChange={(event) => onChange(name, event.target.value)} required type={type} value={value} />}{error ? <small id={`${id}-error`}>{error}</small> : null}</label>;
 }
 
 function Item({ actionable, item, sessionId, questionTurnId, previousAnswers, maxMessageLength, audits, refreshHistory, sendRevision, sendClarification, sending }: { actionable: boolean; item: TurnItem; sessionId: number; questionTurnId: number; previousAnswers?: ClarificationAnswer[]; maxMessageLength: number; audits: ApprovalAudit[]; refreshHistory: () => Promise<void>; sendRevision: (message: string) => Promise<void>; sendClarification: (questionTurnId: number, questions: string[], answers: ClarificationAnswer[]) => Promise<void>; sending: boolean }) {

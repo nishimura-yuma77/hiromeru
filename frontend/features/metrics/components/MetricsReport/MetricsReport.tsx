@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { Input } from "@/shared/components/Input/Input";
 
 import type { CampaignMetrics, MetricsReportResponse, MetricsSummary } from "@/features/metrics/types/metrics";
 import { metricsPageHref, type MetricsParams } from "@/features/metrics/utils/metricsParams";
@@ -99,9 +100,9 @@ export function MetricsReport({ report, params }: { report: MetricsReportRespons
       <header className={styles.header}>
         <h1>計測結果</h1>
         <form action="/metrics" method="get" className={styles.periodForm} aria-label="集計期間">
-          <label><span>開始日</span><input type="date" name="published_from" defaultValue={params.publishedFrom} /></label>
+          <label><span>開始日</span><Input type="date" name="published_from" defaultValue={params.publishedFrom} /></label>
           <span className={styles.periodSeparator} aria-hidden="true">〜</span>
-          <label><span>終了日</span><input type="date" name="published_to" defaultValue={params.publishedTo} /></label>
+          <label><span>終了日</span><Input type="date" name="published_to" defaultValue={params.publishedTo} /></label>
           <button type="submit">適用</button>
           {params.publishedFrom || params.publishedTo ? <Link href="/metrics">全期間</Link> : <span className={styles.disabledAction}>全期間</span>}
         </form>

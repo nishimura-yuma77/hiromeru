@@ -2,6 +2,7 @@
 
 import type { FormEvent } from "react";
 import Link from "next/link";
+import { Input } from "@/shared/components/Input/Input";
 
 import type {
   CampaignListItem,
@@ -230,8 +231,8 @@ export function CampaignList({ response, params }: CampaignListProps) {
         <form action="/campaigns" method="get" id="campaign-filters" className={styles.filterForm} onSubmit={validateDateRange}>
           <label className={styles.searchField}>
             <span className={styles.srOnly}>施策を検索</span>
-            <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><circle cx="10.8" cy="10.8" r="6.2" /><path d="m15.5 15.5 5 5" /></svg>
-            <input
+            <Input
+              leadingIcon={<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><circle cx="10.8" cy="10.8" r="6.2" /><path d="m15.5 15.5 5 5" /></svg>}
               type="search"
               name="query"
               defaultValue={params.query}
@@ -255,11 +256,11 @@ export function CampaignList({ response, params }: CampaignListProps) {
             <div className={styles.advancedFields}>
               <label>
                 <span>作成日の開始</span>
-                <input form="campaign-filters" type="date" name="created_from" defaultValue={params.createdFrom} />
+                <Input form="campaign-filters" type="date" name="created_from" defaultValue={params.createdFrom} />
               </label>
               <label>
                 <span>作成日の終了</span>
-                <input form="campaign-filters" type="date" name="created_to" defaultValue={params.createdTo} />
+                <Input form="campaign-filters" type="date" name="created_to" defaultValue={params.createdTo} />
               </label>
               <div className={styles.filterActions}>
                 <button form="campaign-filters" type="submit">条件を適用</button>
@@ -269,7 +270,7 @@ export function CampaignList({ response, params }: CampaignListProps) {
             <form action="/campaigns/open" method="get" className={styles.idForm} onSubmit={validateDirectId}>
               <label>
                 <span>施策IDで直接開く</span>
-                <input type="text" name="id" inputMode="numeric" pattern="[1-9][0-9]*" required />
+                <Input type="text" name="id" inputMode="numeric" pattern="[1-9][0-9]*" required />
               </label>
               <button type="submit">開く</button>
             </form>

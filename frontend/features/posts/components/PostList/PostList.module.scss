@@ -11,7 +11,7 @@
 .filterForm { align-items: end; display: grid; gap: var(--space-4); grid-template-columns: repeat(4, minmax(9rem, 1fr)); }
 .filterForm label { display: grid; font-size: var(--font-size-sm); font-weight: var(--font-weight-semibold); gap: var(--space-2); }
 .searchField { grid-column: span 2; }
-.filterForm :is(input, select) { background: var(--color-background-primary); border: var(--border-width-thin) solid var(--color-border-strong); border-radius: var(--radius-sm); color: var(--color-text-primary); min-height: 3rem; min-width: 0; padding-inline: var(--space-3); }
+.filterForm select { background: var(--color-background-primary); border: var(--border-width-thin) solid var(--color-border-strong); border-radius: var(--radius-sm); color: var(--color-text-primary); min-height: 3rem; min-width: 0; padding-inline: var(--space-3); }
 .filterActions { align-items: center; display: flex; gap: var(--space-3); }
 .filterActions a, .desktopTable a, .card a, .empty a, .pagination a { color: var(--color-brand-primary); font-weight: var(--font-weight-semibold); }
 .resultHeading { border-block-end: var(--border-width-medium) solid var(--color-text-primary); padding-block-end: var(--space-4); }
@@ -34,7 +34,7 @@
 .mobileCards { display: none; }
 .empty { background: var(--color-surface); border: var(--border-width-thin) solid var(--color-border); margin-block-start: var(--space-5); padding: var(--space-7); text-align: center; }
 .pagination { display: flex; gap: var(--space-4); justify-content: flex-end; padding-block-start: var(--space-6); }
-.page :is(a, button, input, select):focus-visible { outline: var(--focus-ring-width) solid var(--color-focus-ring); outline-offset: var(--focus-ring-offset); }
+.page :is(a, button):focus-visible { outline: var(--focus-ring-width) solid var(--color-focus-ring); outline-offset: var(--focus-ring-offset); }
 
 @media (max-width: bp.$tablet) {
   .filterForm { grid-template-columns: repeat(2, minmax(0, 1fr)); }

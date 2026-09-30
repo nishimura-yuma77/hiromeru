@@ -33,6 +33,7 @@
   --color-border: rgb(20 33 27 / 14%);
   --color-border-strong: rgb(20 33 27 / 28%);
   --color-focus-ring: var(--palette-green-700);
+  --color-input-focus-halo: rgb(14 90 66 / 20%);
   --color-danger: var(--palette-red-600);
   --color-danger-surface: var(--palette-red-50);
   --color-surface-disabled: var(--palette-paper-100);
@@ -91,6 +92,7 @@
   --shadow-login-card: 0 1px 3px rgb(16 35 26 / 12%);
   --focus-ring-width: 0.1875rem;
   --focus-ring-offset: 0.25rem;
+  --input-focus-halo-width: 2px;
 
   --layout-max-width: 75rem;
   --layout-text-width: 42rem;

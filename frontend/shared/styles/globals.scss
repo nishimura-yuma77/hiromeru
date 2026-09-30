@@ -26,6 +26,16 @@ select {
   font: inherit;
 }
 
+:where(select, textarea):focus-visible {
+  border-color: var(--color-focus-ring);
+  box-shadow: 0 0 0 var(--input-focus-halo-width) var(--color-input-focus-halo);
+  outline: 0;
+}
+
+:where(select, textarea)[aria-invalid="true"]:focus-visible {
+  border-color: var(--color-danger);
+}
+
 a {
   color: inherit;
 }
