@@ -22,6 +22,12 @@ const rateFormat = new Intl.NumberFormat("ja-JP", {
   maximumFractionDigits: 1,
 });
 const dateFormat = new Intl.DateTimeFormat("ja-JP", {
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+  timeZone: "Asia/Tokyo",
+});
+const dateTimeFormat = new Intl.DateTimeFormat("ja-JP", {
   dateStyle: "medium",
   timeStyle: "short",
   timeZone: "Asia/Tokyo",
@@ -29,7 +35,14 @@ const dateFormat = new Intl.DateTimeFormat("ja-JP", {
 
 function formatDate(value: string): string {
   const date = new Date(value);
-  return Number.isNaN(date.valueOf()) ? "日時不明" : dateFormat.format(date);
+  if (Number.isNaN(date.valueOf())) return "日時不明";
+  const parts = dateFormat.formatToParts(date);
+  return ["year", "month", "day"].map((part) => parts.find((item) => item.type === part)?.value).join("-");
+}
+
+function formatDateTime(value: string): string {
+  const date = new Date(value);
+  return Number.isNaN(date.valueOf()) ? "日時不明" : dateTimeFormat.format(date);
 }
 
 function excludedCount(summary: MetricsSummary): number {
@@ -96,6 +109,10 @@ function MetricValues({ summary }: { summary: MetricsSummary }) {
   );
 }
 
+function CampaignStatus({ archived }: { archived: boolean }) {
+  return <span className={archived ? styles.archivedBadge : styles.activeBadge}>{archived ? "アーカイブ済み" : "有効"}</span>;
+}
+
 function CampaignCards({ campaigns }: { campaigns: CampaignListItem[] }) {
   return (
     <div className={styles.mobileCards}>
@@ -104,11 +121,12 @@ function CampaignCards({ campaigns }: { campaigns: CampaignListItem[] }) {
           <div className={styles.cardMain}>
             <div className={styles.recordLine}>
               <p className={styles.recordId}>施策ID {campaign.id}</p>
-              {campaign.archived_at ? <span className={styles.archivedBadge}>アーカイブ済み</span> : null}
+              <CampaignStatus archived={Boolean(campaign.archived_at)} />
             </div>
             <h3>{campaign.title}</h3>
             <p className={styles.objective}>{campaign.objective}</p>
           </div>
+          <p className={styles.postCount}>公開済み {numberFormat.format(campaign.metrics_summary.post_count)}件</p>
           <MetricValues summary={campaign.metrics_summary} />
           <p className={styles.dates}>
             <time dateTime={campaign.created_at}>作成 {formatDate(campaign.created_at)}</time>
@@ -125,15 +143,12 @@ function CampaignTable({ campaigns }: { campaigns: CampaignListItem[] }) {
   return (
     <div className={styles.tableWrap}>
       <table className={styles.table}>
+        <caption className={styles.srOnly}>施策一覧</caption>
         <thead>
           <tr>
             <th scope="col">施策</th>
-            <th scope="col">公開済み</th>
-            <th scope="col">初週PV</th>
-            <th scope="col">流入ユーザー</th>
-            <th scope="col">流入率</th>
-            <th scope="col">計測状況</th>
-            <th scope="col">更新</th>
+            <th scope="col">成果</th>
+            <th scope="col">日時</th>
           </tr>
         </thead>
         <tbody>
@@ -143,20 +158,23 @@ function CampaignTable({ campaigns }: { campaigns: CampaignListItem[] }) {
             return (
               <tr key={campaign.id}>
                 <th scope="row">
-                  <span className={styles.tableId}>ID {campaign.id}</span>
-                  {campaign.archived_at ? <span className={styles.archivedBadge}>アーカイブ済み</span> : null}
-                  <Link href={`/campaigns/${campaign.id}`}>{campaign.title}</Link>
-                  <span className={styles.tableObjective}>{campaign.objective}</span>
+                  <div className={styles.titleLine}>
+                    <Link href={`/campaigns/${campaign.id}`}>{campaign.title}</Link>
+                    <CampaignStatus archived={Boolean(campaign.archived_at)} />
+                  </div>
+                  <p className={styles.tableDescription}><span className={styles.tableId}>ID {campaign.id}</span>{campaign.objective}</p>
                 </th>
-                <td>{numberFormat.format(summary.post_count)}件</td>
-                <td>{metricValue(summary, summary.x_pv_count)}</td>
-                <td>{metricValue(summary, summary.landing_user_count)}</td>
-                <td>{rateValue(summary)}</td>
-                <td>
+                <td className={styles.resultCell}>
+                  <div><strong>{metricValue(summary, summary.x_pv_count)}</strong> PV</div>
+                  <div><strong>{metricValue(summary, summary.landing_user_count)}</strong> 流入 <span className={styles.rate}>{rateValue(summary)}</span></div>
+                  <span className={styles.postCount}>公開済み {numberFormat.format(summary.post_count)}件</span>
                   {explanation ? <span className={styles.metricExplanation}>{explanation}</span> : null}
                   <StatusBadges summary={summary} />
                 </td>
-                <td><time dateTime={campaign.updated_at}>{formatDate(campaign.updated_at)}</time></td>
+                <td className={styles.dateCell}>
+                  <time dateTime={campaign.created_at} aria-label={`作成 ${formatDateTime(campaign.created_at)}`}>{formatDate(campaign.created_at)}</time>
+                  <time dateTime={campaign.updated_at} aria-label={`更新 ${formatDateTime(campaign.updated_at)}`}>更新 {formatDate(campaign.updated_at)}</time>
+                </td>
               </tr>
             );
           })}
@@ -172,11 +190,9 @@ type CampaignListProps = {
 };
 
 export function CampaignList({ response, params }: CampaignListProps) {
-  const hasAdvancedFilters = Boolean(
-    params.archived !== "all" || params.createdFrom || params.createdTo,
-  );
+  const hasAdvancedFilters = Boolean(params.createdFrom || params.createdTo);
   const hasFilters = Boolean(
-    params.query || hasAdvancedFilters,
+    params.query || params.archived !== "all" || hasAdvancedFilters,
   );
 
   function validateDateRange(event: FormEvent<HTMLFormElement>) {
@@ -205,70 +221,65 @@ export function CampaignList({ response, params }: CampaignListProps) {
   return (
     <main id="main-content" className={styles.page}>
       <header className={styles.header}>
-        <div>
-          <p className={styles.eyebrow}>Campaign archive</p>
-          <h1>施策</h1>
-          <p>採用施策と、その後の投稿・成果を一緒に振り返れます。</p>
-        </div>
-        <Link className={styles.primaryLink} href="/chat/new">新しい施策を作る</Link>
+        <h1>施策</h1>
+        <Link className={styles.primaryLink} href="/chat/new">＋ 新しい施策を作る</Link>
       </header>
 
       <section className={styles.filters} aria-labelledby="campaign-search-title">
-        <h2 id="campaign-search-title">施策を探す</h2>
-        <form action="/campaigns" method="get" className={styles.filterForm} onSubmit={validateDateRange}>
+        <h2 className={styles.srOnly} id="campaign-search-title">施策を探す</h2>
+        <form action="/campaigns" method="get" id="campaign-filters" className={styles.filterForm} onSubmit={validateDateRange}>
           <label className={styles.searchField}>
-            <span>施策を検索</span>
+            <span className={styles.srOnly}>施策を検索</span>
+            <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><circle cx="10.8" cy="10.8" r="6.2" /><path d="m15.5 15.5 5 5" /></svg>
             <input
               type="search"
               name="query"
               defaultValue={params.query}
               maxLength={1000}
-              placeholder="タイトル、ターゲット、背景、目的、施策内容を検索"
+              placeholder="施策を検索"
             />
           </label>
-          <details className={styles.advancedFilters}>
-            <summary>詳細条件{hasAdvancedFilters ? "（適用中）" : ""}</summary>
+          <label className={styles.statusField}>
+            <span className={styles.srOnly}>状態で絞り込む</span>
+            <select name="archived" defaultValue={params.archived} onChange={(event) => event.currentTarget.form?.requestSubmit()}>
+              <option value="all">ステータスで絞り込む</option>
+              <option value="active">有効</option>
+              <option value="archived">アーカイブ済み</option>
+            </select>
+          </label>
+          <button className={styles.searchButton} type="submit">検索</button>
+        </form>
+        <details className={styles.advancedFilters} open={hasAdvancedFilters ? true : undefined}>
+          <summary>詳細条件{hasAdvancedFilters ? "（適用中）" : ""}</summary>
+          <div className={styles.advancedContent}>
             <div className={styles.advancedFields}>
               <label>
-                <span>状態</span>
-                <select name="archived" defaultValue={params.archived}>
-                  <option value="all">すべて</option>
-                  <option value="active">進行中</option>
-                  <option value="archived">アーカイブ済み</option>
-                </select>
-              </label>
-              <label>
                 <span>作成日の開始</span>
-                <input type="date" name="created_from" defaultValue={params.createdFrom} />
+                <input form="campaign-filters" type="date" name="created_from" defaultValue={params.createdFrom} />
               </label>
               <label>
                 <span>作成日の終了</span>
-                <input type="date" name="created_to" defaultValue={params.createdTo} />
+                <input form="campaign-filters" type="date" name="created_to" defaultValue={params.createdTo} />
               </label>
+              <div className={styles.filterActions}>
+                <button form="campaign-filters" type="submit">条件を適用</button>
+                <Link href="/campaigns">条件をクリア</Link>
+              </div>
             </div>
-          </details>
-          <div className={styles.filterActions}>
-            <button type="submit">条件を適用</button>
-            <Link href="/campaigns">条件をクリア</Link>
+            <form action="/campaigns/open" method="get" className={styles.idForm} onSubmit={validateDirectId}>
+              <label>
+                <span>施策IDで直接開く</span>
+                <input type="text" name="id" inputMode="numeric" pattern="[1-9][0-9]*" required />
+              </label>
+              <button type="submit">開く</button>
+            </form>
           </div>
-        </form>
-        <form action="/campaigns/open" method="get" className={styles.idForm} onSubmit={validateDirectId}>
-          <label>
-            <span>施策IDで直接開く</span>
-            <input type="text" name="id" inputMode="numeric" pattern="[1-9][0-9]*" required />
-          </label>
-          <button type="submit">開く</button>
-        </form>
+        </details>
       </section>
 
       <section aria-labelledby="campaign-results-title">
-        <div className={styles.resultHeading}>
-          <div>
-            <p className={styles.eyebrow}>Results</p>
-            <h2 id="campaign-results-title">
-              {params.query ? `「${params.query}」に近い施策` : "施策一覧"}
-            </h2>
-          </div>
+        <div className={params.query ? styles.resultHeading : styles.srOnly}>
+          <h2 id="campaign-results-title">{params.query ? `「${params.query}」に近い施策` : "施策一覧"}</h2>
           {params.query ? <p>施策の内容をもとに関連度順で表示しています。</p> : null}
         </div>
 
