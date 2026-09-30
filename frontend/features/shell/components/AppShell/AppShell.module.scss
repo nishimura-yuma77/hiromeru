@@ -24,38 +24,7 @@
   position: sticky;
   z-index: var(--z-index-app-header);
 
-  > button {
-    align-items: center;
-    background: transparent;
-    border: var(--border-width-thin) solid var(--color-border);
-    border-radius: var(--radius-sm);
-    cursor: pointer;
-    display: inline-flex;
-    flex-direction: column;
-    gap: var(--space-1);
-    inline-size: var(--control-min-height);
-    justify-content: center;
-    min-block-size: var(--control-min-height);
-
-    span {
-      background: var(--color-text-primary);
-      block-size: var(--border-width-medium);
-      inline-size: var(--space-5);
-    }
-
-    &:hover {
-      border-color: var(--color-brand-primary);
-    }
-
-    &:active {
-      background: var(--color-background-secondary);
-    }
-
-    &:focus-visible {
-      outline: var(--focus-ring-width) solid var(--color-focus-ring);
-      outline-offset: var(--focus-ring-offset);
-    }
-  }
+  svg { block-size: var(--space-5); inline-size: var(--space-5); }
 }
 
 .main {
@@ -139,35 +108,7 @@
     overflow-wrap: anywhere;
   }
 
-  button {
-    background: transparent;
-    border: 0;
-    color: inherit;
-    cursor: pointer;
-    inline-size: 100%;
-    min-block-size: var(--control-min-height);
-    padding: var(--space-2) 0;
-    text-align: start;
-
-    &:hover:not(:disabled) {
-      background: var(--color-background-secondary);
-      color: var(--color-text-primary);
-    }
-
-    &:active:not(:disabled) {
-      opacity: 0.8;
-    }
-
-    &:focus-visible {
-      outline: var(--focus-ring-width) solid var(--color-focus-ring);
-      outline-offset: var(--focus-ring-offset);
-    }
-
-    &:disabled {
-      cursor: not-allowed;
-      opacity: 0.65;
-    }
-  }
+  button { text-align: start; }
 }
 
 .drawerLayer {
@@ -202,11 +143,6 @@
 
     a:hover, a[aria-current="page"] { background: var(--color-nav-active); }
   }
-
-  .account button:hover:not(:disabled) {
-    background: var(--color-nav-active);
-    color: var(--color-brand-strong);
-  }
 }
 
 .drawerHeader {
@@ -214,25 +150,7 @@
   display: flex;
   justify-content: space-between;
 
-  button {
-    background: transparent;
-    border: var(--border-width-thin) solid currentColor;
-    border-radius: var(--radius-sm);
-    color: inherit;
-    cursor: pointer;
-    font-size: var(--font-size-xl);
-    inline-size: var(--control-min-height);
-    min-block-size: var(--control-min-height);
-
-    &:hover {
-      background: var(--color-nav-active);
-    }
-
-    &:focus-visible {
-      outline: var(--focus-ring-width) solid var(--color-focus-ring);
-      outline-offset: var(--focus-ring-offset);
-    }
-  }
+  button { font-size: var(--font-size-xl); }
 }
 
 .logoutError {
@@ -272,11 +190,6 @@
       flex: 1 1 auto;
 
       a:hover, a[aria-current="page"] { background: var(--color-nav-active); }
-    }
-
-    .account button:hover:not(:disabled) {
-      background: var(--color-nav-active);
-      color: var(--color-brand-strong);
     }
   }
 

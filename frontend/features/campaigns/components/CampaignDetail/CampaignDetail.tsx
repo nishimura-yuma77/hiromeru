@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { Button } from "@/shared/components/Button/Button";
 import { Input } from "@/shared/components/Input/Input";
 
 import { useCampaignFormController } from "@/features/campaigns/controllers/useCampaignFormController";
@@ -144,7 +145,7 @@ export function CampaignDetail({ detail }: { detail: CampaignDetailResponse }) {
         <div className={styles.sectionHeading}>
           <h2 id="campaign-content-title">施策内容</h2>
           {!isArchived && !controller.state.isEditing ? (
-            <button type="button" onClick={controller.startEditing}>編集</button>
+            <Button variant="ghost" size="small" onClick={controller.startEditing}>編集</Button>
           ) : controller.state.isEditing ? (
             <span>編集中</span>
           ) : <span className={styles.readOnly}>読み取り専用</span>}
@@ -162,7 +163,7 @@ export function CampaignDetail({ detail }: { detail: CampaignDetailResponse }) {
                 <p>{controller.state.error}</p>
                 {controller.state.hasConflict ? (
                   controller.state.conflictCampaign ? <>
-                    <button type="button" onClick={controller.toggleConflictComparison}>最新内容との差分を確認</button>
+                    <Button variant="secondary" size="small" onClick={controller.toggleConflictComparison}>最新内容との差分を確認</Button>
                     {controller.state.showConflictComparison ? (
                       <div className={styles.conflictComparison}>
                         {conflictFields.map((field) => (
@@ -172,8 +173,8 @@ export function CampaignDetail({ detail }: { detail: CampaignDetailResponse }) {
                           </section>
                         ))}
                         <div className={styles.conflictActions}>
-                          <button type="button" onClick={controller.applyLatest}>最新内容をフォームへ反映</button>
-                          <button type="button" onClick={controller.keepDraft}>現在の入力を優先して編集を続ける</button>
+                          <Button variant="secondary" size="small" onClick={controller.applyLatest}>最新内容をフォームへ反映</Button>
+                          <Button variant="secondary" size="small" onClick={controller.keepDraft}>現在の入力を優先して編集を続ける</Button>
                         </div>
                       </div>
                     ) : null}
@@ -223,10 +224,8 @@ export function CampaignDetail({ detail }: { detail: CampaignDetailResponse }) {
             ))}
             <p>この編集はAgentとの会話履歴には保存されません。</p>
             <div className={styles.formActions}>
-              <button type="button" onClick={controller.cancel} disabled={controller.state.isPending}>取消</button>
-              <button type="submit" disabled={!controller.canSave}>
-                {controller.state.isPending ? "保存中" : "変更内容を保存"}
-              </button>
+              <Button variant="secondary" onClick={controller.cancel} disabled={controller.state.isPending}>取消</Button>
+              <Button type="submit" disabled={!controller.canSave} isLoading={controller.state.isPending} loadingLabel="保存中">変更内容を保存</Button>
             </div>
           </form>
         ) : (

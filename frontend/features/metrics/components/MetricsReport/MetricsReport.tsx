@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { Button } from "@/shared/components/Button/Button";
 import { Input } from "@/shared/components/Input/Input";
 
 import type { CampaignMetrics, MetricsReportResponse, MetricsSummary } from "@/features/metrics/types/metrics";
@@ -103,7 +104,7 @@ export function MetricsReport({ report, params }: { report: MetricsReportRespons
           <label><span>開始日</span><Input type="date" name="published_from" defaultValue={params.publishedFrom} /></label>
           <span className={styles.periodSeparator} aria-hidden="true">〜</span>
           <label><span>終了日</span><Input type="date" name="published_to" defaultValue={params.publishedTo} /></label>
-          <button type="submit">適用</button>
+          <Button size="small" type="submit">適用</Button>
           {params.publishedFrom || params.publishedTo ? <Link href="/metrics">全期間</Link> : <span className={styles.disabledAction}>全期間</span>}
         </form>
       </header>

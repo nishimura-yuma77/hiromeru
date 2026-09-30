@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { Button } from "@/shared/components/Button/Button";
 import { usePathname } from "next/navigation";
 import { useEffect, useReducer, useRef, useState } from "react";
 
@@ -106,21 +107,23 @@ export function ChatWorkspace({ initialSessions, children }: { initialSessions: 
       <aside aria-label="会話一覧" className={styles.sidebar}>
         <div className={styles.listHeader}>
           <h1>会話一覧</h1>
-          <button
-            aria-controls="chat-session-list"
-            aria-expanded={isSessionListOpen}
-            aria-label={isSessionListOpen ? "会話一覧を閉じる" : "会話一覧を開く"}
-            className={styles.listToggle}
-            onClick={() => setIsSessionListOpen((open) => !open)}
-            title={isSessionListOpen ? "会話一覧を閉じる" : "会話一覧を開く"}
-            type="button"
-          >
-            <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-              <rect x="3" y="4" width="18" height="16" rx="2" />
-              <path d="M9 4v16" />
-              <path d={isSessionListOpen ? "m16 9-3 3 3 3" : "m14 9 3 3-3 3"} />
-            </svg>
-          </button>
+          <div className={styles.listToggle}>
+            <Button
+              aria-controls="chat-session-list"
+              aria-expanded={isSessionListOpen}
+              aria-label={isSessionListOpen ? "会話一覧を閉じる" : "会話一覧を開く"}
+              variant="secondary"
+              iconOnly
+              onClick={() => setIsSessionListOpen((open) => !open)}
+              title={isSessionListOpen ? "会話一覧を閉じる" : "会話一覧を開く"}
+            >
+              <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                <rect x="3" y="4" width="18" height="16" rx="2" />
+                <path d="M9 4v16" />
+                <path d={isSessionListOpen ? "m16 9-3 3 3 3" : "m14 9 3 3-3 3"} />
+              </svg>
+            </Button>
+          </div>
         </div>
         <div className={styles.sidebarBody} id="chat-session-list" inert={isSessionListOpen ? undefined : true}>
           <Link className={styles.newButton} href="/chat/new">
@@ -145,9 +148,9 @@ export function ChatWorkspace({ initialSessions, children }: { initialSessions: 
           <div className={styles.loadMore} aria-live="polite">
             {state.error ? <p role="alert">{state.error}</p> : null}
             {state.next_cursor ? (
-              <button disabled={state.loading} onClick={loadMore} type="button">
-                {state.loading ? "読み込み中" : state.error ? "もう一度読み込む" : "さらに読み込む"}
-              </button>
+              <Button variant="ghost" size="small" isLoading={state.loading} loadingLabel="会話を読み込み中" onClick={loadMore}>
+                {state.error ? "もう一度読み込む" : "さらに読み込む"}
+              </Button>
             ) : null}
           </div>
         </div>

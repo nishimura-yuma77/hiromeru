@@ -1,3 +1,5 @@
-import Loading from "@/app/loading";
+import { PageLoading } from "@/shared/components/PageLoading/PageLoading";
 
-export default Loading;
+export default function Loading() {
+  return <PageLoading withinShell />;
+}

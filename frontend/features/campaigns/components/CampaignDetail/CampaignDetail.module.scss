@@ -154,8 +154,7 @@
   padding: var(--space-3) var(--space-4);
 }
 .sectionHeading h2 { font-size: var(--font-size-sm); margin: 0; }
-.sectionHeading a, .sectionHeading button { color: var(--color-brand-strong); font-size: var(--font-size-xs); font-weight: var(--font-weight-semibold); }
-.sectionHeading button { background: none; border: 0; cursor: pointer; padding: var(--space-2); }
+.sectionHeading a { color: var(--color-brand-strong); font-size: var(--font-size-xs); font-weight: var(--font-weight-semibold); }
 .readOnly { color: var(--color-text-secondary); font-size: var(--font-size-xs); }
 
 .contentList { margin: 0; padding: 0 var(--space-4) var(--space-3); }
@@ -188,9 +187,6 @@
 .conflictComparison p { margin-block-start: var(--space-2); overflow-wrap: anywhere; white-space: pre-wrap; }
 .conflictActions, .formActions { display: flex; flex-wrap: wrap; gap: var(--space-3); }
 .formActions { justify-content: flex-end; }
-.formActions button, .conflict button { background: var(--color-surface); border: var(--border-width-thin) solid var(--color-border); border-radius: var(--radius-sm); color: var(--color-text-primary); cursor: pointer; min-block-size: var(--control-min-height); padding: var(--space-2) var(--space-3); }
-.formActions button:last-child { background: var(--color-brand-primary); color: var(--color-text-on-brand); }
-.formActions button:disabled { cursor: not-allowed; opacity: 0.55; }
 .fieldError { color: var(--color-danger); font-size: var(--font-size-xs); font-weight: var(--font-weight-regular); }
 .editForm textarea[aria-invalid="true"] { border-color: var(--color-danger); }
 
@@ -229,7 +225,7 @@
 .liveMessage:empty { display: none; }
 
 .srOnly { block-size: 1px; clip-path: inset(50%); inline-size: 1px; overflow: hidden; position: absolute; white-space: nowrap; }
-.page :is(a, button):focus-visible { outline: var(--focus-ring-width) solid var(--color-focus-ring); outline-offset: var(--focus-ring-offset); }
+.page a:focus-visible { outline: var(--focus-ring-width) solid var(--color-focus-ring); outline-offset: var(--focus-ring-offset); }
 
 @media (min-width: bp.$tablet) {
   .page { margin: calc(-1 * var(--space-6)) calc(-1 * var(--space-5)); min-block-size: 100dvb; }

@@ -1,4 +1,6 @@
 import Link from "next/link";
+import { Button } from "@/shared/components/Button/Button";
+import { Spinner } from "@/shared/components/Spinner/Spinner";
 import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
 
 import { searchCampaigns, type CampaignOption } from "@/features/memories/api/searchCampaigns";
@@ -106,13 +108,13 @@ export function CampaignFilter({ initialCampaign, query }: { initialCampaign: Ca
         />
         <input type="hidden" name="campaign_id" value={selectedId ?? ""} />
         {expanded ? <div className={styles.campaignOptions} id="memory-campaign-options" role="listbox" aria-label="施策の候補">
-          {loading ? <p>施策を検索中…</p> : options.length ? options.map((campaign, index) => (
-            <button type="button" role="option" aria-selected={index === activeIndex} id={`memory-campaign-option-${campaign.id}`} key={campaign.id} onClick={() => choose(campaign)}>{campaign.title}</button>
+          {loading ? <p className={styles.campaignLoading} role="status"><Spinner size="small" />施策を検索中…</p> : options.length ? options.map((campaign, index) => (
+            <Button variant="ghost" size="small" role="option" aria-selected={index === activeIndex} id={`memory-campaign-option-${campaign.id}`} key={campaign.id} onClick={() => choose(campaign)}>{campaign.title}</Button>
           )) : <p>{error || "候補がありません"}</p>}
         </div> : null}
         {error ? <p id="memory-campaign-error" className={styles.filterError} role="alert">{error}</p> : null}
       </div>
-      <button type="submit" className={styles.searchButton}>検索</button>
+      <Button size="small" type="submit">検索</Button>
       <Link href="/memories" className={styles.clearLink}>条件をクリア</Link>
     </form>
   );

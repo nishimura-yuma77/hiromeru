@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { Button } from "@/shared/components/Button/Button";
 
 import { useCopyUrlController } from "@/features/posts/controllers/useCopyUrlController";
 import type { PostDetailResponse } from "@/features/posts/types/post";
@@ -80,11 +81,11 @@ export function PostDetail({ detail, returnTo }: { detail: PostDetailResponse; r
         </div>
         <div className={styles.urlRow}>
           <div><span>遷移先URL</span><code>{tracking.landing_url}</code></div>
-          <button type="button" onClick={() => void copyController.copy("landing", tracking.landing_url)}>URLをコピー</button>
+          <Button variant="secondary" size="small" disabled={Boolean(copyController.state.pendingField && copyController.state.pendingField !== "landing")} isLoading={copyController.state.pendingField === "landing"} loadingLabel="コピー中" onClick={() => void copyController.copy("landing", tracking.landing_url)}>URLをコピー</Button>
         </div>
         <div className={styles.urlRow}>
           <div><span>UTM付きURL</span><code>{tracking.tracked_url}</code></div>
-          <button type="button" onClick={() => void copyController.copy("tracked", tracking.tracked_url)}>URLをコピー</button>
+          <Button variant="secondary" size="small" disabled={Boolean(copyController.state.pendingField && copyController.state.pendingField !== "tracked")} isLoading={copyController.state.pendingField === "tracked"} loadingLabel="コピー中" onClick={() => void copyController.copy("tracked", tracking.tracked_url)}>URLをコピー</Button>
         </div>
         <details>
           <summary>UTMパラメータを見る</summary>

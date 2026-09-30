@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { Button } from "@/shared/components/Button/Button";
 import { Input } from "@/shared/components/Input/Input";
 
 import type { PostListResponse, PostMetrics } from "@/features/posts/types/post";
@@ -110,7 +111,7 @@ export function PostList({ response, params }: { response: PostListResponse; par
             </select>
           </label>
           <div className={styles.filterActions}>
-            <button type="submit">条件を適用</button>
+            <Button type="submit">条件を適用</Button>
             <Link href="/posts">条件をクリア</Link>
           </div>
         </form>

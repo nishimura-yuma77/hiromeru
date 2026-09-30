@@ -1,4 +1,5 @@
 import type { FormEvent, RefObject } from "react";
+import { Button } from "@/shared/components/Button/Button";
 import { Input } from "@/shared/components/Input/Input";
 
 import styles from "./LoginView.module.scss";
@@ -80,17 +81,15 @@ export function LoginFormCard({
                 aria-describedby={passwordError ? "password-error" : undefined}
                 disabled={isPending}
                 onChange={(event) => onPasswordChange(event.currentTarget.value)}
-                trailingAction={<button type="button" onClick={onPasswordVisibilityToggle} disabled={isPending}>
+                trailingAction={<Button variant="ghost" size="small" onClick={onPasswordVisibilityToggle} disabled={isPending}>
                   {isPasswordVisible ? "隠す" : "表示"}
-                </button>}
+                </Button>}
               />
             </div>
             {passwordError ? <p id="password-error" className={styles.fieldError}>{passwordError}</p> : null}
           </div>
 
-          <button className={styles.submit} type="submit" disabled={isPending}>
-            {isPending ? "ログイン中…" : "ログイン"}
-          </button>
+          <Button block type="submit" isLoading={isPending} loadingLabel="ログイン中">ログイン</Button>
 
           <div aria-live="polite" className={styles.status}>
             {emailError && passwordError && emailError === passwordError
@@ -101,7 +100,7 @@ export function LoginFormCard({
           {formError ? (
             <div ref={formErrorRef} className={styles.formError} role="alert" tabIndex={-1}>
               <p>{formError}</p>
-              {shouldReload ? <button type="button" onClick={onReload}>ページを再読み込み</button> : null}
+              {shouldReload ? <Button variant="ghost" size="small" onClick={onReload}>ページを再読み込み</Button> : null}
             </div>
           ) : null}
         </form>

@@ -6,6 +6,8 @@ import { useEffect, useEffectEvent, useReducer, useRef, useState } from "react";
 import { getCampaign } from "@/features/campaigns/api/getCampaign";
 import type { CampaignListItem } from "@/features/campaigns/types/campaign";
 import { ApiError } from "@/shared/api/ApiError";
+import { Button } from "@/shared/components/Button/Button";
+import { Spinner } from "@/shared/components/Spinner/Spinner";
 import { Input } from "@/shared/components/Input/Input";
 
 import { ClarificationCard } from "./ClarificationCard";
@@ -277,7 +279,7 @@ function CampaignCombobox({ disabled, error, idPrefix, onChange, onArchived, val
           {!loading && !searchError && options.length === 0 ? <li className={styles.comboboxMessage}>該当する施策がありません</li> : null}
         </ul>
       ) : null}
-      <p aria-live="polite" className={styles.comboboxStatus} id={`${inputId}-status`}>{loading ? "施策を検索しています" : searchError || (open ? `${options.length}件の候補があります` : "")}</p>
+      <p aria-live="polite" className={styles.comboboxStatus} id={`${inputId}-status`}>{loading ? <><Spinner size="small" />施策を検索しています</> : searchError || (open ? `${options.length}件の候補があります` : "")}</p>
       {error ? <small id={`${inputId}-error`}>{error}</small> : null}
     </div>
   );
@@ -461,7 +463,7 @@ function ProposalForm({ actionable, item, sessionId, audits, refreshHistory, sen
           <span className={styles.characterCount}>{xWeightedLength((values as XPostProposal).body).toLocaleString("ja-JP")} / {X_POST_WEIGHT_MAX}（X換算・遷移先URL分を除く上限）</span>
         </>}
       </div>
-      {dirty && !locked && !processing ? <div className={styles.proposalDirty} role="status"><span>未保存の変更があります。</span><button disabled={submitting} onClick={() => proposalDispatch({ type: "reset", values: item.content })} type="button">元の提案に戻す</button></div> : null}
+      {dirty && !locked && !processing ? <div className={styles.proposalDirty} role="status"><span>未保存の変更があります。</span><Button variant="ghost" size="small" disabled={submitting} onClick={() => proposalDispatch({ type: "reset", values: item.content })}>元の提案に戻す</Button></div> : null}
       {statusMessage ? <p className={`${styles.approvalNotice} ${unresolved ? styles.approvalWarning : ""}`} role="status">{statusMessage}</p> : null}
       {generalError ? <p className={styles.proposalError} role="alert">{generalError}</p> : null}
       {success ? <p className={styles.proposalSuccess} role="status">{success.message} <Link href={success.href}>{success.linkLabel}</Link></p> : null}
@@ -470,18 +472,18 @@ function ProposalForm({ actionable, item, sessionId, audits, refreshHistory, sen
           <label htmlFor={`revision-${item.item_id}`}>AIへの修正指示</label>
           <textarea autoComplete="off" disabled={sending} id={`revision-${item.item_id}`} maxLength={REVISION_MAX} name="revision_instructions" onChange={(event) => proposalDispatch({ type: "revision", value: event.target.value })} placeholder="変更したい点を具体的に入力してください" required rows={3} value={revision} />
           <span>{revision.length.toLocaleString("ja-JP")} / {REVISION_MAX.toLocaleString("ja-JP")}</span>
-          <div><button className={styles.secondaryButton} disabled={sending} onClick={() => proposalDispatch({ type: "revision_open", value: false })} type="button">キャンセル</button><button disabled={sending || !revision.trim()} onClick={consultAgain} type="button">{sending ? "送信中" : "現在の内容で再相談"}</button></div>
+          <div><Button variant="secondary" disabled={sending} onClick={() => proposalDispatch({ type: "revision_open", value: false })}>キャンセル</Button><Button disabled={!revision.trim()} isLoading={sending} loadingLabel="相談中" onClick={consultAgain}>現在の内容で再相談</Button></div>
         </div>
-      ) : <button className={styles.revisionButton} disabled={sending || submitting} onClick={() => proposalDispatch({ type: "revision_open", value: true })} type="button">AIに修正を相談</button> : null}
+      ) : <Button variant="ghost" disabled={sending || submitting} onClick={() => proposalDispatch({ type: "revision_open", value: true })}>AIに修正を相談</Button> : null}
       {!locked ? confirming ? (
         <div className={styles.confirmBackdrop} role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !submitting) proposalDispatch({ type: "confirm", value: false }); }}>
           <section aria-describedby={`approval-description-${item.item_id}`} aria-labelledby={`approval-title-${item.item_id}`} aria-modal="true" className={styles.confirmApproval} role="alertdialog">
             <h4 id={`approval-title-${item.item_id}`}>{campaign ? "既存の施策を置き換えますか？" : "Xへ投稿を公開しますか？"}</h4>
             <p id={`approval-description-${item.item_id}`}>{campaign ? "既存の施策内容を、この提案の内容へ置き換えて保存します。" : externalSucceeded ? "Xへ再投稿せず、保存処理だけを再試行します。" : "Xへ公開され、公開後は変更・削除できません。"}</p>
-            <div><button ref={cancelConfirmationRef} className={styles.secondaryButton} disabled={submitting} onClick={() => { proposalDispatch({ type: "confirm", value: false }); requestAnimationFrame(() => approveButtonRef.current?.focus()); }} type="button">戻る</button><button disabled={submitting} onClick={() => void submit()} type="button">{submitting ? "処理中…" : campaign ? "置き換えて保存" : externalSucceeded ? "保存を再試行" : "公開する"}</button></div>
+             <div><Button ref={cancelConfirmationRef} variant="secondary" disabled={submitting} onClick={() => { proposalDispatch({ type: "confirm", value: false }); requestAnimationFrame(() => approveButtonRef.current?.focus()); }}>戻る</Button><Button isLoading={submitting} loadingLabel={campaign ? "保存中" : "公開中"} onClick={() => void submit()}>{campaign ? "置き換えて保存" : externalSucceeded ? "保存を再試行" : "公開する"}</Button></div>
           </section>
         </div>
-      ) : <button ref={approveButtonRef} className={styles.approveButton} disabled={submitting || sending} onClick={() => processing || (campaign && (values as CampaignProposal).id === null) ? void submit() : proposalDispatch({ type: "confirm", value: true })} type="button">{processing ? "同じ処理キーで結果を確認" : campaign ? "承認して保存" : externalSucceeded ? "保存処理を再試行" : "承認して公開"}</button> : null}
+      ) : <Button ref={approveButtonRef} disabled={sending} isLoading={submitting} loadingLabel="処理中" onClick={() => processing || (campaign && (values as CampaignProposal).id === null) ? void submit() : proposalDispatch({ type: "confirm", value: true })}>{processing ? "同じ処理キーで結果を確認" : campaign ? "承認して保存" : externalSucceeded ? "保存処理を再試行" : "承認して公開"}</Button> : null}
     </article>
   );
 }
@@ -589,7 +591,7 @@ function Turn({ turn, restore, sessionId, previousAnswers, maxMessageLength, aud
       {turn.error ? (
         <div className={styles.turnError} role="alert">
           <p>{turn.error.message}</p>
-          {userText?.type === "user_message" && !userText.content.clarification_response ? <button onClick={() => restore(userText.content.text)} type="button">同じ内容を入力欄へ戻す</button> : null}
+          {userText?.type === "user_message" && !userText.content.clarification_response ? <Button variant="ghost" size="small" onClick={() => restore(userText.content.text)}>同じ内容を入力欄へ戻す</Button> : null}
         </div>
       ) : null}
     </li>
@@ -662,14 +664,12 @@ export function Conversation({ initialHistory, initialDraft = "" }: { initialHis
             <h1>何から始めましょうか。</h1>
             <p>採用施策づくりや投稿案、公開後の振り返りについて相談できます。</p>
             <div className={styles.examples}>
-              {examples.map((example) => <button key={example} onClick={() => restore(example)} type="button">{example}</button>)}
+              {examples.map((example) => <Button variant="secondary" size="small" key={example} onClick={() => restore(example)}>{example}</Button>)}
             </div>
           </section>
         ) : null}
         {state.hasMore ? (
-          <button className={styles.earlierButton} disabled={state.loadingHistory || state.sending} onClick={() => void loadEarlier()} type="button">
-            {state.loadingHistory ? "以前の会話を読み込み中" : "以前の会話を読み込む"}
-          </button>
+          <div className={styles.earlierButton}><Button variant="ghost" disabled={state.sending} isLoading={state.loadingHistory} loadingLabel="以前の会話を読み込み中" onClick={() => void loadEarlier()}>以前の会話を読み込む</Button></div>
         ) : null}
         <ol className={styles.turns}>
           {state.turns.map((turn) => <Turn audits={audits} key={turn.agent_turn_id} latestProposalIds={latestProposalIds} previousAnswers={failedClarificationAnswers.get(turn.agent_turn_id)} maxMessageLength={maxLength} refreshHistory={refreshHistory} restore={restore} sendRevision={send} sendClarification={sendClarification} sending={state.sending} sessionId={state.session?.session_id ?? 0} turn={turn} />)}
@@ -681,7 +681,7 @@ export function Conversation({ initialHistory, initialDraft = "" }: { initialHis
             </article>
             <div aria-live="polite" className={styles.progress} role="status">
               <span className={styles.speaker}>Hiromeru AI</span>
-               <p><span aria-hidden="true" className={styles.spinner} />{state.recovering ? "結果を確認中" : activityLabels[state.activities.findLast((item) => item.status === "running")?.name ?? ""] ?? (state.activities.some((item) => item.status === "running") ? "処理を実行中" : "考えています")}</p>
+               <p><Spinner size="small" />{state.recovering ? "結果を確認中" : activityLabels[state.activities.findLast((item) => item.status === "running")?.name ?? ""] ?? (state.activities.some((item) => item.status === "running") ? "処理を実行中" : "考えています")}</p>
                {state.activities.filter((item): item is typeof item & { status: ActivityStatus } => item.status !== "running").slice(-3).map((activity) => <small className={activity.status === "succeeded" ? undefined : styles.activityProblem} key={activity.activity_id} role={activity.status === "succeeded" ? undefined : "alert"}>{activityLabels[activity.name] ?? "処理"} {activityResult(activity.status)}</small>)}
             </div>
           </div>
@@ -709,7 +709,7 @@ export function Conversation({ initialHistory, initialDraft = "" }: { initialHis
               <span className={styles.validationError} id="chat-error">{state.composerError}</span>
               <span className={styles.srOnly} id="chat-status" aria-live="polite">{state.sending ? "回答が完了すると送信できます" : ""}</span>
             </div>
-            <button disabled={invalid || state.sending} type="submit">{state.sending ? "送信中" : "送信"}</button>
+             <Button disabled={invalid} isLoading={state.sending} loadingLabel="送信中" type="submit">送信</Button>
           </div>
         </div>
         <p className={styles.shortcut}>Ctrl / ⌘ + Enter で送信</p>

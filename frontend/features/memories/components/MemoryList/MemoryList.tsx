@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useState } from "react";
+import { Button } from "@/shared/components/Button/Button";
 
 import {
   listMemoryCampaigns,
@@ -65,9 +66,7 @@ function RelatedCampaigns({ memory }: { memory: Memory }) {
         </ul>
       ) : <span>なし</span>}
       {cursor ? (
-        <button className={styles.loadMore} type="button" onClick={() => void loadMore()} disabled={isLoading}>
-          {isLoading ? "読み込み中" : "施策をさらに表示"}
-        </button>
+        <Button variant="ghost" size="small" onClick={() => void loadMore()} isLoading={isLoading} loadingLabel="施策を読み込み中">施策をさらに表示</Button>
       ) : null}
       <p className={styles.relationStatus} role={error ? "alert" : "status"} aria-live="polite">
         {error || (isLoading ? "関連する施策を読み込んでいます。" : "")}
@@ -110,9 +109,7 @@ function RelatedPosts({ memory }: { memory: Memory }) {
             ))}
           </ul>
           {cursor ? (
-            <button className={styles.loadMore} type="button" onClick={() => void loadMore()} disabled={isLoading}>
-              {isLoading ? "読み込み中" : "投稿をさらに表示"}
-            </button>
+            <Button variant="ghost" size="small" onClick={() => void loadMore()} isLoading={isLoading} loadingLabel="投稿を読み込み中">投稿をさらに表示</Button>
           ) : null}
           <p className={styles.relationStatus} role={error ? "alert" : "status"} aria-live="polite">
             {error || (isLoading ? "関連する投稿を読み込んでいます。" : "")}
@@ -157,7 +154,7 @@ export function MemoryList({ response, params, selectedCampaign }: { response: M
             {visibleMemories.map((memory) => (
               <article className={styles.card} key={memory.id}>
                 <p className={styles.memoryText}>{memory.content}</p>
-                <button className={styles.deleteButton} type="button" aria-label={`記憶ID ${memory.id}を削除する`} onClick={() => controller.open(memory.id)}>削除</button>
+                <Button variant="ghost" size="small" aria-label={`記憶ID ${memory.id}を削除する`} onClick={() => controller.open(memory.id)}>削除</Button>
                 <div className={styles.related}>
                   <RelatedCampaigns memory={memory} />
                   <RelatedPosts memory={memory} />
@@ -185,8 +182,8 @@ export function MemoryList({ response, params, selectedCampaign }: { response: M
             <blockquote>{selectedMemory.content}</blockquote>
             {controller.state.error ? <p className={styles.error} role="alert">{controller.state.error}</p> : null}
             <div className={styles.dialogActions}>
-              <button type="button" onClick={controller.close} disabled={controller.state.isPending} autoFocus>キャンセル</button>
-              <button type="button" onClick={() => void controller.confirmDelete()} disabled={controller.state.isPending}>{controller.state.isPending ? "削除中" : "削除する"}</button>
+              <Button variant="secondary" onClick={controller.close} disabled={controller.state.isPending} autoFocus>キャンセル</Button>
+              <Button variant="danger" onClick={() => void controller.confirmDelete()} isLoading={controller.state.isPending} loadingLabel="削除中">削除する</Button>
             </div>
           </section>
         </div>

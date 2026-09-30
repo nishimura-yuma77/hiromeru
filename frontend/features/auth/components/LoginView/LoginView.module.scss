@@ -113,45 +113,12 @@
   }
 }
 
-.passwordControl {
-  button {
-    background: transparent;
-    border: 0;
-    color: var(--color-text-secondary);
-    cursor: pointer;
-    min-block-size: var(--control-min-height);
-    padding: 0 var(--space-3);
-
-    &:hover:not(:disabled) { color: var(--color-brand-primary); }
-    &:focus-visible { outline: var(--focus-ring-width) solid var(--color-focus-ring); outline-offset: var(--focus-ring-offset); }
-    &:disabled { cursor: not-allowed; }
-  }
-}
-
 .fieldError {
   color: var(--color-danger);
   font-size: var(--font-size-sm);
   line-height: var(--line-height-heading);
   margin: var(--space-2) 0 0;
   overflow-wrap: anywhere;
-}
-
-.submit {
-  background: var(--color-brand-primary);
-  border: var(--border-width-thin) solid var(--color-brand-primary);
-  border-radius: var(--radius-sm);
-  color: var(--color-text-on-brand);
-  cursor: pointer;
-  font-weight: var(--font-weight-semibold);
-  inline-size: 100%;
-  min-block-size: var(--control-min-height);
-  padding: var(--space-2) var(--space-4);
-  transition: background-color var(--duration-fast) var(--easing-standard);
-
-  &:hover:not(:disabled) { background: var(--color-brand-strong); }
-  &:active:not(:disabled) { opacity: 0.9; }
-  &:focus-visible { outline: var(--focus-ring-width) solid var(--color-focus-ring); outline-offset: var(--focus-ring-offset); }
-  &:disabled { background: var(--color-surface-disabled); border-color: var(--color-border); color: var(--color-text-disabled); cursor: not-allowed; }
 }
 
 .status {
@@ -173,16 +140,7 @@
   p { font-size: var(--font-size-sm); line-height: var(--line-height-body); margin: 0; }
 
   button {
-    background: transparent;
-    border: 0;
-    color: inherit;
-    cursor: pointer;
-    font-weight: var(--font-weight-semibold);
     margin-block-start: var(--space-2);
-    padding: var(--space-2) 0;
-    text-decoration: underline;
-
-    &:focus-visible { outline: var(--focus-ring-width) solid var(--color-focus-ring); outline-offset: var(--focus-ring-offset); }
   }
 }
 
@@ -233,8 +191,4 @@
 
 @media (max-width: breakpoints.$mobile) {
   .card { padding-inline: var(--space-4); }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .field input, .submit { transition: none; }
 }

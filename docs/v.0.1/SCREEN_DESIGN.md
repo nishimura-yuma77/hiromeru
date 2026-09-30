@@ -2328,7 +2328,8 @@ SC-02の会話一覧（`/chat`、および`/chat/new`と`/chat/{session_id}`の�
 - 状態が重なった場合は、`loading`、`disabled`、`error`、`active`、`focus-visible`、`hover`、`default`の順で視覚表現を優先する。`isLoading`がnativeの`disabled`を設定しても、LoadingのSpinnerと文言を表示する。Focus ringは、ErrorやLoadingと同時でも残す
 - Hoverだけに依存した情報や操作を設けない。Focusは`--focus-ring-width`、`--focus-ring-offset`、`--color-focus-ring`で明示する
 - Motionは`transform`と`opacity`だけに使い、`--duration-fast`または`--duration-normal`で完了させる。`prefers-reduced-motion: reduce`ではMotionを無効にしても、同じ状態と操作を理解できるようにする
-- IconにはSVGを使用する。装飾Iconは`aria-hidden="true"`とし、Iconだけの操作はこの節の`Button`では扱わず、具体的な`aria-label`を必須とする別の`IconButton`として定義する
+- IconにはSVGを使用する。装飾Iconは`aria-hidden="true"`とする。Iconだけの操作も`Button`の`iconOnly`を使用し、利用側が具体的な`aria-label`を設定する。画面全体を覆うBackdropは操作面のためnative Buttonのままとする
+- ページ遷移中の`loading.tsx`は独立したページではなく遷移先ContentのFallbackとする。`shared/components/PageLoading`を共用し、認証後は`app/(authenticated)/loading.tsx`がApp ShellのMain content内だけにSpinnerと「読み込み中です」を表示する。SidebarとMobile Headerは残し、初回などApp Shellがまだない場合は`app/loading.tsx`が同じ表示部品をViewport内に置く。画面内の非同期操作では対象Buttonまたは候補List内にSpinnerと具体的な文言を表示する
 - 実装前に、既存Tokenで表せない状態別のSurface、Text、Border、Disabled、Overlay、Layer、Control、App Shellの値をSemantic tokenへ追加する。少なくとも`success`、`info`、`warning`、`danger`の4状態色、`--color-surface-disabled`、`--color-text-disabled`、`--color-overlay`、`--z-index-app-header`、`--z-index-toast`、`--z-index-overlay`、`--control-min-height`、`--app-header-height`、`--app-sidebar-width`、`--conversation-list-width`、`--conversation-content-width`、`--composer-max-height`、`--toast-max-width`、`--spinner-size`、`--duration-spinner`、`--easing-linear`を定義する。ComponentからPrimitive tokenやColor literalを参照しない
 
 #### 6.14.1 Button
@@ -2340,7 +2341,7 @@ SC-02の会話一覧（`/chat`、および`/chat/new`と`/chat/{session_id}`の�
 ```tsx
 type ButtonProps = Omit<
   React.ComponentPropsWithRef<"button">,
-  "children" | "className" | "disabled" | "style"
+  "children" | "className" | "style"
 > & {
   children: React.ReactNode;
   variant?: "primary" | "secondary" | "danger" | "ghost";
@@ -2349,6 +2350,7 @@ type ButtonProps = Omit<
   isLoading?: boolean;
   loadingLabel?: string;
   block?: boolean;
+  iconOnly?: boolean;
 };
 ```
 
@@ -2358,6 +2360,7 @@ type ButtonProps = Omit<
 - `isLoading`ではSpinnerだけに置き換えず、処理内容を示す`loadingLabel`を必ず併記する。Spinnerは装飾として`aria-hidden="true"`にし、支援技術には`loadingLabel`をButtonのAccessible Nameとして伝える
 - `block`はButtonを親の横幅に合わせる場合だけ使う。Mobileの主要Submitでは`block`を使い、Desktopでは内容幅を基本とする
 - `ref`はnativeの`button`へ渡せるようにし、Modalを閉じた後のFocus復帰などに使う
+- `iconOnly`ではButtonの操作領域を保ち、装飾Iconは`aria-hidden="true"`、ButtonのAccessible Nameは利用側の`aria-label`で指定する
 
 **Variant**
 
@@ -2387,7 +2390,7 @@ type ButtonProps = Omit<
 
 **Spinner**
 
-- Spinnerは`--spinner-size`（`1rem`）のSVGまたはCSS Ringとし、StrokeまたはBorderへ`currentColor`を使う
+- Spinnerは`shared/components/Spinner`のCSS Ringを共用し、`small`・`medium`・`large`を用途で切り替える。Button内は`small`、画面全体は`large`とし、Borderへ`currentColor`を使う
 - SpinnerとLabelの間隔は`--space-2`とする。Buttonの中央にSpinnerだけを表示せず、SpinnerとLabelの組を中央揃えにする
 - Spinnerは`transform: rotate()`だけをAnimation対象とし、1回転の時間に`--duration-spinner`、Timing functionに`--easing-linear`を使う。Loading中だけ繰り返す
 - 通常LabelとLoading表示を同じGrid areaへ重ね、非表示側を`visibility: hidden`かつAccessibility treeから除外する。Buttonは両方の幅を事前に確保し、Loading開始時の幅と周囲のLayoutを変えない
@@ -2417,7 +2420,7 @@ type ButtonProps = Omit<
 - EnterとSpaceでnative Buttonとして実行でき、`disabled`と`isLoading`では実行されない
 - `type`を省略したButtonが親FormをSubmitしない
 - Labelが2行になってもIconとSpinnerが重ならず、長い日本語を省略しない
-- Focus、Disabled、Loadingが色だけでなく、Focus ring、操作不能、Spinnerと文言で判別できる
+- Focus、Disabled、Loadingが色だけでなく、Focus ring、操作不能、Spinnerと文言で判別できる。IconだけのButtonには必ず`aria-label`を設定する
 - Loading開始前後でButtonのInline sizeと周囲のLayoutが変わらない
 - Reduced MotionでSpinnerが回転しなくても、静止RingとLoading labelから処理中と判断できる
 - Loadingの開始と完了は、利用側のStatus領域またはToastでも支援技術へ通知される

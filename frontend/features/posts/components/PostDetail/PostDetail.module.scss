@@ -30,12 +30,12 @@
 .urlRow { align-items: center; border-block-start: var(--border-width-thin) solid var(--color-border); display: flex; gap: var(--space-4); justify-content: space-between; padding-block: var(--space-4); }
 .urlRow > div { display: grid; gap: var(--space-2); min-width: 0; }
 .urlRow code { font-family: var(--font-family-mono); overflow-wrap: anywhere; }
-.urlRow button { background: transparent; border: var(--border-width-thin) solid var(--color-brand-primary); border-radius: var(--radius-pill); color: var(--color-brand-primary); cursor: pointer; flex: none; font-weight: var(--font-weight-semibold); padding: var(--space-2) var(--space-4); }
+.urlRow button { flex: none; }
 .tracking summary { color: var(--color-brand-primary); cursor: pointer; font-weight: var(--font-weight-semibold); padding-block: var(--space-4); }
 .utmList { display: grid; gap: var(--space-3); grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .utmList dd { font-family: var(--font-family-mono); margin: var(--space-1) 0 0; overflow-wrap: anywhere; }
 .liveMessage { color: var(--color-brand-primary); min-height: 1lh; }
-.page :is(a, button, summary):focus-visible { outline: var(--focus-ring-width) solid var(--color-focus-ring); outline-offset: var(--focus-ring-offset); }
+.page :is(a, summary):focus-visible { outline: var(--focus-ring-width) solid var(--color-focus-ring); outline-offset: var(--focus-ring-offset); }
 
 @media (max-width: bp.$tablet) { .overview { grid-template-columns: 1fr; } }
 @media (max-width: bp.$mobile) {

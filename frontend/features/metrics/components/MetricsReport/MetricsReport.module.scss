@@ -26,7 +26,7 @@
 }
 .periodForm label { color: var(--color-text-secondary); display: grid; font-size: var(--font-size-xs); gap: var(--space-1); }
 .periodSeparator { color: var(--color-text-secondary); margin-block-end: var(--space-3); }
-.periodForm button, .periodForm a, .disabledAction {
+.periodForm a, .disabledAction {
   align-items: center;
   background: var(--color-login-background);
   border: var(--border-width-thin) solid var(--color-border);
@@ -40,8 +40,6 @@
   padding-inline: var(--space-3);
   text-decoration: none;
 }
-.periodForm button { background: var(--color-brand-primary); border-color: var(--color-brand-primary); color: var(--color-text-on-brand); cursor: pointer; }
-.periodForm button:hover { background: var(--color-brand-strong); }
 .disabledAction { color: var(--color-text-secondary); opacity: 0.55; }
 
 .body { padding: var(--space-5); }
@@ -134,7 +132,7 @@
 .pagination a { color: var(--color-brand-strong); font-weight: var(--font-weight-semibold); }
 .mobileCards { display: none; }
 .visuallyHidden { block-size: 1px; clip-path: inset(50%); inline-size: 1px; overflow: hidden; position: absolute; white-space: nowrap; }
-.page :is(a, button):focus-visible { outline: var(--focus-ring-width) solid var(--color-focus-ring); outline-offset: var(--focus-ring-offset); }
+.page a:focus-visible { outline: var(--focus-ring-width) solid var(--color-focus-ring); outline-offset: var(--focus-ring-offset); }
 
 @media (min-width: bp.$tablet) {
   .page { margin: calc(-1 * var(--space-6)) calc(-1 * var(--space-5)); min-block-size: 100dvb; }

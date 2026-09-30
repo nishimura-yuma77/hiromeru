@@ -38,20 +38,7 @@
 }
 
 .listToggle {
-  align-items: center;
-  background: transparent;
-  border: var(--border-width-thin) solid var(--color-border);
-  border-radius: var(--radius-sm);
-  color: var(--color-text-primary);
-  cursor: pointer;
-  display: inline-flex;
-  inline-size: var(--control-min-height);
-  justify-content: center;
-  min-block-size: var(--control-min-height);
-
   svg { block-size: var(--space-5); inline-size: var(--space-5); }
-  &:hover { background: var(--color-background-secondary); border-color: var(--color-brand-primary); }
-  &:focus-visible { outline: var(--focus-ring-width) solid var(--color-focus-ring); outline-offset: var(--focus-ring-offset); }
 }
 
 .sidebarBody {
@@ -158,14 +145,6 @@
   font-size: var(--font-size-sm);
   padding: var(--space-3);
   text-align: center;
-
-  button {
-    background: transparent;
-    border: 0;
-    color: var(--color-brand-primary);
-    cursor: pointer;
-    text-decoration: underline;
-  }
 }
 
 .content {
@@ -268,17 +247,7 @@
   gap: var(--space-3);
   margin-block-start: var(--space-6);
 
-  button {
-    background: var(--color-surface);
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-md);
-    color: var(--color-text-primary);
-    cursor: pointer;
-    padding: var(--space-4) var(--space-5);
-    text-align: start;
-
-    &:hover { border-color: var(--color-brand-primary); }
-  }
+  button { justify-items: start; text-align: start; }
 }
 
 .turns {
@@ -370,6 +339,7 @@
 .pendingTurn { margin-block-start: var(--space-6); }
 
 .progress {
+  p > span:first-child { margin-inline-end: var(--space-2); }
   small { color: var(--color-text-secondary); margin-block-start: var(--space-1); }
 
   .activityProblem {
@@ -430,23 +400,7 @@
   small { color: var(--color-danger); }
 }
 
-.clarificationActions {
-  display: flex;
-  justify-content: end;
-
-  button {
-    background: var(--color-brand-primary);
-    border: 0;
-    border-radius: var(--radius-pill);
-    color: var(--color-text-on-brand);
-    cursor: pointer;
-    font-weight: var(--font-weight-semibold);
-    min-height: 2.75rem;
-    padding: 0.7rem 1.25rem;
-
-    &:disabled { cursor: not-allowed; opacity: 0.5; }
-  }
-}
+.clarificationActions { display: flex; justify-content: end; }
 
 .clarificationQuestions { display: grid; gap: var(--space-2); line-height: 1.6; margin: 0; }
 .clarificationAnswered { color: var(--color-brand-primary); font-size: var(--font-size-sm); font-weight: var(--font-weight-semibold); margin: 0; }
@@ -564,7 +518,7 @@
   margin: 0;
 }
 
-.comboboxStatus { min-height: 1lh; }
+.comboboxStatus { align-items: center; display: flex; gap: var(--space-2); min-height: 1lh; }
 .comboboxMessage { padding: var(--space-3); }
 
 .characterCount {
@@ -581,44 +535,9 @@
   font-size: var(--font-size-sm);
   gap: var(--space-3);
   justify-content: space-between;
-
-  button {
-    background: transparent;
-    border: 0;
-    color: var(--color-brand-primary);
-    cursor: pointer;
-    padding: 0;
-    text-decoration: underline;
-  }
 }
 
-.approveButton,
-.confirmApproval button,
-.revisionBox button {
-  background: var(--color-brand-primary);
-  border: 0;
-  border-radius: var(--radius-pill);
-  color: var(--color-text-on-brand);
-  cursor: pointer;
-  font-weight: var(--font-weight-semibold);
-  min-height: 2.75rem;
-  padding: 0.7rem 1.25rem;
-
-  &:disabled { cursor: not-allowed; opacity: 0.5; }
-}
-
-.approveButton { justify-self: end; }
-
-.revisionButton {
-  background: transparent;
-  border: 0;
-  color: var(--color-brand-primary);
-  cursor: pointer;
-  font-weight: var(--font-weight-semibold);
-  justify-self: end;
-  padding: 0;
-  text-decoration: underline;
-}
+.proposalCard > button { justify-self: end; }
 
 .revisionBox {
   background: var(--color-background-secondary);
@@ -631,8 +550,6 @@
   textarea { border: 1px solid var(--color-border-strong); border-radius: var(--radius-sm); padding: var(--space-3); resize: vertical; width: 100%; }
   > span { color: var(--color-text-secondary); font-size: var(--font-size-xs); justify-self: end; }
   > div { display: flex; gap: var(--space-2); justify-content: end; }
-
-  .secondaryButton { background: transparent; border: 1px solid var(--color-border-strong); color: var(--color-text-primary); }
 }
 
 .confirmApproval {
@@ -648,12 +565,6 @@
   h4 { font-size: var(--font-size-xl); margin: 0; }
   p { font-weight: var(--font-weight-semibold); margin: 0; }
   > div { display: flex; flex-wrap: wrap; gap: var(--space-2); justify-content: end; }
-
-  .secondaryButton {
-    background: transparent;
-    border: 1px solid var(--color-border-strong);
-    color: var(--color-text-primary);
-  }
 }
 
 .confirmBackdrop {
@@ -701,19 +612,6 @@
   color: var(--color-text-primary);
 }
 
-.spinner {
-  animation: spin 800ms linear infinite;
-  border: 2px solid var(--color-border-strong);
-  border-block-start-color: var(--color-brand-primary);
-  border-radius: 50%;
-  display: inline-block;
-  height: 0.85rem;
-  margin-inline-end: var(--space-2);
-  vertical-align: -0.05rem;
-  width: 0.85rem;
-}
-
-@keyframes spin { to { transform: rotate(360deg); } }
 
 .notices,
 .turnError,
@@ -734,26 +632,9 @@
   color: var(--color-danger);
 }
 
-.turnError button {
-  background: transparent;
-  border: 0;
-  color: inherit;
-  cursor: pointer;
-  font-weight: var(--font-weight-semibold);
-  margin-block-start: var(--space-2);
-  padding: 0;
-  text-decoration: underline;
-}
+.turnError button { margin-block-start: var(--space-2); }
 
-.earlierButton {
-  background: transparent;
-  border: 0;
-  color: var(--color-brand-primary);
-  cursor: pointer;
-  display: block;
-  margin: 0 auto var(--space-5);
-  text-decoration: underline;
-}
+.earlierButton { display: flex; justify-content: center; margin-block-end: var(--space-5); }
 
 .composer {
   background: var(--color-surface);
@@ -792,18 +673,7 @@
 
   > div { display: grid; }
 
-  button {
-    background: var(--color-brand-primary);
-    border: 0;
-    border-radius: var(--radius-pill);
-    color: var(--color-text-on-brand);
-    cursor: pointer;
-    font-weight: var(--font-weight-semibold);
-    min-width: 5.5rem;
-    padding: 0.7rem 1.25rem;
-
-    &:disabled { cursor: not-allowed; opacity: 0.45; }
-  }
+  button { min-inline-size: 5.5rem; }
 }
 
 .validationError,
@@ -850,14 +720,12 @@
   .proposalCard { border-radius: var(--radius-sm); }
   .clarificationCard { border-radius: var(--radius-sm); }
   .clarificationActions button { width: 100%; }
-  .approveButton { justify-self: stretch; width: 100%; }
-  .revisionButton { justify-self: stretch; text-align: center; }
+  .proposalCard > button { justify-self: stretch; }
   .revisionBox > div { display: grid; }
   .confirmApproval > div { display: grid; }
   .confirmApproval button { width: 100%; }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .spinner { animation: none; }
   .workspace, .sidebarBody { transition: none; }
 }

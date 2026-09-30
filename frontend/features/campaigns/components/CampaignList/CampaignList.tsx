@@ -2,6 +2,7 @@
 
 import type { FormEvent } from "react";
 import Link from "next/link";
+import { Button } from "@/shared/components/Button/Button";
 import { Input } from "@/shared/components/Input/Input";
 
 import type {
@@ -248,7 +249,7 @@ export function CampaignList({ response, params }: CampaignListProps) {
               <option value="archived">アーカイブ済み</option>
             </select>
           </label>
-          <button className={styles.searchButton} type="submit">検索</button>
+          <Button size="small" type="submit">検索</Button>
         </form>
         <details className={styles.advancedFilters} open={hasAdvancedFilters ? true : undefined}>
           <summary>詳細条件{hasAdvancedFilters ? "（適用中）" : ""}</summary>
@@ -263,7 +264,7 @@ export function CampaignList({ response, params }: CampaignListProps) {
                 <Input form="campaign-filters" type="date" name="created_to" defaultValue={params.createdTo} />
               </label>
               <div className={styles.filterActions}>
-                <button form="campaign-filters" type="submit">条件を適用</button>
+                <Button form="campaign-filters" size="small" type="submit">条件を適用</Button>
                 <Link href="/campaigns">条件をクリア</Link>
               </div>
             </div>
@@ -272,7 +273,7 @@ export function CampaignList({ response, params }: CampaignListProps) {
                 <span>施策IDで直接開く</span>
                 <Input type="text" name="id" inputMode="numeric" pattern="[1-9][0-9]*" required />
               </label>
-              <button type="submit">開く</button>
+              <Button size="small" type="submit">開く</Button>
             </form>
           </div>
         </details>

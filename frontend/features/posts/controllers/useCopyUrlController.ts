@@ -8,6 +8,8 @@ export function useCopyUrlController() {
   const [state, dispatch] = useReducer(copyReducer, initialCopyState);
 
   async function copy(field: string, url: string) {
+    if (state.pendingField) return;
+    dispatch({ type: "copyStarted", field });
     try {
       await navigator.clipboard.writeText(url);
       dispatch({ type: "copySucceeded", field });
