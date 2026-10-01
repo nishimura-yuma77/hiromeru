@@ -9,14 +9,16 @@ function relationPath(memoryId: number, relation: "campaigns" | "posts", cursor:
   return `/api/v1/memories/${memoryId}/${relation}?${query}` as `/api/${string}`;
 }
 
-export function listMemoryCampaigns(memoryId: number, cursor: string) {
+export function listMemoryCampaigns(memoryId: number, cursor: string, signal?: AbortSignal) {
   return browserApiRequest<MemoryCampaignListResponse>(relationPath(memoryId, "campaigns", cursor), {
     method: "GET",
+    signal,
   });
 }
 
-export function listMemoryPosts(memoryId: number, cursor: string) {
+export function listMemoryPosts(memoryId: number, cursor: string, signal?: AbortSignal) {
   return browserApiRequest<MemoryPostListResponse>(relationPath(memoryId, "posts", cursor), {
     method: "GET",
+    signal,
   });
 }

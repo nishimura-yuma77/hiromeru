@@ -1,0 +1,24 @@
+@use "@/shared/styles/breakpoints" as bp;
+
+.loading {
+  align-items: center;
+  background: var(--color-background-primary);
+  color: var(--color-brand-strong);
+  display: flex;
+  flex-direction: column;
+  font-weight: var(--font-weight-semibold);
+  gap: var(--space-4);
+  justify-content: center;
+  min-block-size: 100dvb;
+  min-inline-size: 0;
+}
+
+.withinShell {
+  min-block-size: calc(100dvb - var(--app-header-height) - 2 * var(--space-5));
+}
+
+@media (min-width: bp.$tablet) {
+  .withinShell {
+    min-block-size: calc(100dvb - 2 * var(--space-6));
+  }
+}

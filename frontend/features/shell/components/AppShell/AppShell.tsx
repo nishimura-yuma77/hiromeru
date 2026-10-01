@@ -2,6 +2,7 @@ import Link from "next/link";
 import type { ReactNode, RefObject } from "react";
 
 import { Brand } from "@/shared/components/Brand/Brand";
+import { Button } from "@/shared/components/Button/Button";
 import type { AppNavigationId, AppNavigationItem } from "@/features/shell/types/navigation";
 
 import styles from "./AppShell.module.scss";
@@ -66,9 +67,7 @@ function Account({ email, isPending, onLogout }: { email: string; isPending: boo
   return (
     <div className={styles.account}>
       <p title={email}>{email}</p>
-      <button type="button" disabled={isPending} onClick={onLogout}>
-        {isPending ? "ログアウト中…" : "ログアウト"}
-      </button>
+      <Button variant="ghost" size="small" block isLoading={isPending} loadingLabel="ログアウト中" onClick={onLogout}>ログアウト</Button>
     </div>
   );
 }
@@ -93,28 +92,28 @@ export function AppShell({
       <a className="skipLink" href="#main-content">本文へ移動する</a>
 
       <aside className={styles.sidebar}>
-        <Brand inverse />
+        <Brand />
         <Navigation items={navigationItems} activeId={activeNavigationId} />
         <Account email={email} isPending={logoutLoading} onLogout={onLogout} />
       </aside>
 
       <div className={styles.app} inert={drawerOpen ? true : undefined}>
         <header className={styles.mobileHeader}>
-          <button
+          <Button
             ref={menuButtonRef}
             type="button"
             aria-controls="app-navigation-drawer"
             aria-expanded={drawerOpen}
             aria-label="メニューを開く"
             onClick={onDrawerOpen}
+            variant="secondary"
+            iconOnly
           >
-            <span aria-hidden="true" />
-            <span aria-hidden="true" />
-            <span aria-hidden="true" />
-          </button>
+            <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M4 6h16M4 12h16M4 18h16" /></svg>
+          </Button>
           <Brand />
         </header>
-        <div className={styles.main}>{children}</div>
+        <div className={`${styles.main}${activeNavigationId === "chat" ? ` ${styles.chatMain}` : ""}`}>{children}</div>
       </div>
 
       {drawerOpen ? (
@@ -130,7 +129,7 @@ export function AppShell({
           >
             <div className={styles.drawerHeader}>
               <strong>メニュー</strong>
-              <button ref={drawerCloseButtonRef} type="button" aria-label="メニューを閉じる" onClick={onDrawerClose}>×</button>
+              <Button ref={drawerCloseButtonRef} variant="ghost" iconOnly aria-label="メニューを閉じる" onClick={onDrawerClose}>×</Button>
             </div>
             <Navigation items={navigationItems} activeId={activeNavigationId} onNavigate={onDrawerClose} />
             <Account email={email} isPending={logoutLoading} onLogout={onLogout} />

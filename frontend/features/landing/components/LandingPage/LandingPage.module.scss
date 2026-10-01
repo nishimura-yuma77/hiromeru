@@ -447,7 +447,10 @@
   background: var(--color-brand-strong);
   color: var(--color-text-on-brand);
   max-inline-size: none;
-  padding-inline: max(var(--space-page), calc((100vw - var(--layout-max-width)) / 2 + var(--space-page)));
+  padding-inline: max(
+    var(--space-page),
+    calc((100vw - var(--layout-max-width)) / 2 + var(--space-page))
+  );
 }
 
 .processHeading > p {

@@ -1,9 +1,8 @@
 "use client";
 
 import { useEffect, useReducer, useRef } from "react";
-import { useRouter } from "next/navigation";
 
-import { editCampaign } from "@/features/campaigns/api/editCampaign";
+import { useEditCampaignMutation } from "@/features/campaigns/queries/useEditCampaignMutation";
 import { getCampaign } from "@/features/campaigns/api/getCampaign";
 import {
   campaignFormReducer,
@@ -11,7 +10,7 @@ import {
   isCampaignFormDirty,
   type CampaignField,
 } from "@/features/campaigns/state/campaignFormReducer";
-import type { Campaign } from "@/features/campaigns/types/campaign";
+import type { Campaign, CampaignDetailResponse } from "@/features/campaigns/types/campaign";
 
 const campaignFields = new Set<CampaignField>([
   "title",
@@ -69,9 +68,11 @@ function formFailure(error: unknown): FormFailure {
   };
 }
 
-export function useCampaignFormController(campaign: Campaign) {
-  const router = useRouter();
+export function useCampaignFormController(campaign: Campaign, callbacks: {
+  onRefreshed: (detail: CampaignDetailResponse) => void;
+}) {
   const suppressUnloadWarning = useRef(false);
+  const editMutation = useEditCampaignMutation();
   const [state, dispatch] = useReducer(
     campaignFormReducer,
     campaign,
@@ -105,9 +106,8 @@ export function useCampaignFormController(campaign: Campaign) {
     if (!canSave || !window.confirm("既存の施策内容を置き換えて保存しますか？")) return;
     dispatch({ type: "saveStarted" });
     try {
-      const updated = await editCampaign(campaign.id, state.form);
+      const updated = await editMutation.mutateAsync({ campaignId: campaign.id, request: state.form });
       dispatch({ type: "saveSucceeded", updatedAt: updated.updated_at });
-      router.refresh();
     } catch (error: unknown) {
       const failure = formFailure(error);
       dispatch({ type: "saveFailed", ...failure });
@@ -115,7 +115,7 @@ export function useCampaignFormController(campaign: Campaign) {
         try {
           const latest = await getCampaign(campaign.id);
           dispatch({ type: "conflictLoaded", campaign: latest.campaign });
-          if (latest.campaign.archived_at) router.refresh();
+          if (latest.campaign.archived_at) callbacks.onRefreshed(latest);
         } catch {
           // Keep the draft and the conflict notice when the latest value cannot be loaded.
         }

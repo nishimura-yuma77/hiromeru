@@ -4,9 +4,9 @@ import Link from "next/link";
 
 import {
   RouteState,
-  routeStateActionStyle,
   routeStateSecondaryActionStyle,
 } from "@/app/_components/RouteState";
+import { Button } from "@/shared/components/Button/Button";
 
 export default function Error({ reset }: { error: Error & { digest?: string }; reset: () => void }) {
   return (
@@ -17,9 +17,7 @@ export default function Error({ reset }: { error: Error & { digest?: string }; r
       live="assertive"
       actions={
         <>
-          <button type="button" onClick={reset} style={routeStateActionStyle}>
-            もう一度試す
-          </button>
+          <Button onClick={reset}>もう一度試す</Button>
           <Link href="/" style={routeStateSecondaryActionStyle}>
             ホームへ戻る
           </Link>

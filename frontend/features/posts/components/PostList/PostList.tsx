@@ -1,15 +1,30 @@
+"use client";
+
 import Link from "next/link";
+import { useQueryClient } from "@tanstack/react-query";
 
+import type { CampaignOption } from "@/features/campaigns/queries/campaignKeys";
+import { listPostsBrowser } from "@/features/posts/api/listPostsBrowser";
+import { campaignKeys } from "@/features/campaigns/queries/campaignKeys";
+import { useCampaignLabelQuery } from "@/features/campaigns/queries/campaignQueries";
 import type { PostListResponse, PostMetrics } from "@/features/posts/types/post";
-import { postPageHref, type PostListParams } from "@/features/posts/utils/postParams";
+import { parsePostListParams, postPageHref, type PostListParams } from "@/features/posts/utils/postParams";
+import { postKeys } from "@/features/posts/queries/postKeys";
+import { usePostListQuery } from "@/features/posts/queries/postQueries";
+import { Button } from "@/shared/components/Button/Button";
+import { ListStatus } from "@/shared/components/ListStatus/ListStatus";
+import { ListPageAction, ListPageLayout } from "@/shared/components/ListPageLayout/ListPageLayout";
 import { MetricBar } from "@/shared/components/MetricBar/MetricBar";
+import { useInvalidCursorRecovery, useQueryNavigation } from "@/shared/lib/useQueryNavigation";
 
+import { PostFilters } from "./PostFilters";
 import styles from "./PostList.module.scss";
 
 const numberFormat = new Intl.NumberFormat("ja-JP");
 const dateFormat = new Intl.DateTimeFormat("ja-JP", {
-  dateStyle: "medium",
-  timeStyle: "short",
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
   timeZone: "Asia/Tokyo",
 });
 
@@ -20,20 +35,11 @@ function formatDate(value: string | null): string {
 }
 
 function PvMetric({ metrics, maxPv }: { metrics: PostMetrics; maxPv: number }) {
-  if (metrics.status === "completed") {
-    return (
-      <div className={styles.pvMetric}>
-        <span>{numberFormat.format(metrics.x_pv_count ?? 0)}</span>
-        {maxPv > 0 ? <MetricBar value={metrics.x_pv_count ?? 0} max={maxPv} /> : null}
-        <span className={styles.completedBadge}>計測済み</span>
-      </div>
-    );
-  }
-  return (
-    <p className={styles.metricStatus}>
-      {metrics.status === "pending" ? <>計測待ち<br /><span>{formatDate(metrics.scheduled_at)}予定</span></> : "計測に失敗しました"}
-    </p>
-  );
+  if (metrics.status !== "completed") return <span aria-label="未計測">—</span>;
+  return <div className={styles.pvMetric}>
+    <span>{numberFormat.format(metrics.x_pv_count ?? 0)}</span>
+    {maxPv > 0 ? <MetricBar value={metrics.x_pv_count ?? 0} max={maxPv} /> : null}
+  </div>;
 }
 
 function LandingMetric({ metrics }: { metrics: PostMetrics }) {
@@ -43,11 +49,17 @@ function LandingMetric({ metrics }: { metrics: PostMetrics }) {
 }
 
 function PostBody({ post, returnTo }: { post: PostListResponse["posts"][number]; returnTo: string }) {
-  const excerpt = post.body.slice(0, 40);
+  const excerpt = post.body.slice(0, 60);
   return (
     <div className={styles.postBody}>
-      <p className={styles.body}>{post.body}</p>
-      <Link href={`/posts/${post.post_id}?return_to=${returnTo}`} aria-label={`${formatDate(post.published_at)}の投稿「${excerpt}」の詳細を見る`}>詳細を見る</Link>
+      <Link className={styles.body} href={`/posts/${post.post_id}?return_to=${returnTo}`} aria-label={`${formatDate(post.published_at)}の投稿「${excerpt}」の詳細を見る`}>{post.body}</Link>
+      <div className={styles.postMeta}>
+        <span>POST-{String(post.post_id).padStart(3, "0")}</span>
+        <span className={post.metrics.status === "completed" ? styles.completedBadge : post.metrics.status === "pending" ? styles.pendingBadge : styles.failedBadge}>
+          {post.metrics.status === "completed" ? "計測済み" : post.metrics.status === "pending" ? "計測待ち" : "計測失敗"}
+        </span>
+        {post.metrics.status === "pending" && post.metrics.scheduled_at ? <span>計測予定 {formatDate(post.metrics.scheduled_at)}</span> : null}
+      </div>
     </div>
   );
 }
@@ -57,12 +69,44 @@ function PublishInfo({ post }: { post: PostListResponse["posts"][number] }) {
     <div className={styles.publishInfo}>
       <Link href={`/campaigns/${post.campaign_id}`}>{post.campaign_title}</Link>
       {post.campaign_archived_at ? <span className={styles.archivedBadge}>アーカイブ済み</span> : null}
-      <time dateTime={post.published_at}>{formatDate(post.published_at)} 公開</time>
+      <time dateTime={post.published_at}>{formatDate(post.published_at)}</time>
     </div>
   );
 }
 
-export function PostList({ response, params }: { response: PostListResponse; params: PostListParams }) {
+function parsePostSearch(search: string) {
+  return parsePostListParams(Object.fromEntries(new URLSearchParams(search)));
+}
+
+function postHref(params: PostListParams) {
+  return postPageHref(params, params.cursor || undefined);
+}
+function withoutPostCursor(params: PostListParams) { return params.cursor ? { ...params, cursor: "" } : null; }
+
+export function PostList({ response: initialResponse, selectedCampaign: initialCampaign }: { response: PostListResponse; params: PostListParams; selectedCampaign: CampaignOption | null }) {
+  const client = useQueryClient();
+  const navigation = useQueryNavigation({
+    parse: parsePostSearch,
+    key: postKeys.list,
+    fetch: listPostsBrowser,
+    href: postHref,
+    withoutCursor: withoutPostCursor,
+    fallbackError: "投稿を読み込めませんでした。",
+  });
+  const { params } = navigation;
+  const query = usePostListQuery(params);
+  useInvalidCursorRecovery(query.error, params, withoutPostCursor, navigation.apply);
+  const label = useCampaignLabelQuery(params.campaignId, initialCampaign);
+  const selectedCampaign: CampaignOption | null = label.data
+    ? { id: label.data.id, title: label.data.title, archived_at: label.data.archived_at ?? null } : null;
+  const response = query.data ?? initialResponse;
+  const loading = navigation.pending || query.isFetching;
+  const error = navigation.pending ? "" : navigation.error || (query.error instanceof Error ? query.error.message : "");
+  function apply(nextParams: PostListParams, campaign?: CampaignOption | null) {
+    if (campaign) client.setQueryData(campaignKeys.label(campaign.id), campaign);
+    void navigation.apply(nextParams);
+  }
+
   const currentListUrl = postPageHref(params, params.cursor || undefined);
   const hasFilters = Boolean(params.query || params.campaignId || params.publishedFrom || params.publishedTo);
   const maxCompletedPv = response.posts.reduce((max, post) => (
@@ -70,72 +114,27 @@ export function PostList({ response, params }: { response: PostListResponse; par
   ), 0);
 
   return (
-    <main id="main-content" className={styles.page}>
-      <header className={styles.header}>
-        <div>
-          <p className={styles.eyebrow}>Published work</p>
-          <h1>投稿</h1>
-          <p>Xへ公開済みの投稿と初週の成果を確認できます。</p>
-        </div>
-        <Link className={styles.primaryLink} href="/chat/new">投稿案を相談する</Link>
-      </header>
+    <ListPageLayout title="投稿" actions={<ListPageAction href="/chat/new">＋ 投稿案を相談する</ListPageAction>} filters={
+      <PostFilters key={`${params.query}:${params.campaignId ?? ""}:${params.sort}:${params.publishedFrom}:${params.publishedTo}:${selectedCampaign?.title ?? ""}`} params={params} selectedCampaign={selectedCampaign} onApply={apply} />
+    }>
 
-      <section className={styles.filters} aria-labelledby="post-filter-title">
-        <h2 id="post-filter-title">投稿を探す</h2>
-        <form action="/posts" method="get" className={styles.filterForm}>
-          <label className={styles.searchField}>
-            <span>投稿を検索</span>
-            <input type="search" name="query" defaultValue={params.query} maxLength={1000} placeholder="投稿本文を自然な言葉で検索" />
-          </label>
-          <label>
-            <span>施策ID</span>
-            <input type="text" inputMode="numeric" pattern="[1-9][0-9]*" name="campaign_id" defaultValue={params.campaignId ?? ""} />
-          </label>
-          <label>
-            <span>公開日の開始</span>
-            <input type="date" name="published_from" defaultValue={params.publishedFrom} />
-          </label>
-          <label>
-            <span>公開日の終了</span>
-            <input type="date" name="published_to" defaultValue={params.publishedTo} />
-          </label>
-          <label>
-            <span>並び順</span>
-            <select name="sort" defaultValue={params.sort} disabled={Boolean(params.query)}>
-              <option value="published_at_desc">公開日時の新しい順</option>
-              <option value="published_at_asc">公開日時の古い順</option>
-              <option value="x_pv_count_desc">初週PVの多い順</option>
-              <option value="x_pv_count_asc">初週PVの少ない順</option>
-            </select>
-          </label>
-          <div className={styles.filterActions}>
-            <button type="submit">条件を適用</button>
-            <Link href="/posts">条件をクリア</Link>
-          </div>
-        </form>
-        {params.query ? <p className={styles.hint}>検索中は関連度順で表示し、並び替えは利用できません。</p> : null}
-      </section>
-
-      <section aria-labelledby="post-results-title">
-        <div className={styles.resultHeading}>
-          <div>
-            <p className={styles.eyebrow}>Results</p>
-            <h2 id="post-results-title">{params.query ? `「${params.query}」に近い投稿` : "公開済み投稿"}</h2>
-          </div>
-          <p>{params.query ? "投稿本文をもとに関連度順で表示しています。" : "20件ずつ表示"}</p>
+      <section className={styles.results} aria-labelledby="post-results-title">
+        <ListStatus loading={loading} error={error} onRetry={() => navigation.error ? navigation.retry() : void query.refetch()} loadingLabel="投稿を読み込んでいます" />
+        <div className={params.query ? styles.resultHeading : styles.visuallyHidden}>
+          <h2 id="post-results-title">{params.query ? `「${params.query}」に近い投稿` : "公開済み投稿"}</h2>
+          {params.query ? <p>投稿本文をもとに関連度順で表示しています。</p> : null}
         </div>
         {response.posts.length === 0 ? (
           <div className={styles.empty}>
             <h3>{hasFilters ? "条件に合う投稿がありません" : "公開済みの投稿がありません"}</h3>
             <p>{hasFilters ? "検索語、施策ID、公開日の範囲を変更してください。" : "投稿案を承認すると、ここに表示されます。"}</p>
-            <Link href={hasFilters ? "/posts" : "/chat/new"}>{hasFilters ? "条件をクリア" : "投稿案を相談する"}</Link>
+            {hasFilters ? <Button variant="ghost" size="small" onClick={() => void navigation.apply(parsePostListParams({}))}>条件をクリア</Button> : <Link href="/chat/new">投稿案を相談する</Link>}
           </div>
         ) : (
           <>
-            {maxCompletedPv === 0 ? <p className={styles.comparisonUnavailable}>比較できる計測結果がありません</p> : null}
             <div className={styles.desktopTable}>
               <table>
-                <caption>公開済み投稿一覧</caption>
+                <caption className={styles.visuallyHidden}>公開済み投稿一覧</caption>
                 <thead><tr><th scope="col">投稿</th><th scope="col">公開情報</th><th scope="col">初週PV</th><th scope="col">流入</th></tr></thead>
                 <tbody>
                   {response.posts.map((post) => {
@@ -171,11 +170,11 @@ export function PostList({ response, params }: { response: PostListResponse; par
         )}
         {!params.query && (params.cursor || response.next_cursor) ? (
           <nav className={styles.pagination} aria-label="投稿一覧のページ移動">
-            {params.cursor ? <Link href={postPageHref(params)}>先頭へ</Link> : null}
-            {response.next_cursor ? <Link href={postPageHref(params, response.next_cursor)}>次の20件</Link> : null}
+            {params.cursor ? <Button variant="ghost" size="small" disabled={loading} onClick={() => apply({ ...params, cursor: "" })}>先頭へ</Button> : null}
+            {response.next_cursor ? <Button variant="ghost" size="small" disabled={loading} onClick={() => apply({ ...params, cursor: response.next_cursor ?? "" })}>次の20件</Button> : null}
           </nav>
         ) : null}
       </section>
-    </main>
+    </ListPageLayout>
   );
 }

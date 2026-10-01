@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, type FormEvent } from "react";
+import { Button } from "@/shared/components/Button/Button";
 
 import type { ClarificationAnswer, TurnItem } from "../types";
 import styles from "../styles/Chat.module.scss";
@@ -101,7 +102,7 @@ export function ClarificationCard({ item, questionTurnId, previousAnswers, sendi
           })}
           {generalError ? <p className={styles.clarificationError} role="alert">{generalError}</p> : null}
           <div className={styles.clarificationActions}>
-            <button disabled={sending} type="submit">{sending ? "送信中…" : "回答をまとめて送信"}</button>
+            <Button isLoading={sending} loadingLabel="送信中" type="submit">回答をまとめて送信</Button>
           </div>
         </form>
       )}

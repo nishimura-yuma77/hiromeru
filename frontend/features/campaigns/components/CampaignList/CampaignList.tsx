@@ -2,15 +2,26 @@
 
 import type { FormEvent } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { Button } from "@/shared/components/Button/Button";
+import { Input } from "@/shared/components/Input/Input";
+import { Disclosure } from "@/shared/components/Disclosure/Disclosure";
+import { ListStatus } from "@/shared/components/ListStatus/ListStatus";
+import { ListPageAction, ListPageLayout } from "@/shared/components/ListPageLayout/ListPageLayout";
+import { useInvalidCursorRecovery, useQueryNavigation } from "@/shared/lib/useQueryNavigation";
 
 import type {
   CampaignListItem,
   CampaignListResponse,
   MetricsSummary,
 } from "@/features/campaigns/types/campaign";
+import { listCampaignsBrowser } from "@/features/campaigns/api/listCampaignsBrowser";
+import { campaignKeys } from "@/features/campaigns/queries/campaignKeys";
+import { useCampaignListQuery } from "@/features/campaigns/queries/campaignQueries";
 import {
   campaignPageHref,
   parsePositiveId,
+  parseCampaignListParams,
   type CampaignListParams,
 } from "@/features/campaigns/utils/campaignParams";
 
@@ -22,6 +33,12 @@ const rateFormat = new Intl.NumberFormat("ja-JP", {
   maximumFractionDigits: 1,
 });
 const dateFormat = new Intl.DateTimeFormat("ja-JP", {
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+  timeZone: "Asia/Tokyo",
+});
+const dateTimeFormat = new Intl.DateTimeFormat("ja-JP", {
   dateStyle: "medium",
   timeStyle: "short",
   timeZone: "Asia/Tokyo",
@@ -29,7 +46,14 @@ const dateFormat = new Intl.DateTimeFormat("ja-JP", {
 
 function formatDate(value: string): string {
   const date = new Date(value);
-  return Number.isNaN(date.valueOf()) ? "日時不明" : dateFormat.format(date);
+  if (Number.isNaN(date.valueOf())) return "日時不明";
+  const parts = dateFormat.formatToParts(date);
+  return ["year", "month", "day"].map((part) => parts.find((item) => item.type === part)?.value).join("-");
+}
+
+function formatDateTime(value: string): string {
+  const date = new Date(value);
+  return Number.isNaN(date.valueOf()) ? "日時不明" : dateTimeFormat.format(date);
 }
 
 function excludedCount(summary: MetricsSummary): number {
@@ -96,6 +120,10 @@ function MetricValues({ summary }: { summary: MetricsSummary }) {
   );
 }
 
+function CampaignStatus({ archived }: { archived: boolean }) {
+  return <span className={archived ? styles.archivedBadge : styles.activeBadge}>{archived ? "アーカイブ済み" : "有効"}</span>;
+}
+
 function CampaignCards({ campaigns }: { campaigns: CampaignListItem[] }) {
   return (
     <div className={styles.mobileCards}>
@@ -104,11 +132,12 @@ function CampaignCards({ campaigns }: { campaigns: CampaignListItem[] }) {
           <div className={styles.cardMain}>
             <div className={styles.recordLine}>
               <p className={styles.recordId}>施策ID {campaign.id}</p>
-              {campaign.archived_at ? <span className={styles.archivedBadge}>アーカイブ済み</span> : null}
+              <CampaignStatus archived={Boolean(campaign.archived_at)} />
             </div>
             <h3>{campaign.title}</h3>
             <p className={styles.objective}>{campaign.objective}</p>
           </div>
+          <p className={styles.postCount}>公開済み {numberFormat.format(campaign.metrics_summary.post_count)}件</p>
           <MetricValues summary={campaign.metrics_summary} />
           <p className={styles.dates}>
             <time dateTime={campaign.created_at}>作成 {formatDate(campaign.created_at)}</time>
@@ -125,15 +154,12 @@ function CampaignTable({ campaigns }: { campaigns: CampaignListItem[] }) {
   return (
     <div className={styles.tableWrap}>
       <table className={styles.table}>
+        <caption className={styles.srOnly}>施策一覧</caption>
         <thead>
           <tr>
             <th scope="col">施策</th>
-            <th scope="col">公開済み</th>
-            <th scope="col">初週PV</th>
-            <th scope="col">流入ユーザー</th>
-            <th scope="col">流入率</th>
-            <th scope="col">計測状況</th>
-            <th scope="col">更新</th>
+            <th scope="col">成果</th>
+            <th scope="col">日時</th>
           </tr>
         </thead>
         <tbody>
@@ -143,20 +169,23 @@ function CampaignTable({ campaigns }: { campaigns: CampaignListItem[] }) {
             return (
               <tr key={campaign.id}>
                 <th scope="row">
-                  <span className={styles.tableId}>ID {campaign.id}</span>
-                  {campaign.archived_at ? <span className={styles.archivedBadge}>アーカイブ済み</span> : null}
-                  <Link href={`/campaigns/${campaign.id}`}>{campaign.title}</Link>
-                  <span className={styles.tableObjective}>{campaign.objective}</span>
+                  <div className={styles.titleLine}>
+                    <Link href={`/campaigns/${campaign.id}`}>{campaign.title}</Link>
+                    <CampaignStatus archived={Boolean(campaign.archived_at)} />
+                  </div>
+                  <p className={styles.tableDescription}><span className={styles.tableId}>ID {campaign.id}</span>{campaign.objective}</p>
                 </th>
-                <td>{numberFormat.format(summary.post_count)}件</td>
-                <td>{metricValue(summary, summary.x_pv_count)}</td>
-                <td>{metricValue(summary, summary.landing_user_count)}</td>
-                <td>{rateValue(summary)}</td>
-                <td>
+                <td className={styles.resultCell}>
+                  <div><strong>{metricValue(summary, summary.x_pv_count)}</strong> PV</div>
+                  <div><strong>{metricValue(summary, summary.landing_user_count)}</strong> 流入 <span className={styles.rate}>{rateValue(summary)}</span></div>
+                  <span className={styles.postCount}>公開済み {numberFormat.format(summary.post_count)}件</span>
                   {explanation ? <span className={styles.metricExplanation}>{explanation}</span> : null}
                   <StatusBadges summary={summary} />
                 </td>
-                <td><time dateTime={campaign.updated_at}>{formatDate(campaign.updated_at)}</time></td>
+                <td className={styles.dateCell}>
+                  <time dateTime={campaign.created_at} aria-label={`作成 ${formatDateTime(campaign.created_at)}`}>{formatDate(campaign.created_at)}</time>
+                  <time dateTime={campaign.updated_at} aria-label={`更新 ${formatDateTime(campaign.updated_at)}`}>更新 {formatDate(campaign.updated_at)}</time>
+                </td>
               </tr>
             );
           })}
@@ -171,104 +200,125 @@ type CampaignListProps = {
   params: CampaignListParams;
 };
 
-export function CampaignList({ response, params }: CampaignListProps) {
-  const hasAdvancedFilters = Boolean(
-    params.archived !== "all" || params.createdFrom || params.createdTo,
-  );
+function parseCampaignSearch(search: string) {
+  return parseCampaignListParams(Object.fromEntries(new URLSearchParams(search)));
+}
+
+function campaignHref(params: CampaignListParams) {
+  return campaignPageHref(params, params.cursor || undefined);
+}
+function withoutCampaignCursor(params: CampaignListParams) { return params.cursor ? { ...params, cursor: "" } : null; }
+
+export function CampaignList({ response: initialResponse }: CampaignListProps) {
+  const router = useRouter();
+  const navigation = useQueryNavigation({
+    parse: parseCampaignSearch,
+    key: campaignKeys.list,
+    fetch: listCampaignsBrowser,
+    href: campaignHref,
+    withoutCursor: withoutCampaignCursor,
+    fallbackError: "施策を読み込めませんでした。",
+  });
+  const { params } = navigation;
+  const query = useCampaignListQuery(params);
+  useInvalidCursorRecovery(query.error, params, withoutCampaignCursor, navigation.apply);
+  const response = query.data ?? initialResponse;
+  const loading = navigation.pending || query.isFetching;
+  const error = navigation.pending ? "" : navigation.error || (query.error instanceof Error ? query.error.message : "");
+  const load = (nextParams: CampaignListParams) => void navigation.apply(nextParams);
+  const hasAdvancedFilters = Boolean(params.createdFrom || params.createdTo);
   const hasFilters = Boolean(
-    params.query || hasAdvancedFilters,
+    params.query || params.archived !== "all" || hasAdvancedFilters,
   );
 
   function validateDateRange(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
     const form = event.currentTarget;
     const from = form.elements.namedItem("created_from") as HTMLInputElement;
     const to = form.elements.namedItem("created_to") as HTMLInputElement;
     from.setCustomValidity("");
     to.setCustomValidity("");
     if (from.value && to.value && from.value > to.value) {
-      event.preventDefault();
       to.setCustomValidity("終了日は開始日以降の日付を指定してください。");
       to.reportValidity();
+      return;
     }
+    const fields = Object.fromEntries(new FormData(form).entries()) as Record<string, string>;
+    void load(parseCampaignListParams(fields));
   }
 
   function validateDirectId(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
     const input = event.currentTarget.elements.namedItem("id") as HTMLInputElement;
     input.setCustomValidity("");
     if (parsePositiveId(input.value.trim()) === null) {
-      event.preventDefault();
       input.setCustomValidity("施策IDは1以上の整数で入力してください。");
       input.reportValidity();
+      return;
     }
+    router.push(`/campaigns/${input.value.trim()}`);
   }
 
   return (
-    <main id="main-content" className={styles.page}>
-      <header className={styles.header}>
-        <div>
-          <p className={styles.eyebrow}>Campaign archive</p>
-          <h1>施策</h1>
-          <p>採用施策と、その後の投稿・成果を一緒に振り返れます。</p>
-        </div>
-        <Link className={styles.primaryLink} href="/chat/new">新しい施策を作る</Link>
-      </header>
-
-      <section className={styles.filters} aria-labelledby="campaign-search-title">
-        <h2 id="campaign-search-title">施策を探す</h2>
-        <form action="/campaigns" method="get" className={styles.filterForm} onSubmit={validateDateRange}>
+    <ListPageLayout title="施策" actions={<ListPageAction href="/chat/new">＋ 新しい施策を作る</ListPageAction>} filters={
+      <section aria-labelledby="campaign-search-title">
+        <h2 className={styles.srOnly} id="campaign-search-title">施策を探す</h2>
+        <form key={`${params.query}:${params.archived}`} id="campaign-filters" className={styles.filterForm} onSubmit={validateDateRange}>
           <label className={styles.searchField}>
-            <span>施策を検索</span>
-            <input
+            <span className={styles.srOnly}>施策を検索</span>
+            <Input
+              leadingIcon={<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><circle cx="10.8" cy="10.8" r="6.2" /><path d="m15.5 15.5 5 5" /></svg>}
               type="search"
               name="query"
               defaultValue={params.query}
               maxLength={1000}
-              placeholder="タイトル、ターゲット、背景、目的、施策内容を検索"
+              placeholder="施策を検索"
             />
           </label>
-          <details className={styles.advancedFilters}>
-            <summary>詳細条件{hasAdvancedFilters ? "（適用中）" : ""}</summary>
+          <label className={styles.statusField}>
+            <span className={styles.srOnly}>状態で絞り込む</span>
+            <select name="archived" defaultValue={params.archived} onChange={(event) => event.currentTarget.form?.requestSubmit()}>
+              <option value="all">ステータスで絞り込む</option>
+              <option value="active">有効</option>
+              <option value="archived">アーカイブ済み</option>
+            </select>
+          </label>
+          <Button size="small" type="submit">検索</Button>
+        </form>
+        <div className={styles.advancedFilters}>
+          <Disclosure key={`${params.createdFrom}:${params.createdTo}`} defaultOpen={hasAdvancedFilters} summary={`詳細条件${hasAdvancedFilters ? "（適用中）" : ""}`}>
+          <div className={styles.advancedContent}>
             <div className={styles.advancedFields}>
               <label>
-                <span>状態</span>
-                <select name="archived" defaultValue={params.archived}>
-                  <option value="all">すべて</option>
-                  <option value="active">進行中</option>
-                  <option value="archived">アーカイブ済み</option>
-                </select>
-              </label>
-              <label>
                 <span>作成日の開始</span>
-                <input type="date" name="created_from" defaultValue={params.createdFrom} />
+                <Input form="campaign-filters" type="date" name="created_from" defaultValue={params.createdFrom} />
               </label>
               <label>
                 <span>作成日の終了</span>
-                <input type="date" name="created_to" defaultValue={params.createdTo} />
+                 <Input form="campaign-filters" type="date" name="created_to" defaultValue={params.createdTo} onInput={(event) => event.currentTarget.setCustomValidity("")} />
               </label>
+              <div className={styles.filterActions}>
+                <Button form="campaign-filters" size="small" type="submit">条件を適用</Button>
+                 <Button variant="ghost" size="small" onClick={() => void load(parseCampaignListParams({}))}>条件をクリア</Button>
+              </div>
             </div>
-          </details>
-          <div className={styles.filterActions}>
-            <button type="submit">条件を適用</button>
-            <Link href="/campaigns">条件をクリア</Link>
+            <form className={styles.idForm} onSubmit={validateDirectId}>
+              <label>
+                <span>施策IDで直接開く</span>
+                <Input type="text" name="id" inputMode="numeric" pattern="[1-9][0-9]*" required onInput={(event) => event.currentTarget.setCustomValidity("")} />
+              </label>
+              <Button size="small" type="submit">開く</Button>
+            </form>
           </div>
-        </form>
-        <form action="/campaigns/open" method="get" className={styles.idForm} onSubmit={validateDirectId}>
-          <label>
-            <span>施策IDで直接開く</span>
-            <input type="text" name="id" inputMode="numeric" pattern="[1-9][0-9]*" required />
-          </label>
-          <button type="submit">開く</button>
-        </form>
+          </Disclosure>
+        </div>
       </section>
+    }>
 
-      <section aria-labelledby="campaign-results-title">
-        <div className={styles.resultHeading}>
-          <div>
-            <p className={styles.eyebrow}>Results</p>
-            <h2 id="campaign-results-title">
-              {params.query ? `「${params.query}」に近い施策` : "施策一覧"}
-            </h2>
-          </div>
+       <section className={styles.results} aria-labelledby="campaign-results-title">
+          <ListStatus loading={loading} error={error} onRetry={() => navigation.error ? navigation.retry() : void query.refetch()} loadingLabel="施策を読み込んでいます" />
+        <div className={params.query ? styles.resultHeading : styles.srOnly}>
+          <h2 id="campaign-results-title">{params.query ? `「${params.query}」に近い施策` : "施策一覧"}</h2>
           {params.query ? <p>施策の内容をもとに関連度順で表示しています。</p> : null}
         </div>
 
@@ -276,7 +326,7 @@ export function CampaignList({ response, params }: CampaignListProps) {
           <div className={styles.empty}>
             <h3>{hasFilters ? "条件に合う施策がありません" : "まだ施策がありません"}</h3>
             <p>{hasFilters ? "検索語や作成日の範囲を変更してください。" : "Hiromeru AIと相談して、最初の施策を作成しましょう。"}</p>
-            <Link href={hasFilters ? "/campaigns" : "/chat/new"}>{hasFilters ? "検索条件をクリア" : "新しい施策を作る"}</Link>
+             {hasFilters ? <Button variant="ghost" size="small" onClick={() => void load(parseCampaignListParams({}))}>検索条件をクリア</Button> : <Link href="/chat/new">新しい施策を作る</Link>}
           </div>
         ) : (
           <>
@@ -287,11 +337,11 @@ export function CampaignList({ response, params }: CampaignListProps) {
 
         {!params.query && (params.cursor || response.next_cursor) ? (
           <nav className={styles.pagination} aria-label="施策一覧のページ移動">
-            {params.cursor ? <Link href={campaignPageHref(params)}>先頭へ</Link> : null}
-            {response.next_cursor ? <Link href={campaignPageHref(params, response.next_cursor)}>次の20件</Link> : null}
+             {params.cursor ? <Button variant="ghost" size="small" disabled={loading} onClick={() => void load({ ...params, cursor: "" })}>先頭へ</Button> : null}
+             {response.next_cursor ? <Button variant="ghost" size="small" disabled={loading} onClick={() => void load({ ...params, cursor: response.next_cursor ?? "" })}>次の20件</Button> : null}
           </nav>
         ) : null}
       </section>
-    </main>
+    </ListPageLayout>
   );
 }

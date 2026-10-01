@@ -1,0 +1,33 @@
+.spinner {
+  animation: rotate var(--duration-spinner) var(--easing-linear) infinite;
+  border: var(--border-width-medium) solid currentColor;
+  border-block-start-color: transparent;
+  border-radius: 50%;
+  display: inline-block;
+  flex: none;
+}
+
+.small {
+  block-size: 0.875rem;
+  inline-size: 0.875rem;
+}
+.medium {
+  block-size: var(--spinner-size);
+  inline-size: var(--spinner-size);
+}
+.large {
+  block-size: 2rem;
+  inline-size: 2rem;
+}
+
+@keyframes rotate {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spinner {
+    animation: none;
+  }
+}

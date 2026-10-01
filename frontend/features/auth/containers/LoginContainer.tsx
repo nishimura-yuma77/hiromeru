@@ -2,6 +2,7 @@
 
 import { LoginView } from "@/features/auth/components/LoginView/LoginView";
 import { useLoginController } from "@/features/auth/controllers/useLoginController";
+import { QueryProvider } from "@/shared/components/QueryProvider/QueryProvider";
 
 type LoginContainerProps = {
   nextPath: string;
@@ -9,6 +10,10 @@ type LoginContainerProps = {
 };
 
 export function LoginContainer(props: LoginContainerProps) {
+  return <QueryProvider><LoginFormContainer {...props} /></QueryProvider>;
+}
+
+function LoginFormContainer(props: LoginContainerProps) {
   const controller = useLoginController(props);
   return (
     <LoginView

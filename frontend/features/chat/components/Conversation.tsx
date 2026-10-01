@@ -2,18 +2,25 @@
 
 import Link from "next/link";
 import { useEffect, useEffectEvent, useReducer, useRef, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 
-import { getCampaign } from "@/features/campaigns/api/getCampaign";
+import { campaignKeys } from "@/features/campaigns/queries/campaignKeys";
+import { useCampaignLabelQuery, useCampaignOptionsQuery } from "@/features/campaigns/queries/campaignQueries";
 import type { CampaignListItem } from "@/features/campaigns/types/campaign";
 import { ApiError } from "@/shared/api/ApiError";
+import { Button } from "@/shared/components/Button/Button";
+import { Disclosure } from "@/shared/components/Disclosure/Disclosure";
+import { SearchCombobox } from "@/shared/components/SearchCombobox/SearchCombobox";
+import { Spinner } from "@/shared/components/Spinner/Spinner";
+import { Input } from "@/shared/components/Input/Input";
 
 import { ClarificationCard } from "./ClarificationCard";
-import { approveCampaign, approveXPost, searchActiveCampaigns } from "../api";
+import { useApproveCampaignMutation, useApprovePostMutation } from "../queries/chatMutations";
 import { useChatController } from "../controller";
 import type { AgentTurn, ApprovalAction, ApprovalState, CampaignProposal, ClarificationAnswer, SecurityNotice, SessionHistory, TurnItem, XPostProposal } from "../types";
 import styles from "../styles/Chat.module.scss";
 
-const dateFormatter = new Intl.DateTimeFormat("ja-JP", { hour: "2-digit", minute: "2-digit" });
+const dateFormatter = new Intl.DateTimeFormat("ja-JP", { hour: "2-digit", minute: "2-digit", timeZone: "Asia/Tokyo" });
 const examples = [
   "新しい採用施策を考える",
   "既存の施策から投稿案を作る",
@@ -197,87 +204,52 @@ function CampaignCombobox({ disabled, error, idPrefix, onChange, onArchived, val
   value: number;
 }) {
   const [query, setQuery] = useState("");
-  const [options, setOptions] = useState<CampaignListItem[]>([]);
   const [open, setOpen] = useState(false);
-  const [loading, setLoading] = useState(false);
-  const [searchError, setSearchError] = useState("");
-  const [selectedTitle, setSelectedTitle] = useState(`施策ID ${value}`);
-  const [activeIndex, setActiveIndex] = useState(-1);
+  const [debounced, setDebounced] = useState(query.trim());
+  const client = useQueryClient();
+  const label = useCampaignLabelQuery(value > 0 ? value : null);
+  const candidates = useCampaignOptionsQuery({ query: debounced, archived: false, enabled: open && !disabled });
+  const options = candidates.data?.campaigns ?? [];
+  const loading = open && !disabled && (debounced !== query.trim() || candidates.isFetching);
+  const searchError = candidates.error instanceof Error ? candidates.error.message : "";
   const inputId = `proposal-${idPrefix}-campaign_id`;
-  const listId = `${inputId}-options`;
   const notifyArchived = useEffectEvent(onArchived);
 
   useEffect(() => {
-    let active = true;
-    void getCampaign(value).then(({ campaign }) => {
-      if (!active) return;
-      setSelectedTitle(campaign.title);
-      if (campaign.archived_at) notifyArchived("この施策はアーカイブ済みのため、投稿先に選択できません。");
-    }).catch(() => { /* The searchable list remains available if the current label cannot be restored. */ });
-    return () => { active = false; };
-  }, [value]);
+    if (label.data?.archived_at) notifyArchived("この施策はアーカイブ済みのため、投稿先に選択できません。");
+  }, [label.data?.archived_at]);
 
   useEffect(() => {
-    const controller = new AbortController();
-    const timeout = window.setTimeout(() => {
-      setLoading(true);
-      setSearchError("");
-      void searchActiveCampaigns(query, controller.signal).then((response) => {
-        setOptions(response.campaigns);
-        setActiveIndex(response.campaigns.length > 0 ? 0 : -1);
-      }).catch((loadError) => {
-        if (!(loadError instanceof DOMException && loadError.name === "AbortError")) setSearchError("施策を検索できませんでした。もう一度お試しください。");
-      }).finally(() => setLoading(false));
-    }, 300);
-    return () => {
-      window.clearTimeout(timeout);
-      controller.abort();
-    };
+    const timer = window.setTimeout(() => setDebounced(query.trim()), 300);
+    return () => window.clearTimeout(timer);
   }, [query]);
 
   function select(option: CampaignListItem) {
     onChange(String(option.id));
-    setSelectedTitle(option.title);
+    client.setQueryData(campaignKeys.label(option.id), option);
     setQuery(option.title);
-    setOpen(false);
   }
 
   return (
     <div className={styles.campaignCombobox}>
-      <label htmlFor={inputId}>対象施策</label>
-      <input
-        aria-activedescendant={open && activeIndex >= 0 ? `${listId}-${activeIndex}` : undefined}
-        aria-autocomplete="list"
-        aria-controls={listId}
-        aria-describedby={error ? `${inputId}-error` : `${inputId}-status`}
-        aria-expanded={open}
-        aria-invalid={Boolean(error)}
-        autoComplete="off"
-        disabled={disabled}
+      <SearchCombobox
         id={inputId}
-        onBlur={() => window.setTimeout(() => setOpen(false), 100)}
-        onChange={(event) => { setQuery(event.target.value); setOptions([]); setActiveIndex(-1); setOpen(true); }}
-        onFocus={() => setOpen(true)}
-        onKeyDown={(event) => {
-          if (event.key === "ArrowDown" && options.length > 0) { event.preventDefault(); setActiveIndex((current) => (current + 1) % options.length); }
-          if (event.key === "ArrowUp" && options.length > 0) { event.preventDefault(); setActiveIndex((current) => (current <= 0 ? options.length - 1 : current - 1)); }
-          if (event.key === "Enter" && open && activeIndex >= 0) { event.preventDefault(); select(options[activeIndex]); }
-          if (event.key === "Escape") setOpen(false);
-        }}
-        placeholder="施策名で検索"
-        role="combobox"
+        label="対象施策"
         type="search"
         value={query}
+        onValueChange={setQuery}
+        options={options}
+        onSelect={select}
+        open={open}
+        onOpenChange={setOpen}
+        loading={loading}
+        searchError={searchError}
+        fieldError={error}
+        disabled={disabled}
+        placeholder="施策名で検索"
+        renderOption={(option) => <>{option.title} <span>ID {option.id}</span></>}
       />
-      <p className={styles.selectedCampaign}>選択中: {selectedTitle}（ID {value}）</p>
-      {open ? (
-        <ul id={listId} role="listbox">
-          {options.map((option, index) => <li aria-selected={index === activeIndex} id={`${listId}-${index}`} key={option.id} onClick={() => select(option)} onMouseDown={(event) => event.preventDefault()} role="option">{option.title}<span>ID {option.id}</span></li>)}
-          {!loading && !searchError && options.length === 0 ? <li className={styles.comboboxMessage}>該当する施策がありません</li> : null}
-        </ul>
-      ) : null}
-      <p aria-live="polite" className={styles.comboboxStatus} id={`${inputId}-status`}>{loading ? "施策を検索しています" : searchError || (open ? `${options.length}件の候補があります` : "")}</p>
-      {error ? <small id={`${inputId}-error`}>{error}</small> : null}
+      <p className={styles.selectedCampaign}>選択中: {label.data?.title ?? `施策ID ${value}`}（ID {value}）</p>
     </div>
   );
 }
@@ -293,6 +265,8 @@ function ProposalForm({ actionable, item, sessionId, audits, refreshHistory, sen
 }) {
   const campaign = item.type === "campaign_proposal";
   const [state, proposalDispatch] = useReducer(proposalReducer, item.content, initialProposalState);
+  const campaignMutation = useApproveCampaignMutation();
+  const postMutation = useApprovePostMutation();
   const { values, confirming, submitting, generalError, fieldErrors, success, revising, revision } = state;
   const keyRef = useRef<{ signature: string; key: string } | null>(null);
   const approveButtonRef = useRef<HTMLButtonElement>(null);
@@ -379,10 +353,10 @@ function ProposalForm({ actionable, item, sessionId, audits, refreshHistory, sen
       while (true) {
         try {
           if (campaign) {
-            const result = await approveCampaign(sessionId, values as CampaignProposal, key);
+             const result = await campaignMutation.mutateAsync({ sessionId, proposal: values as CampaignProposal, idempotencyKey: key });
             proposalDispatch({ type: "success", value: { message: "施策を承認して保存しました。", href: `/campaigns/${result.id}`, linkLabel: "施策の詳細を見る" } });
           } else {
-            const result = await approveXPost(sessionId, values as XPostProposal, key);
+             const result = await postMutation.mutateAsync({ sessionId, proposal: values as XPostProposal, idempotencyKey: key });
             proposalDispatch({ type: "success", value: { message: externalSucceeded ? "公開済み投稿の保存を完了しました。" : "Xへの投稿を公開しました。", href: `/posts/${result.post_id}`, linkLabel: "投稿の詳細を見る" } });
           }
           break;
@@ -460,7 +434,7 @@ function ProposalForm({ actionable, item, sessionId, audits, refreshHistory, sen
           <span className={styles.characterCount}>{xWeightedLength((values as XPostProposal).body).toLocaleString("ja-JP")} / {X_POST_WEIGHT_MAX}（X換算・遷移先URL分を除く上限）</span>
         </>}
       </div>
-      {dirty && !locked && !processing ? <div className={styles.proposalDirty} role="status"><span>未保存の変更があります。</span><button disabled={submitting} onClick={() => proposalDispatch({ type: "reset", values: item.content })} type="button">元の提案に戻す</button></div> : null}
+      {dirty && !locked && !processing ? <div className={styles.proposalDirty} role="status"><span>未保存の変更があります。</span><Button variant="ghost" size="small" disabled={submitting} onClick={() => proposalDispatch({ type: "reset", values: item.content })}>元の提案に戻す</Button></div> : null}
       {statusMessage ? <p className={`${styles.approvalNotice} ${unresolved ? styles.approvalWarning : ""}`} role="status">{statusMessage}</p> : null}
       {generalError ? <p className={styles.proposalError} role="alert">{generalError}</p> : null}
       {success ? <p className={styles.proposalSuccess} role="status">{success.message} <Link href={success.href}>{success.linkLabel}</Link></p> : null}
@@ -469,30 +443,30 @@ function ProposalForm({ actionable, item, sessionId, audits, refreshHistory, sen
           <label htmlFor={`revision-${item.item_id}`}>AIへの修正指示</label>
           <textarea autoComplete="off" disabled={sending} id={`revision-${item.item_id}`} maxLength={REVISION_MAX} name="revision_instructions" onChange={(event) => proposalDispatch({ type: "revision", value: event.target.value })} placeholder="変更したい点を具体的に入力してください" required rows={3} value={revision} />
           <span>{revision.length.toLocaleString("ja-JP")} / {REVISION_MAX.toLocaleString("ja-JP")}</span>
-          <div><button className={styles.secondaryButton} disabled={sending} onClick={() => proposalDispatch({ type: "revision_open", value: false })} type="button">キャンセル</button><button disabled={sending || !revision.trim()} onClick={consultAgain} type="button">{sending ? "送信中" : "現在の内容で再相談"}</button></div>
+          <div><Button variant="secondary" disabled={sending} onClick={() => proposalDispatch({ type: "revision_open", value: false })}>キャンセル</Button><Button disabled={!revision.trim()} isLoading={sending} loadingLabel="相談中" onClick={consultAgain}>現在の内容で再相談</Button></div>
         </div>
-      ) : <button className={styles.revisionButton} disabled={sending || submitting} onClick={() => proposalDispatch({ type: "revision_open", value: true })} type="button">AIに修正を相談</button> : null}
+      ) : <Button variant="ghost" disabled={sending || submitting} onClick={() => proposalDispatch({ type: "revision_open", value: true })}>AIに修正を相談</Button> : null}
       {!locked ? confirming ? (
         <div className={styles.confirmBackdrop} role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !submitting) proposalDispatch({ type: "confirm", value: false }); }}>
           <section aria-describedby={`approval-description-${item.item_id}`} aria-labelledby={`approval-title-${item.item_id}`} aria-modal="true" className={styles.confirmApproval} role="alertdialog">
             <h4 id={`approval-title-${item.item_id}`}>{campaign ? "既存の施策を置き換えますか？" : "Xへ投稿を公開しますか？"}</h4>
             <p id={`approval-description-${item.item_id}`}>{campaign ? "既存の施策内容を、この提案の内容へ置き換えて保存します。" : externalSucceeded ? "Xへ再投稿せず、保存処理だけを再試行します。" : "Xへ公開され、公開後は変更・削除できません。"}</p>
-            <div><button ref={cancelConfirmationRef} className={styles.secondaryButton} disabled={submitting} onClick={() => { proposalDispatch({ type: "confirm", value: false }); requestAnimationFrame(() => approveButtonRef.current?.focus()); }} type="button">戻る</button><button disabled={submitting} onClick={() => void submit()} type="button">{submitting ? "処理中…" : campaign ? "置き換えて保存" : externalSucceeded ? "保存を再試行" : "公開する"}</button></div>
+             <div><Button ref={cancelConfirmationRef} variant="secondary" disabled={submitting} onClick={() => { proposalDispatch({ type: "confirm", value: false }); requestAnimationFrame(() => approveButtonRef.current?.focus()); }}>戻る</Button><Button isLoading={submitting} loadingLabel={campaign ? "保存中" : "公開中"} onClick={() => void submit()}>{campaign ? "置き換えて保存" : externalSucceeded ? "保存を再試行" : "公開する"}</Button></div>
           </section>
         </div>
-      ) : <button ref={approveButtonRef} className={styles.approveButton} disabled={submitting || sending} onClick={() => processing || (campaign && (values as CampaignProposal).id === null) ? void submit() : proposalDispatch({ type: "confirm", value: true })} type="button">{processing ? "同じ処理キーで結果を確認" : campaign ? "承認して保存" : externalSucceeded ? "保存処理を再試行" : "承認して公開"}</button> : null}
+      ) : <Button ref={approveButtonRef} disabled={sending} isLoading={submitting} loadingLabel="処理中" onClick={() => processing || (campaign && (values as CampaignProposal).id === null) ? void submit() : proposalDispatch({ type: "confirm", value: true })}>{processing ? "同じ処理キーで結果を確認" : campaign ? "承認して保存" : externalSucceeded ? "保存処理を再試行" : "承認して公開"}</Button> : null}
     </article>
   );
 }
 
 function ProposalField({ autoComplete = "off", disabled, error, idPrefix, inputMode, label, maxLength, multiline = false, name, onChange, type = "text", value }: {
   autoComplete?: string; disabled: boolean; error?: string; idPrefix: number; inputMode?: React.HTMLAttributes<HTMLInputElement>["inputMode"]; label: string; maxLength?: number; multiline?: boolean; name: string;
-  onChange: (name: string, value: string) => void; type?: string; value: string;
+  onChange: (name: string, value: string) => void; type?: "text" | "url" | "number"; value: string;
 }) {
   const id = `proposal-${idPrefix}-${name}`;
   return <label className={styles.proposalField} htmlFor={id}><span>{label}</span>{multiline
     ? <textarea aria-describedby={error ? `${id}-error` : undefined} aria-invalid={Boolean(error)} autoComplete={autoComplete} disabled={disabled} id={id} maxLength={maxLength} name={name} onChange={(event) => onChange(name, event.target.value)} required rows={3} value={value} />
-    : <input aria-describedby={error ? `${id}-error` : undefined} aria-invalid={Boolean(error)} autoComplete={autoComplete} disabled={disabled} id={id} inputMode={inputMode} maxLength={maxLength} min={type === "number" ? 1 : undefined} name={name} onChange={(event) => onChange(name, event.target.value)} required type={type} value={value} />}{error ? <small id={`${id}-error`}>{error}</small> : null}</label>;
+    : <Input aria-describedby={error ? `${id}-error` : undefined} aria-invalid={Boolean(error)} autoComplete={autoComplete} disabled={disabled} id={id} inputMode={inputMode} maxLength={maxLength} min={type === "number" ? 1 : undefined} name={name} onChange={(event) => onChange(name, event.target.value)} required type={type} value={value} />}{error ? <small id={`${id}-error`}>{error}</small> : null}</label>;
 }
 
 function Item({ actionable, item, sessionId, questionTurnId, previousAnswers, maxMessageLength, audits, refreshHistory, sendRevision, sendClarification, sending }: { actionable: boolean; item: TurnItem; sessionId: number; questionTurnId: number; previousAnswers?: ClarificationAnswer[]; maxMessageLength: number; audits: ApprovalAudit[]; refreshHistory: () => Promise<void>; sendRevision: (message: string) => Promise<void>; sendClarification: (questionTurnId: number, questions: string[], answers: ClarificationAnswer[]) => Promise<void>; sending: boolean }) {
@@ -521,7 +495,7 @@ function Item({ actionable, item, sessionId, questionTurnId, previousAnswers, ma
       <article className={`${styles.message} ${styles.userMessage}`}>
         <span className={styles.speaker}>あなた</span>
         <p>{label}</p>
-        <details><summary>承認内容を見る</summary><pre>{JSON.stringify(item.content.request, null, 2)}</pre></details>
+        <Disclosure summary="承認内容を見る"><pre>{JSON.stringify(item.content.request, null, 2)}</pre></Disclosure>
         <time dateTime={item.created_at}>{dateFormatter.format(new Date(item.created_at))}</time>
       </article>
     );
@@ -588,7 +562,7 @@ function Turn({ turn, restore, sessionId, previousAnswers, maxMessageLength, aud
       {turn.error ? (
         <div className={styles.turnError} role="alert">
           <p>{turn.error.message}</p>
-          {userText?.type === "user_message" && !userText.content.clarification_response ? <button onClick={() => restore(userText.content.text)} type="button">同じ内容を入力欄へ戻す</button> : null}
+          {userText?.type === "user_message" && !userText.content.clarification_response ? <Button variant="ghost" size="small" onClick={() => restore(userText.content.text)}>同じ内容を入力欄へ戻す</Button> : null}
         </div>
       ) : null}
     </li>
@@ -661,14 +635,12 @@ export function Conversation({ initialHistory, initialDraft = "" }: { initialHis
             <h1>何から始めましょうか。</h1>
             <p>採用施策づくりや投稿案、公開後の振り返りについて相談できます。</p>
             <div className={styles.examples}>
-              {examples.map((example) => <button key={example} onClick={() => restore(example)} type="button">{example}</button>)}
+              {examples.map((example) => <Button variant="secondary" size="small" key={example} onClick={() => restore(example)}>{example}</Button>)}
             </div>
           </section>
         ) : null}
         {state.hasMore ? (
-          <button className={styles.earlierButton} disabled={state.loadingHistory || state.sending} onClick={() => void loadEarlier()} type="button">
-            {state.loadingHistory ? "以前の会話を読み込み中" : "以前の会話を読み込む"}
-          </button>
+          <div className={styles.earlierButton}><Button variant="ghost" disabled={state.sending} isLoading={state.loadingHistory} loadingLabel="以前の会話を読み込み中" onClick={() => void loadEarlier()}>以前の会話を読み込む</Button></div>
         ) : null}
         <ol className={styles.turns}>
           {state.turns.map((turn) => <Turn audits={audits} key={turn.agent_turn_id} latestProposalIds={latestProposalIds} previousAnswers={failedClarificationAnswers.get(turn.agent_turn_id)} maxMessageLength={maxLength} refreshHistory={refreshHistory} restore={restore} sendRevision={send} sendClarification={sendClarification} sending={state.sending} sessionId={state.session?.session_id ?? 0} turn={turn} />)}
@@ -680,7 +652,7 @@ export function Conversation({ initialHistory, initialDraft = "" }: { initialHis
             </article>
             <div aria-live="polite" className={styles.progress} role="status">
               <span className={styles.speaker}>Hiromeru AI</span>
-               <p><span aria-hidden="true" className={styles.spinner} />{state.recovering ? "結果を確認中" : activityLabels[state.activities.findLast((item) => item.status === "running")?.name ?? ""] ?? (state.activities.some((item) => item.status === "running") ? "処理を実行中" : "考えています")}</p>
+               <p><Spinner size="small" />{state.recovering ? "結果を確認中" : activityLabels[state.activities.findLast((item) => item.status === "running")?.name ?? ""] ?? (state.activities.some((item) => item.status === "running") ? "処理を実行中" : "考えています")}</p>
                {state.activities.filter((item): item is typeof item & { status: ActivityStatus } => item.status !== "running").slice(-3).map((activity) => <small className={activity.status === "succeeded" ? undefined : styles.activityProblem} key={activity.activity_id} role={activity.status === "succeeded" ? undefined : "alert"}>{activityLabels[activity.name] ?? "処理"} {activityResult(activity.status)}</small>)}
             </div>
           </div>
@@ -688,26 +660,28 @@ export function Conversation({ initialHistory, initialDraft = "" }: { initialHis
         {state.requestError ? <p className={styles.requestError} role="alert">{state.requestError}</p> : null}
       </div>
       <form className={styles.composer} onSubmit={(event) => { event.preventDefault(); void send(); }}>
-        <label htmlFor="chat-message">メッセージ</label>
-        <textarea
-          aria-describedby="chat-counter chat-error chat-status"
-          id="chat-message"
-          name="message"
-          autoComplete="off"
-          onChange={(event) => dispatch({ type: "draft", value: event.target.value })}
-          onKeyDown={handleKeyDown}
-          placeholder="相談したいことを入力してください"
-          ref={textareaRef}
-          rows={3}
-          value={state.draft}
-        />
-        <div className={styles.composerFooter}>
-          <div>
-            <span className={state.draft.length > maxLength ? styles.counterError : ""} id="chat-counter">{state.draft.length.toLocaleString("ja-JP")} / {maxLength.toLocaleString("ja-JP")}</span>
-            <span className={styles.validationError} id="chat-error">{state.composerError}</span>
-            <span className={styles.srOnly} id="chat-status" aria-live="polite">{state.sending ? "回答が完了すると送信できます" : ""}</span>
+        <label className={styles.srOnly} htmlFor="chat-message">メッセージ</label>
+        <div className={styles.composerBox}>
+          <textarea
+            aria-describedby="chat-counter chat-error chat-status"
+            id="chat-message"
+            name="message"
+            autoComplete="off"
+            onChange={(event) => dispatch({ type: "draft", value: event.target.value })}
+            onKeyDown={handleKeyDown}
+            placeholder="相談したいことを入力してください"
+            ref={textareaRef}
+            rows={3}
+            value={state.draft}
+          />
+          <div className={styles.composerFooter}>
+            <div>
+              <span className={state.draft.length > maxLength ? styles.counterError : ""} id="chat-counter">{state.draft.length.toLocaleString("ja-JP")} / {maxLength.toLocaleString("ja-JP")}</span>
+              <span className={styles.validationError} id="chat-error">{state.composerError}</span>
+              <span className={styles.srOnly} id="chat-status" aria-live="polite">{state.sending ? "回答が完了すると送信できます" : ""}</span>
+            </div>
+             <Button disabled={invalid} isLoading={state.sending} loadingLabel="送信中" type="submit">送信</Button>
           </div>
-          <button disabled={invalid || state.sending} type="submit">{state.sending ? "送信中" : "送信"}</button>
         </div>
         <p className={styles.shortcut}>Ctrl / ⌘ + Enter で送信</p>
       </form>

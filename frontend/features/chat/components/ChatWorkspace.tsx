@@ -1,38 +1,22 @@
 "use client";
 
 import Link from "next/link";
+import { Button } from "@/shared/components/Button/Button";
 import { usePathname } from "next/navigation";
-import { useEffect, useReducer, useRef } from "react";
+import { useEffect, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 
-import { listSessions } from "../api";
+import { sessionKeys } from "../queries/sessionKeys";
+import { useSessionListInfiniteQuery } from "../queries/sessionQueries";
 import type { AgentSession, SessionList } from "../types";
 import styles from "../styles/Chat.module.scss";
-
-type ListState = SessionList & { loading: boolean; error: string | null };
-type ListAction =
-  | { type: "loading" }
-  | { type: "loaded"; page: SessionList }
-  | { type: "refreshed"; page: SessionList }
-  | { type: "failed" };
-
-function listReducer(state: ListState, action: ListAction): ListState {
-  if (action.type === "loading") return { ...state, loading: true, error: null };
-  if (action.type === "failed") return { ...state, loading: false, error: "会話を読み込めませんでした。" };
-  if (action.type === "refreshed") return { ...action.page, loading: false, error: null };
-  const seen = new Set(state.sessions.map((session) => session.session_id));
-  return {
-    sessions: [...state.sessions, ...action.page.sessions.filter((session) => !seen.has(session.session_id))],
-    next_cursor: action.page.next_cursor,
-    loading: false,
-    error: null,
-  };
-}
 
 const dateFormatter = new Intl.DateTimeFormat("ja-JP", {
   month: "short",
   day: "numeric",
   hour: "2-digit",
   minute: "2-digit",
+  timeZone: "Asia/Tokyo",
 });
 
 function SessionLink({ session, active }: { session: AgentSession; active: boolean }) {
@@ -54,74 +38,83 @@ function SessionLink({ session, active }: { session: AgentSession; active: boole
 
 export function ChatWorkspace({ initialSessions, children }: { initialSessions: SessionList; children: React.ReactNode }) {
   const pathname = usePathname();
-  const [state, dispatch] = useReducer(listReducer, {
-    ...initialSessions,
-    loading: false,
-    error: null,
-  });
-  const abortRef = useRef<AbortController | null>(null);
+  const [isSessionListOpen, setIsSessionListOpen] = useState(true);
+  const client = useQueryClient();
+  const listQuery = useSessionListInfiniteQuery(initialSessions);
+  const pages = listQuery.data?.pages ?? [initialSessions];
+  const seen = new Set<number>();
+  const sessions = pages.flatMap((page) => page.sessions.filter((session) => {
+    if (seen.has(session.session_id)) return false;
+    seen.add(session.session_id);
+    return true;
+  }));
 
   useEffect(() => {
-    async function refresh() {
-      const controller = new AbortController();
-      abortRef.current = controller;
-      try {
-        dispatch({ type: "refreshed", page: await listSessions(null, controller.signal) });
-      } catch {
-        // A background refresh must not replace the usable list with an error.
-      }
-    }
-    window.addEventListener("chat:sessions-changed", refresh);
-    return () => {
-      window.removeEventListener("chat:sessions-changed", refresh);
-      abortRef.current?.abort();
+    const mobileLayout = window.matchMedia("(max-width: 64rem)");
+    const restoreMobileList = () => {
+      if (mobileLayout.matches) setIsSessionListOpen(true);
     };
+    mobileLayout.addEventListener("change", restoreMobileList);
+    return () => mobileLayout.removeEventListener("change", restoreMobileList);
   }, []);
 
-  async function loadMore() {
-    if (!state.next_cursor || state.loading) return;
-    dispatch({ type: "loading" });
-    const controller = new AbortController();
-    abortRef.current = controller;
-    try {
-      dispatch({ type: "loaded", page: await listSessions(state.next_cursor, controller.signal) });
-    } catch {
-      if (!controller.signal.aborted) dispatch({ type: "failed" });
-    }
-  }
+  useEffect(() => {
+    function refresh() { void client.invalidateQueries({ queryKey: sessionKeys.list() }); }
+    window.addEventListener("chat:sessions-changed", refresh);
+    return () => window.removeEventListener("chat:sessions-changed", refresh);
+  }, [client]);
 
   return (
-    <div className={styles.workspace}>
+    <div className={`${styles.workspace}${isSessionListOpen ? "" : ` ${styles.workspaceCollapsed}`}`}>
       <aside aria-label="会話一覧" className={styles.sidebar}>
         <div className={styles.listHeader}>
-          <h1>会話</h1>
+          <h1>会話一覧</h1>
+          <div className={styles.listToggle}>
+            <Button
+              aria-controls="chat-session-list"
+              aria-expanded={isSessionListOpen}
+              aria-label={isSessionListOpen ? "会話一覧を閉じる" : "会話一覧を開く"}
+              variant="secondary"
+              iconOnly
+              onClick={() => setIsSessionListOpen((open) => !open)}
+              title={isSessionListOpen ? "会話一覧を閉じる" : "会話一覧を開く"}
+            >
+              <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                <rect x="3" y="4" width="18" height="16" rx="2" />
+                <path d="M9 4v16" />
+                <path d={isSessionListOpen ? "m16 9-3 3 3 3" : "m14 9 3 3-3 3"} />
+              </svg>
+            </Button>
+          </div>
+        </div>
+        <div className={styles.sidebarBody} id="chat-session-list" inert={isSessionListOpen ? undefined : true}>
           <Link className={styles.newButton} href="/chat/new">
             <span aria-hidden="true">＋</span> 新しい会話
           </Link>
-        </div>
-        {state.sessions.length === 0 ? (
-          <div className={styles.emptyList}>
-            <p>まだ会話がありません。マーケティングの依頼から始めましょう。</p>
-            <Link href="/chat/new">新しい会話を始める</Link>
+          {sessions.length === 0 ? (
+            <div className={styles.emptyList}>
+              <p>まだ会話がありません。マーケティングの依頼から始めましょう。</p>
+              <Link href="/chat/new">新しい会話を始める</Link>
+            </div>
+          ) : (
+            <ul className={styles.sessionList}>
+              {sessions.map((session) => (
+                <SessionLink
+                  active={pathname === `/chat/${session.session_id}`}
+                  key={session.session_id}
+                  session={session}
+                />
+              ))}
+            </ul>
+          )}
+          <div className={styles.loadMore} aria-live="polite">
+            {listQuery.error ? <p role="alert">会話を読み込めませんでした。</p> : null}
+            {listQuery.hasNextPage ? (
+              <Button variant="ghost" size="small" isLoading={listQuery.isFetchingNextPage} loadingLabel="会話を読み込み中" onClick={() => void listQuery.fetchNextPage()}>
+                {listQuery.error ? "もう一度読み込む" : "さらに読み込む"}
+              </Button>
+            ) : null}
           </div>
-        ) : (
-          <ul className={styles.sessionList}>
-            {state.sessions.map((session) => (
-              <SessionLink
-                active={pathname === `/chat/${session.session_id}`}
-                key={session.session_id}
-                session={session}
-              />
-            ))}
-          </ul>
-        )}
-        <div className={styles.loadMore} aria-live="polite">
-          {state.error ? <p role="alert">{state.error}</p> : null}
-          {state.next_cursor ? (
-            <button disabled={state.loading} onClick={loadMore} type="button">
-              {state.loading ? "読み込み中" : state.error ? "もう一度読み込む" : "さらに読み込む"}
-            </button>
-          ) : null}
         </div>
       </aside>
       <section aria-label="会話内容" className={styles.content} id="main-content" tabIndex={-1}>
