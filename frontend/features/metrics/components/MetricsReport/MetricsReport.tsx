@@ -5,6 +5,7 @@ import type { FormEvent } from "react";
 import { Button } from "@/shared/components/Button/Button";
 import { Input } from "@/shared/components/Input/Input";
 import { ListStatus } from "@/shared/components/ListStatus/ListStatus";
+import { ListPageLayout } from "@/shared/components/ListPageLayout/ListPageLayout";
 import { useInvalidCursorRecovery, useQueryNavigation } from "@/shared/lib/useQueryNavigation";
 
 import { getMetricsReportBrowser } from "@/features/metrics/api/getMetricsReportBrowser";
@@ -143,9 +144,7 @@ export function MetricsReport({ report: initialReport }: { report: MetricsReport
   const graphEmpty = rates.length === 0;
 
   return (
-    <main id="main-content" className={styles.page}>
-      <header className={styles.header}>
-        <h1>計測結果</h1>
+    <ListPageLayout title="計測結果" filters={
         <form key={`${params.publishedFrom}:${params.publishedTo}`} className={styles.periodForm} aria-label="集計期間" onSubmit={submitPeriod}>
           <label><span>開始日</span><Input type="date" name="published_from" defaultValue={params.publishedFrom} /></label>
           <span className={styles.periodSeparator} aria-hidden="true">〜</span>
@@ -153,7 +152,7 @@ export function MetricsReport({ report: initialReport }: { report: MetricsReport
           <Button size="small" type="submit">適用</Button>
           {params.publishedFrom || params.publishedTo ? <Button variant="ghost" size="small" onClick={() => void load(parseMetricsParams({}))}>全期間</Button> : <span className={styles.disabledAction}>全期間</span>}
         </form>
-      </header>
+    }>
 
       <div className={styles.body}>
       <ListStatus loading={loading} error={error} onRetry={() => navigation.error ? navigation.retry() : void query.refetch()} loadingLabel="計測結果を読み込んでいます" />
@@ -261,6 +260,6 @@ export function MetricsReport({ report: initialReport }: { report: MetricsReport
         ) : null}
       </section>
       </div>
-    </main>
+    </ListPageLayout>
   );
 }

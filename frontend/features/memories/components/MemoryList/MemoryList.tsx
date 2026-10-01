@@ -6,6 +6,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/shared/components/Button/Button";
 import { Disclosure } from "@/shared/components/Disclosure/Disclosure";
 import { ListStatus } from "@/shared/components/ListStatus/ListStatus";
+import { ListPageAction, ListPageLayout } from "@/shared/components/ListPageLayout/ListPageLayout";
 import { useInvalidCursorRecovery, useQueryNavigation } from "@/shared/lib/useQueryNavigation";
 import { campaignKeys } from "@/features/campaigns/queries/campaignKeys";
 import { useCampaignLabelQuery } from "@/features/campaigns/queries/campaignQueries";
@@ -129,16 +130,12 @@ export function MemoryList({ response: initialResponse, selectedCampaign: initia
   const visibleMemories = response.memories.filter((memory) => memory.id !== controller.state.deletedId);
 
   return (
-    <main id="main-content" className={styles.page}>
-      <header className={styles.header}>
-        <h1>記憶</h1>
-        <p>AIが参照する採用文脈の長期記憶</p>
-      </header>
-
-      <section className={styles.search} aria-labelledby="memory-search-title">
+    <ListPageLayout title="記憶" description="AIが参照する採用文脈の長期記憶" actions={<ListPageAction href="/chat/new">＋ 記憶の追加を相談する</ListPageAction>} filters={
+      <section aria-labelledby="memory-search-title">
         <h2 id="memory-search-title" className={styles.visuallyHidden}>記憶を探す</h2>
         <CampaignFilter key={`${params.campaignId ?? ""}:${params.query}:${selectedCampaign?.title ?? ""}`} initialCampaign={selectedCampaign} query={params.query} onApply={load} />
       </section>
+    }>
 
       <section className={styles.results} aria-labelledby="memory-results-title">
         <ListStatus loading={loading} error={error} onRetry={() => navigation.error ? navigation.retry() : void query.refetch()} loadingLabel="記憶を読み込んでいます" />
@@ -193,6 +190,6 @@ export function MemoryList({ response: initialResponse, selectedCampaign: initia
         </div>
       ) : null}
       <p className={styles.liveMessage} aria-live="polite">{controller.state.deletedId ? "記憶を削除しました。" : ""}</p>
-    </main>
+    </ListPageLayout>
   );
 }

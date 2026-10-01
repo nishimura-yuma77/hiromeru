@@ -89,7 +89,7 @@ export function PostFilters({ params, selectedCampaign, onApply }: {
   const hasAdvancedFilters = Boolean(params.publishedFrom || params.publishedTo);
 
   return (
-    <section className={styles.filters} aria-labelledby="post-filter-title">
+    <section aria-labelledby="post-filter-title">
       <h2 className={styles.visuallyHidden} id="post-filter-title">投稿を探す</h2>
       <form ref={formRef} id="post-filters" className={styles.filterForm} onSubmit={submit}>
         <div className={styles.searchField}>

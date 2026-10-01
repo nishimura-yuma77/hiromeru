@@ -1,9 +1,5 @@
 @use "../../../../shared/styles/breakpoints" as bp;
 
-.page { margin: calc(-1 * var(--space-5)) calc(-1 * var(--space-4)); min-block-size: calc(100dvb - var(--app-header-height)); }
-.header { align-items: center; background: var(--color-surface); border-block-end: var(--border-width-thin) solid var(--color-border); display: flex; min-block-size: var(--app-header-height); padding: var(--space-2) var(--space-5); }
-.header h1 { font-size: var(--font-size-md); margin: 0; }
-.filters { background: var(--color-surface); border-block-end: var(--border-width-thin) solid var(--color-border); padding: var(--space-3) var(--space-5); }
 .filterForm { align-items: center; display: flex; flex-wrap: wrap; gap: var(--space-2); }
 .searchField, .campaignField { inline-size: min(100%, 18rem); min-inline-size: 0; }
 .campaignField { min-inline-size: 0; }
@@ -14,7 +10,7 @@
 .advancedContent label { display: grid; font-size: var(--font-size-sm); gap: var(--space-2); }
 .hint { color: var(--color-text-secondary); font-size: var(--font-size-xs); margin: var(--space-2) 0 0; }
 
-.results { min-block-size: 12rem; padding: var(--space-5); position: relative; }
+.results { min-block-size: 12rem; position: relative; }
 .resultHeading { margin-block-end: var(--space-4); }
 .resultHeading h2 { font-size: var(--font-size-md); margin: 0; }
 .resultHeading p { color: var(--color-text-secondary); font-size: var(--font-size-xs); margin: var(--space-1) 0 0; }
@@ -49,10 +45,6 @@
 .empty a, .pagination a { color: var(--color-brand-strong); }
 .pagination { display: flex; gap: var(--space-4); justify-content: flex-end; padding-block-start: var(--space-5); }
 .visuallyHidden { block-size: 1px; clip-path: inset(50%); inline-size: 1px; overflow: hidden; position: absolute; white-space: nowrap; }
-.page a:focus-visible { outline: var(--focus-ring-width) solid var(--color-focus-ring); outline-offset: var(--focus-ring-offset); }
-
-@media (min-width: bp.$tablet) { .page { margin: calc(-1 * var(--space-6)) calc(-1 * var(--space-5)); min-block-size: 100dvb; } }
-@media (min-width: bp.$desktop) { .page { margin-inline: calc(-1 * var(--space-6)); } }
 @media (max-width: bp.$tablet) {
   .desktopTable { display: none; }
   .mobileCards { display: grid; gap: var(--space-3); }
@@ -64,13 +56,11 @@
   .mobileMetrics dd { margin: 0; text-align: end; }
 }
 @media (max-width: bp.$mobile) {
-  .header, .filters { padding-inline: var(--space-4); }
   .filterForm { display: grid; grid-template-columns: minmax(0, 1fr) auto; }
   .searchField { grid-column: 1 / -1; inline-size: 100%; }
   .campaignField { inline-size: 100%; }
   .sortField select { max-inline-size: 8rem; }
   .filterActions { grid-column: 1 / -1; }
   .advancedContent { align-items: stretch; flex-direction: column; }
-  .results { padding: var(--space-4); }
   .pagination { flex-direction: column; }
 }

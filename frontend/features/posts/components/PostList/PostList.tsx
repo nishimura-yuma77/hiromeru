@@ -13,6 +13,7 @@ import { postKeys } from "@/features/posts/queries/postKeys";
 import { usePostListQuery } from "@/features/posts/queries/postQueries";
 import { Button } from "@/shared/components/Button/Button";
 import { ListStatus } from "@/shared/components/ListStatus/ListStatus";
+import { ListPageAction, ListPageLayout } from "@/shared/components/ListPageLayout/ListPageLayout";
 import { MetricBar } from "@/shared/components/MetricBar/MetricBar";
 import { useInvalidCursorRecovery, useQueryNavigation } from "@/shared/lib/useQueryNavigation";
 
@@ -113,12 +114,9 @@ export function PostList({ response: initialResponse, selectedCampaign: initialC
   ), 0);
 
   return (
-    <main id="main-content" className={styles.page}>
-      <header className={styles.header}>
-        <h1>投稿</h1>
-      </header>
-
+    <ListPageLayout title="投稿" actions={<ListPageAction href="/chat/new">＋ 投稿案を相談する</ListPageAction>} filters={
       <PostFilters key={`${params.query}:${params.campaignId ?? ""}:${params.sort}:${params.publishedFrom}:${params.publishedTo}:${selectedCampaign?.title ?? ""}`} params={params} selectedCampaign={selectedCampaign} onApply={apply} />
+    }>
 
       <section className={styles.results} aria-labelledby="post-results-title">
         <ListStatus loading={loading} error={error} onRetry={() => navigation.error ? navigation.retry() : void query.refetch()} loadingLabel="投稿を読み込んでいます" />
@@ -177,6 +175,6 @@ export function PostList({ response: initialResponse, selectedCampaign: initialC
           </nav>
         ) : null}
       </section>
-    </main>
+    </ListPageLayout>
   );
 }

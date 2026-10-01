@@ -7,6 +7,7 @@ import { Button } from "@/shared/components/Button/Button";
 import { Input } from "@/shared/components/Input/Input";
 import { Disclosure } from "@/shared/components/Disclosure/Disclosure";
 import { ListStatus } from "@/shared/components/ListStatus/ListStatus";
+import { ListPageAction, ListPageLayout } from "@/shared/components/ListPageLayout/ListPageLayout";
 import { useInvalidCursorRecovery, useQueryNavigation } from "@/shared/lib/useQueryNavigation";
 
 import type {
@@ -259,13 +260,8 @@ export function CampaignList({ response: initialResponse }: CampaignListProps) {
   }
 
   return (
-    <main id="main-content" className={styles.page}>
-      <header className={styles.header}>
-        <h1>施策</h1>
-        <Link className={styles.primaryLink} href="/chat/new">＋ 新しい施策を作る</Link>
-      </header>
-
-      <section className={styles.filters} aria-labelledby="campaign-search-title">
+    <ListPageLayout title="施策" actions={<ListPageAction href="/chat/new">＋ 新しい施策を作る</ListPageAction>} filters={
+      <section aria-labelledby="campaign-search-title">
         <h2 className={styles.srOnly} id="campaign-search-title">施策を探す</h2>
         <form key={`${params.query}:${params.archived}`} id="campaign-filters" className={styles.filterForm} onSubmit={validateDateRange}>
           <label className={styles.searchField}>
@@ -317,6 +313,7 @@ export function CampaignList({ response: initialResponse }: CampaignListProps) {
           </Disclosure>
         </div>
       </section>
+    }>
 
        <section className={styles.results} aria-labelledby="campaign-results-title">
           <ListStatus loading={loading} error={error} onRetry={() => navigation.error ? navigation.retry() : void query.refetch()} loadingLabel="施策を読み込んでいます" />
@@ -345,6 +342,6 @@ export function CampaignList({ response: initialResponse }: CampaignListProps) {
           </nav>
         ) : null}
       </section>
-    </main>
+    </ListPageLayout>
   );
 }
