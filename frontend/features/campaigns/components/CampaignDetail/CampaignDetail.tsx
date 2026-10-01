@@ -1,10 +1,13 @@
 "use client";
 
 import Link from "next/link";
+import { useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/shared/components/Button/Button";
 import { Input } from "@/shared/components/Input/Input";
 
 import { useCampaignFormController } from "@/features/campaigns/controllers/useCampaignFormController";
+import { campaignKeys } from "@/features/campaigns/queries/campaignKeys";
+import { useCampaignDetailQuery } from "@/features/campaigns/queries/campaignQueries";
 import type { CampaignDetailResponse } from "@/features/campaigns/types/campaign";
 import type { CampaignField } from "@/features/campaigns/state/campaignFormReducer";
 
@@ -70,8 +73,13 @@ function PvBar({ value, max }: { value: number | null; max: number }) {
 }
 
 export function CampaignDetail({ detail }: { detail: CampaignDetailResponse }) {
-  const { campaign, metrics_summary: summary } = detail;
-  const controller = useCampaignFormController(campaign);
+  const client = useQueryClient();
+  const detailQuery = useCampaignDetailQuery(detail.campaign.id);
+  const currentDetail = detailQuery.data ?? detail;
+  const { campaign, metrics_summary: summary } = currentDetail;
+  const controller = useCampaignFormController(campaign, {
+    onRefreshed: (latest) => client.setQueryData(campaignKeys.detail(campaign.id), latest),
+  });
   const isArchived = campaign.archived_at !== null || (controller.state.conflictCampaign?.archived_at ?? null) !== null;
   const hasCompletedMetrics = summary.completed_count > 0;
   const rate = !hasCompletedMetrics || summary.landing_rate === null
@@ -79,7 +87,7 @@ export function CampaignDetail({ detail }: { detail: CampaignDetailResponse }) {
     : new Intl.NumberFormat("ja-JP", { style: "percent", maximumFractionDigits: 1 }).format(
         summary.landing_rate,
       );
-  const maxCompletedPv = detail.posts.reduce(
+  const maxCompletedPv = currentDetail.posts.reduce(
     (max, post) => post.metrics.status === "completed"
       ? Math.max(max, post.metrics.x_pv_count ?? 0)
       : max,
@@ -246,10 +254,10 @@ export function CampaignDetail({ detail }: { detail: CampaignDetailResponse }) {
           <h2 id="campaign-posts-title">公開済み投稿 ({numberFormat.format(summary.post_count)}件)</h2>
           {summary.post_count > 0 ? <Link href={`/posts?campaign_id=${campaign.id}`}>すべての投稿を見る</Link> : null}
         </div>
-        {detail.posts.length ? (
+        {currentDetail.posts.length ? (
           <>
             <div className={styles.relatedCards}>
-              {detail.posts.map((post) => (
+              {currentDetail.posts.map((post) => (
                 <article key={post.post_id}>
                   <div className={styles.postTop}>
                     <span className={styles.postId}>POST-{post.post_id}</span>
@@ -278,11 +286,11 @@ export function CampaignDetail({ detail }: { detail: CampaignDetailResponse }) {
       <section className={styles.section} aria-labelledby="campaign-memories-title">
         <div className={styles.sectionHeading}>
           <h2 id="campaign-memories-title">関連する記憶</h2>
-          {detail.has_more_memories ? <Link href={`/memories?campaign_id=${campaign.id}`}>記憶一覧を見る</Link> : null}
+          {currentDetail.has_more_memories ? <Link href={`/memories?campaign_id=${campaign.id}`}>記憶一覧を見る</Link> : null}
         </div>
-        {detail.memories.length ? (
+        {currentDetail.memories.length ? (
           <ul className={styles.memoryList}>
-            {detail.memories.map((memory) => <li key={memory.id}>{memory.content}</li>)}
+            {currentDetail.memories.map((memory) => <li key={memory.id}>{memory.content}</li>)}
           </ul>
         ) : <p className={styles.emptyText}>この施策に関連する記憶はありません。</p>}
       </section>

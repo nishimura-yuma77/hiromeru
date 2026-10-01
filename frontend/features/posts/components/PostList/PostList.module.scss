@@ -9,13 +9,12 @@
 .campaignField { min-inline-size: 0; }
 .sortField select { background: var(--color-surface); border: var(--border-width-thin) solid var(--color-border); border-radius: var(--radius-sm); color: var(--color-text-primary); font: inherit; font-size: var(--font-size-sm); min-block-size: var(--control-min-height); min-inline-size: 0; padding-inline: var(--space-3); }
 .filterActions { align-items: center; display: flex; flex-wrap: wrap; gap: var(--space-2); }
-.filterActions a { color: var(--color-brand-strong); font-size: var(--font-size-sm); padding: var(--space-2); }
 .advancedFilters { font-size: var(--font-size-sm); margin-block-start: var(--space-2); }
 .advancedContent { align-items: end; border-block-start: var(--border-width-thin) solid var(--color-border); display: flex; flex-wrap: wrap; gap: var(--space-3); margin-block-start: var(--space-3); padding-block: var(--space-4) var(--space-2); }
 .advancedContent label { display: grid; font-size: var(--font-size-sm); gap: var(--space-2); }
 .hint { color: var(--color-text-secondary); font-size: var(--font-size-xs); margin: var(--space-2) 0 0; }
 
-.results { padding: var(--space-5); }
+.results { min-block-size: 12rem; padding: var(--space-5); position: relative; }
 .resultHeading { margin-block-end: var(--space-4); }
 .resultHeading h2 { font-size: var(--font-size-md); margin: 0; }
 .resultHeading p { color: var(--color-text-secondary); font-size: var(--font-size-xs); margin: var(--space-1) 0 0; }

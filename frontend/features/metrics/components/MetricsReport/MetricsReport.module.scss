@@ -42,7 +42,7 @@
 }
 .disabledAction { color: var(--color-text-secondary); opacity: 0.55; }
 
-.body { padding: var(--space-5); }
+.body { min-block-size: 12rem; padding: var(--space-5); position: relative; }
 .period { color: var(--color-text-secondary); font-size: var(--font-size-xs); margin: 0 0 var(--space-3); }
 .period span { font-weight: var(--font-weight-regular); }
 

@@ -56,7 +56,11 @@
 | SC-08 | `app/(authenticated)/metrics/` | `metrics` | Server Component | 期間の絞り込みと施策別結果のPagination（URLを更新する） |
 | SC-09 | `app/(authenticated)/memories/` | `memories` | Server Component | 検索、施策による絞り込み、関連先の追加読込、記憶の削除、Response不明時の同じDELETEによる結果確定 |
 
-- 業務データの読取は、Server Componentで行う（規約11.1）。Clientの再取得は、Turnの進捗の受信（SSE）と切断時のTurnのポーリング、施策の選択の検索（6.11）、会話一覧の追加読み込み（6.13）、SC-09の関連先追加読込と記憶削除後の一覧更新だけとする（規約11.3。Turnは応答が最大200秒かかり、進捗を逐次表示し、応答を受け取れない場合に状態を確認する必要があるため。施策の選択は入力に応じた候補の表示、会話一覧と記憶の関連先は利用者操作に応じた追加読込、記憶削除は確定結果を一覧へ反映する必要があるため）
+- 初回アクセスとURLの直接読み込みではServer Componentが業務データを取得し、`HydrationBoundary`でFeature別のTanStack Queryへ渡す。認証済みの一覧（SC-04、SC-06、SC-08、SC-09）での検索・絞り込み・並び替え・ページ送りは、Client側の`useCampaignListQuery`・`usePostListQuery`・`useMetricsReportQuery`・`useMemoryListQuery`が結果領域だけ更新する。Query Keyは正規化した条件とCursorを含み、RequestのAbort・キャッシュ・Error再試行をTanStack Queryが担当する
+- URLはNext.js対応のHistory APIと`useSearchParams`で同期する。明示的な条件変更は`fetchQuery`成功後だけURLを確定し、戻る・進むはQuery Keyの切替で対応する。認証後のQueryClientはログイン・ログアウト時に消去し、他の利用者へキャッシュを持ち越さない
+- 認証後App ShellとGlobal navigationは共通`layout.tsx`で維持する。一覧の条件変更にはnative GETフォームによるページ再読込を使わず、詳細への遷移にはClient navigationを使う。ログイン前の初回認証・直接アクセスはApp Shellの表示前にLoadingとなり得る
+- QueryClientProviderは認証後のLayoutとログイン画面のClient境界で用意し、Query Key・`useXxxQuery`・`useXxxMutation`はFeatureごとに配置する。通常の一覧・詳細と施策候補、記憶の関連先、会話一覧・履歴をQuery Cacheで管理する。ログイン・ログアウト時はキャッシュを消去し、別利用者の情報を再利用しない
+- 施策編集・記憶削除・会話作成・施策承認・投稿承認の成功後は関係するQueryを更新またはInvalidateする。チャットのSSE進行と切断時の結果確認は専用controllerが担当し、承認の処理キーとResponse不明時の判断はQueryの自動再試行へ委ねない
 - Feature間の直接参照は原則禁止のため（規約4.4）、複数のFeatureにまたがる画面は`app/`で組み立てる。該当する箇所は、SC-05の編集フォーム（下記）である
 - `app/`の`loading.tsx`、`error.tsx`、`not-found.tsx`で、6.8の画面状態を共通に扱う
 - 施策のフォーム（項目の入力部品と検証Schema）は、SC-02の提案フォームとSC-05の編集フォームで共通のため、まとめて`agent`Featureに置く。`campaigns`Featureには置かない（重複や`shared`への切り出しは行わない）。`app/(authenticated)/campaigns/[campaign_id]/`が、`campaigns`Featureの表示と、`agent`Featureが公開する編集フォームを組み合わせる。投稿フォームも、`agent`Featureに置く
@@ -730,15 +734,15 @@ SC-02に統合した。会話一覧の表示と操作は、SC-02の「会話一�
 **検索と作成日の絞り込み**
 
 - 検索FormはLabel「施策を検索」、検索Field、Button「検索」と状態Selectで構成する。Placeholderは「施策を検索」とし、施策IDの暗黙検索は行わない
-- 状態Selectは「ステータスで絞り込む」「有効」「アーカイブ済み」の選択肢を持つ。有効は`archived_at = null`を意味し、変更時に検索Formを送信してURLへ`archived`を反映する
-- Trim後1文字以上の`query`を確定したときだけ`router.push`でURLを更新する。Enterでも検索でき、空文字は`query`を取り除く
+- 状態Selectは「ステータスで絞り込む」「有効」「アーカイブ済み」の選択肢を持つ。有効は`archived_at = null`を意味し、変更時に結果領域を再取得し、成功後にURLへ`archived`を反映する
+- Trim後1文字以上の`query`を確定したときだけClientから結果を再取得し、成功後にURLを更新する。Enterでも検索でき、空文字は`query`を取り除く
 - 検索中は`campaign_embeddings`による意味検索とし、タイトル、ターゲット像、実施背景、施策目的、施策内容を対象に類似度順で最大20件を表示する。`similarity`の数値は利用者へ表示しない
 - 検索結果の前に「『{query}』に近い施策」と「タイトル、ターゲット、背景、目的、施策内容をもとに表示しています」を表示する
 - 作成日はLabel「開始」「終了」のdate Inputを使い、`created_from`と`created_to`をURLへ保持する。片方だけでも適用できる
 - UIの暦日は`Asia/Tokyo`として扱う。`created_from`には選択日のJST 00:00、排他的な`created_to`には終了日の翌日のJST 00:00をUTCのISO 8601へ変換して送る
 - 開始日が終了日より後の場合はForm内Errorを表示し、URLとAPI Requestを更新しない
 - 検索語または作成日を変更したときは`cursor`を取り除く。「条件をクリア」は`query`、`created_from`、`created_to`、`cursor`を取り除いて先頭一覧へ戻す
-- URLの値からFormを復元する。検索・絞り込みの更新中は現在の結果を残し、検索PanelにSpinnerと「更新中」を表示する
+- URLの値からFormを復元する。検索・絞り込みの更新中はHeaderと現在の結果を残し、一覧領域だけにSpinnerと「施策を読み込んでいます」を表示する。戻る・進むではURLに対応するQuery Cacheを表示し、必要なときだけ結果領域を再取得する
 
 **施策IDで直接開く**
 
@@ -764,7 +768,7 @@ SC-02に統合した。会話一覧の表示と操作は、SC-02の「会話一�
 
 - `query`がない場合は作成日時の新しい順で20件ずつ表示し、`next_cursor`がある場合だけ「次の20件」を表示する
 - 2ページ目以降は「先頭へ」を表示する。前のCursorをAPIが返さないため「前のページ」は作らず、直前のページへはBrowser backで戻る
-- PaginationはLinkとしてSearch Paramsを更新する。`cursor`を利用者へ表示または解釈せず、意味検索中はPaginationを表示しない
+- PaginationはButtonで結果領域だけを取得し、成功後にSearch Paramsを更新する。`cursor`を利用者へ表示または解釈せず、意味検索中はPaginationを表示しない
 - ページ番号、全件数、「全N件」はAPIから取得できないため表示しない
 
 **空、Loading、Error**
@@ -774,7 +778,7 @@ SC-02に統合した。会話一覧の表示と操作は、SC-02の「会話一�
 | 施策が0件 | 「まだ施策がありません。Hiromeru AIと相談して、最初の施策を作成しましょう」＋「新しい施策を作る」 |
 | 検索・絞り込み結果が0件 | 「条件に合う施策がありません。検索語や作成日の範囲を変更してください」＋「検索条件をクリア」 |
 | 初期Loading | Headerと検索Panelを先に表示し、一覧部分に4行分のSkeletonを表示する |
-| 検索・絞り込み更新中 | 現在の一覧を残し、検索PanelにSpinnerと「更新中」を表示する |
+| 検索・絞り込み更新中 | Header・検索条件と現在の一覧を残し、結果領域にSpinnerと「施策を読み込んでいます」を表示する |
 | `EMBEDDING_FAILED` | 入力した検索語を残して「検索できませんでした」＋「もう一度検索」。条件をクリアすれば通常一覧へ戻れる |
 | `INTERNAL_ERROR` | 「施策を読み込めませんでした」＋「もう一度読み込む」 |
 | `400 INVALID_ARGUMENT`かつ`cursor`あり | 検索・作成日を維持して`cursor`だけを取り除き、先頭を1回再取得する。「ページの状態を復元できなかったため、先頭を表示しました」と通知する |
@@ -1007,7 +1011,7 @@ SC-02に統合した。会話一覧の表示と操作は、SC-02の「会話一�
 - 初期値との差がない間は「変更内容を保存」をDisabledにする。編集Mode中は「編集」を状態Label「編集中」へ置き換える
 - 「取消」は変更がなければ即座に表示Modeへ戻る。変更があれば「入力した変更を破棄しますか」の確認Modalを表示する
 - 保存前に「既存の施策内容を置き換えます」の確認Modalを表示する。確定Buttonは「置き換えて保存」、処理中はSpinnerと「保存中」とする
-- 保存中はForm、取消、チャットActionを無効にする。成功後はFormを閉じ、`router.refresh()`で成果、内容、投稿、記憶を含む最新データを表示し、Success Toast「施策を更新しました」を表示する
+- 保存中はForm、取消、チャットActionを無効にする。成功後はFormを閉じて表示中の施策を局所更新し、必要な関連情報だけを`GET /campaigns/{campaign_id}`で再取得する。画面全体の`router.refresh()`は行わない
 - 未保存の変更がある間にBack Link、チャットAction、Global navigation、Browser back、Reloadを行う場合は離脱を確認する
 
 **競合時**
@@ -1188,7 +1192,7 @@ Xへ公開済みの投稿を探し、投稿本文、対象施策、公開日時�
 **検索**
 
 - Label「投稿本文を検索」、検索Field、入力群の横のButton「検索」で構成する。Placeholderは「投稿本文を検索」とする。投稿IDへの暗黙検索は行わない
-- Trim後1文字以上の`query`をForm送信でURLへ反映する。Enterでも検索でき、空文字は`query`を取り除く
+- Trim後1文字以上の`query`をForm確定後のClient取得に渡す。Enterでも検索でき、空文字は`query`を取り除く。取得成功後にURLを更新する
 - 意味検索はURLを除いた投稿本文を対象に、関連度順で最大20件を表示する。`similarity`の数値は表示しない
 - 結果見出しは「『{query}』に近い投稿」、補足は「投稿本文をもとに関連度順で表示しています」とする
 - `query`と`campaign_id`、`published_from`、`published_to`は併用できる
@@ -1239,42 +1243,24 @@ Xへ公開済みの投稿を探し、投稿本文、対象施策、公開日時�
 **初期Loading**
 
 ```text
-投稿を読み込んでいます
-
-┌────────────────────┬──────────────┬──────────────┬────────┐
-│ ████████████████   │ ██████████   │ ██████████   │ ██████ │
-│ ██████████         │ ████████     │ ███████      │        │
-├────────────────────┼──────────────┼──────────────┼────────┤
-│ █████████████      │ █████████    │ █████████    │ █████  │
-│ ████████           │ ███████      │ ██████       │        │
-└────────────────────┴──────────────┴──────────────┴────────┘
+App ShellのNavigationは残す
+本文: ◌ 読み込み中です
 ```
 
-- Headerと検索・Filterを先に表示し、結果領域だけをPCでは4行分のTable Skeleton、SPでは3件分のCard Skeletonとする
-- Skeletonに偽の文字や数値を入れない。結果領域へ`aria-busy="true"`を設定し、共有Live regionから「投稿を読み込んでいます」を1回通知する
-- Reduced MotionではShimmerを停止し、静止したSkeleton SurfaceとLoading文言を残す
+- ページへの初回遷移はApp ShellのMain content内の共通`PageLoading`で表示する。取得済みの一覧で検索・絞り込み・並び替えを行う場合は、Headerと検索・Filterを維持して結果領域だけを更新する
 
 **検索・Filter・Sort・PaginationのLoading**
 
-| 操作 | ButtonのLoading label | Status strip |
-| --- | --- | --- |
-| 意味検索 | 検索中 | 投稿本文から関連する投稿を検索しています |
-| Filter適用 | 更新中 | 新しい条件で投稿一覧を更新しています |
-| 並び替え | 並び替え中 | 投稿一覧を並び替えています |
-| 次のページ | 次の20件を読み込み中 | 次の投稿を読み込んでいます |
-
-- 現在の結果が1件以上ある場合はTableまたはCardを残し、結果上部へSpinner付きStatus stripを表示する。結果をSkeletonへ戻さず、Overlayで覆わず、Opacityを下げない
-- 新しいResponseが完了するまでは、施策名の選択、結果見出し、並び順Labelを現在表示中の結果に対応した値で維持する
-- 現在の結果が0件の場合は、古い空状態を隠し、PCでは4行、SPでは3件のSkeletonとSpinner付きStatus stripを表示する。Loading中に「条件に合う投稿がありません」を表示しない
-- 完了後も0件ならSkeletonを該当する空状態へ置き換える。Loading文言だけで待機状態を表現しない
-- 施策の候補取得中はCombobox内にSpinnerと文言を表示し、ページ遷移中はApp ShellのMain content内のLoadingを表示する
-- 検索・Filter・SortではFocusを操作元に残し、結果更新だけで一覧先頭へ移動しない。Pagination完了時だけ、置き換わった結果見出しへFocusを移して新しいページの開始を伝える。完了時は共有Live regionから「投稿一覧を更新しました」と1回通知する
+- 検索・Filter・Sort・Paginationでは現在のTableまたはCardを保持し、結果領域だけにSpinnerと「投稿を読み込んでいます」を重ねる。App Shell、Header、検索FieldをLoadingへ戻さない
+- 現在の結果が0件の場合も取得完了までは0件確定の文言を出さず、結果領域にSpinnerと文言を表示する
+- 取得に成功したときだけ結果とURLを更新する。Browserの戻る・進むではURLの条件を読み直して結果だけ再取得する。新しいRequestが始まったら古いRequestをAbortし、古い結果で最新条件を上書きしない
+- 失敗時は現在の結果と入力Draftを残し、結果領域にErrorと再試行を表示する。施策の候補取得中はCombobox内だけにSpinnerと文言を表示する
 
 **ページング**
 
 - `query`がない場合は20件ずつ表示し、`next_cursor`がある場合だけ「次の20件」を表示する
 - 2ページ目以降は「先頭へ」を表示する。前のCursorをAPIが返さないため「前のページ」は作らず、直前のページへはBrowser backで戻る
-- Paginationは現在の施策、公開期間、並び順を維持したLinkとする。`cursor`を利用者へ表示または解釈しない
+- Paginationは現在の施策、公開期間、並び順を維持したButton操作とし、取得成功時だけURLの`cursor`を更新する。`cursor`を利用者へ表示または解釈しない
 - ページ番号、全件数、「全N件」はAPIから取得できないため表示しない
 
 **空、Error、Not found**
@@ -1292,15 +1278,15 @@ Xへ公開済みの投稿を探し、投稿本文、対象施策、公開日時�
 | `401 UNAUTHENTICATED` | SC-01へ移動し、ログイン後に検索条件を含む元URLへ戻す |
 
 - 更新に失敗し、現在の結果がある場合は結果を残し、「投稿一覧を更新できませんでした。現在は前回の結果を表示しています」とInline Errorを表示する
-- 更新に失敗し、現在の結果が0件の場合はSkeletonを取り除いてInline Errorを表示する。検索Errorを0件確定の空状態またはNotification Toastだけで表現しない
+- 更新に失敗し、現在の結果が0件の場合も結果領域にInline Errorを表示する。検索Errorを0件確定の空状態またはNotification Toastだけで表現しない
 - 入力した検索語とFilter DraftをError後も保持し、再試行できるようにする
 
 **Accessibilityと受け入れ条件**
 
 - `tablet`以上は4列Table、`tablet`未満はCardとなり、320px幅と200% Zoomで横Scrollを発生させない
-- Search、施策Combobox、公開日、Sort、Pagination、投稿LinkをKeyboardだけで操作できる
+- Search、施策Combobox、公開日、Sort、Pagination Button、投稿LinkをKeyboardだけで操作できる
 - Tableの列見出し、投稿本文、公開情報、PV、流入の読み上げ順が視覚順と一致する
-- LoadingはSpinner、Skeleton、具体的な文言で示し、文字だけ、Spinnerだけ、色だけに依存しない
+- LoadingはSpinnerと具体的な文言で示し、文字だけ、Spinnerだけ、色だけに依存しない
 - Initial Loading、更新中、完了、Errorを共有Live regionから必要な回数だけ通知し、ButtonとStatus stripの同文を重複して読み上げない
 - 長い投稿本文・施策名、4桁を超える数値、長い検索語でもLink、Bar、Badge、Buttonが重ならない
 - Reduced MotionでもFilter Panel、Loading、Error、結果の切替を理解できる
@@ -1726,7 +1712,7 @@ Xへ公開済みの投稿を探し、投稿本文、対象施策、公開日時�
 - Header内のLabel「開始日」「終了日」のdate Inputと、「適用」「全期間」で構成する。適用中の期間が全期間なら「全期間」はDisabled表示にする
 - UIの暦日は`Asia/Tokyo`として扱う。`published_from`には選択日のJST 00:00、排他的な`published_to`には終了日の翌日のJST 00:00をUTCのISO 8601へ変換して送る
 - 開始日が終了日より後の場合はFilter内へ「開始日は終了日以前の日付にしてください」を表示し、URLとAPI Requestを更新しない
-- 「期間を適用」は、検証済みの`published_from`と`published_to`で`router.push`する。空のFieldに対応するParamはURLから取り除く
+- 「期間を適用」は、検証済みの`published_from`と`published_to`で集計結果領域だけ再取得し、成功後にURLを更新する。空のFieldに対応するParamはURLから取り除く
 - 「全期間に戻す」は両方のParamsを取り除く。結果見出しは、指定なしを「集計期間: 全期間」、開始日だけを「集計期間: {開始日}以降」、終了日だけを「集計期間: {終了日}まで」、両方を「集計期間: {開始日}〜{終了日}」とする
 - URLの値からFilterを復元する。APIが返す`published_to`は排他的な翌日開始日時のため、Inputと結果見出しには利用者が選択した終了日を表示する
 
@@ -1767,7 +1753,7 @@ Xへ公開済みの投稿を探し、投稿本文、対象施策、公開日時�
 
 - 施策別結果は20件ずつ表示し、`next_cursor`がある場合だけ「次の20件」を表示する。`summary`はCursorに関係なく期間全体の集計として維持する
 - 2ページ目以降は「先頭へ」を表示する。直前のページへはBrowser backで戻り、ページ番号と全件数は表示しない
-- Paginationは期間条件を維持したLinkとし、`cursor`を利用者へ表示または解釈しない。期間を変更したときは`cursor`を取り除く
+- Paginationは期間条件を維持したButtonとし、結果領域だけ再取得して成功後にURLの`cursor`を更新する。期間を変更したときは`cursor`を取り除く
 - ページ更新中は現在のSummary、Graph、TableまたはCardを残し、ButtonへSpinnerと「次の20件を読み込み中」、Status stripへ「次の施策別結果を読み込んでいます」を表示する。完了後は結果見出しへFocusを移す
 
 **初期Loading**
@@ -1940,7 +1926,7 @@ Hiromeru AIが次の施策や投稿を考えるときに参照する長期記憶
 **検索と施策Filter**
 
 - Label「記憶を検索」、検索Field、Button「検索」で構成する。Placeholderは「記憶を検索」とする
-- Trim後1文字以上の`query`を確定したときだけ`router.push`でURLを更新する。Enterでも検索でき、空文字は`query`を取り除く
+- Trim後1文字以上の`query`を確定したときだけ結果領域を再取得し、成功後にURLを更新する。Enterでも検索でき、空文字は`query`を取り除く
 - 意味検索は`agent_memories.embedding`を対象に、関連度順で最大20件を表示する。`similarity`の数値は表示しない
 - 結果見出しは、条件なしを「蓄積した記憶」（視覚上は非表示）、`campaign_id`だけを「{施策名} の記憶」、`query`を「『{query}』に近い記憶」とする
 - `query`がある場合の補足は「記憶の内容をもとに関連度順で表示しています」とする。`query`がない場合は並び順の説明を表示しない
@@ -1992,7 +1978,7 @@ Hiromeru AIが次の施策や投稿を考えるときに参照する長期記憶
 
 - `query`がない場合は20件ずつ表示し、`next_cursor`がある場合だけ「次の20件」を表示する
 - 2ページ目以降は「先頭へ」を表示する。前のCursorをAPIが返さないため「前のページ」は作らず、直前のPageへはBrowser backで戻る
-- Paginationは現在の`campaign_id`を維持したLinkとし、`cursor`を利用者へ表示または解釈しない
+- Paginationは現在の`campaign_id`を維持したButtonとし、結果領域だけ再取得して成功後にURLの`cursor`を更新する
 - Page番号、全件数、「全N件」はAPIから取得できないため表示しない
 
 **削除確認Modal**
@@ -2196,7 +2182,7 @@ Hiromeru AIが次の施策や投稿を考えるときに参照する記憶です
 - SC-02の引継ぎでは、`campaign_id`と`intent=create_post|revise_campaign`、または`post_id`と`intent=discuss_post`の組だけを許可する。値の不足、組の不一致、2種類のIDの併存は、すべての引継ぎParamsを無視する
 - SC-07の`return_to`は、同一Originの相対URLでPathが正確に`/posts`となり、SC-06で許可されたSearch Paramsだけを有効な形式で含む場合に限り使用する。不正な値はAPIへ送らず、戻り先を`/posts`とする
 - SC-02の会話一覧を除く一覧のページングは、`cursor`をURLに持つ「次のページ」リンクにする。`cursor`は前へ戻れない（`API_DESIGN.md`の6.1）ため、ブラウザの戻る操作と「先頭へ」で戻る。意味検索（`query`あり）は、上位の件だけを返し、ページングしない
-- 検索・絞り込みの確定は、`router.push`でURLを更新する。`cursor`は、条件を変えたときに取り除く
+- 検索・絞り込みの確定は、結果領域だけ再取得して成功後にURLを更新する。`cursor`は、条件を変えたときに取り除く
 - SC-06の並び替えは、`sort`（`published_at`または`x_pv_count`）と`order`（`asc`または`desc`）をURLに持つ。並び替えを変えたときは、`cursor`を取り除く。`query`があるときは、`sort`と`order`を取り除く
 - SC-04、SC-06、SC-08の日付はUI上の`YYYY-MM-DD`としてURLに持つ。API Requestでは`Asia/Tokyo`の開始日00:00と終了日翌日00:00をUTCのISO 8601へ変換する。DBとAPIの日時はUTCとし、画面の日時表示は`Intl.DateTimeFormat`へ`timeZone: "Asia/Tokyo"`を指定する
 - SC-08は両方の日付を省略した場合に全期間とする。期間を変更したときは`cursor`を取り除く

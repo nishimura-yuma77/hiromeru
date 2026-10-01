@@ -3,7 +3,7 @@
 import { useReducer, useRef, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 
-import { login } from "@/features/auth/api/authClient";
+import { useLoginMutation } from "@/features/auth/queries/useLoginMutation";
 import {
   createInitialLoginState,
   loginReducer,
@@ -39,6 +39,7 @@ function loginErrorMessage(error: ApiError): { message: string; shouldReload: bo
 export function useLoginController({ nextPath, initialFormError }: UseLoginControllerOptions) {
   const router = useRouter();
   const [state, dispatch] = useReducer(loginReducer, initialFormError, createInitialLoginState);
+  const loginMutation = useLoginMutation();
   const emailRef = useRef<HTMLInputElement>(null);
   const passwordRef = useRef<HTMLInputElement>(null);
   const formErrorRef = useRef<HTMLDivElement>(null);
@@ -60,7 +61,7 @@ export function useLoginController({ nextPath, initialFormError }: UseLoginContr
     }
 
     try {
-      await login({ email, password: state.password });
+      await loginMutation.mutateAsync({ email, password: state.password });
       router.replace(nextPath);
       router.refresh();
     } catch (error) {

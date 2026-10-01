@@ -1,6 +1,5 @@
 import { browserApiRequest, redirectToLogin } from "@/shared/api/browserApiClient";
 import { ApiError, parseApiResponse } from "@/shared/api/ApiError";
-import type { CampaignListResponse } from "@/features/campaigns/types/campaign";
 
 import { parseCsrfToken, parseHistory, parseSession, parseSessionList, parseTurn } from "./parsers";
 import type {
@@ -34,12 +33,6 @@ export function getHistory(sessionId: number, signal: AbortSignal, before?: numb
 
 export function getTurn(sessionId: number, turnId: number, signal: AbortSignal) {
   return browserApiRequest<AgentTurn>(`${BASE_PATH}/${sessionId}/turns/${turnId}`, { parseData: parseTurn, signal });
-}
-
-export function searchActiveCampaigns(query: string, signal: AbortSignal) {
-  const params = new URLSearchParams({ limit: "20", archived: "false" });
-  if (query.trim()) params.set("query", query.trim());
-  return browserApiRequest<CampaignListResponse>(`/api/v1/campaigns?${params}`, { signal });
 }
 
 export type CampaignApprovalResult = { id: number; agent_turn_id: number; title: string };

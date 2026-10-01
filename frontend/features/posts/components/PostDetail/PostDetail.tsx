@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { Button } from "@/shared/components/Button/Button";
+import { usePostDetailQuery } from "@/features/posts/queries/postQueries";
 import { Disclosure } from "@/shared/components/Disclosure/Disclosure";
 
 import { useCopyUrlController } from "@/features/posts/controllers/useCopyUrlController";
@@ -23,7 +24,8 @@ function formatDate(value: string | null): string {
 }
 
 export function PostDetail({ detail, returnTo }: { detail: PostDetailResponse; returnTo: string }) {
-  const { post, campaign, metrics, tracking } = detail;
+  const detailQuery = usePostDetailQuery(detail.post.post_id);
+  const { post, campaign, metrics, tracking } = detailQuery.data ?? detail;
   const copyController = useCopyUrlController();
 
   return (

@@ -3,7 +3,7 @@
 import { useReducer } from "react";
 import { useRouter } from "next/navigation";
 
-import { logout } from "@/features/auth/api/authClient";
+import { useLogoutMutation } from "@/features/auth/queries/useLogoutMutation";
 
 type LogoutState = { isPending: boolean; error: string | null };
 type LogoutEvent = { type: "started" } | { type: "failed" };
@@ -20,6 +20,7 @@ function reducer(state: LogoutState, event: LogoutEvent): LogoutState {
 export function useLogoutController() {
   const router = useRouter();
   const [state, dispatch] = useReducer(reducer, { isPending: false, error: null });
+  const mutation = useLogoutMutation();
 
   async function onLogout() {
     if (state.isPending) {
@@ -27,7 +28,7 @@ export function useLogoutController() {
     }
     dispatch({ type: "started" });
     try {
-      await logout();
+      await mutation.mutateAsync();
       router.replace("/login");
       router.refresh();
     } catch {

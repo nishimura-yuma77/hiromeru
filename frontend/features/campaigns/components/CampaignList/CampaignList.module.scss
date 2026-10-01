@@ -101,6 +101,8 @@
   p { color: var(--color-text-secondary); font-size: var(--font-size-sm); margin: var(--space-1) 0 0; }
 }
 
+.results { min-block-size: 12rem; position: relative; }
+
 .tableWrap { margin: var(--space-5); overflow-x: auto; }
 
 .table {

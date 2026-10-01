@@ -10,6 +10,7 @@
 .campaignField { inline-size: min(100%, 19rem); }
 .clearLink { align-items: center; color: var(--color-brand-strong); display: inline-flex; font-size: var(--font-size-sm); min-block-size: var(--control-min-height); padding-inline: var(--space-2); }
 .resultHeading { padding: var(--space-4) var(--space-5) 0; }
+.results { min-block-size: 12rem; position: relative; }
 .resultHeading h2 { font-size: var(--font-size-md); margin: 0; }
 .resultHeading p { color: var(--color-text-secondary); font-size: var(--font-size-xs); margin: var(--space-1) 0 0; }
 .list { display: grid; gap: var(--space-3); padding: var(--space-5); }

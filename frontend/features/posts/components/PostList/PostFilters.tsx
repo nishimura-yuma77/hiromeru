@@ -1,10 +1,11 @@
 "use client";
 
-import Link from "next/link";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 
-import { searchCampaigns, type CampaignOption } from "@/features/posts/api/searchCampaigns";
-import type { PostListParams } from "@/features/posts/utils/postParams";
+import type { CampaignOption } from "@/features/campaigns/queries/campaignKeys";
+import { useCampaignOptionsQuery } from "@/features/campaigns/queries/campaignQueries";
+import type { CampaignListItem } from "@/features/campaigns/types/campaign";
+import { parsePostListParams, type PostListParams } from "@/features/posts/utils/postParams";
 import { Button } from "@/shared/components/Button/Button";
 import { Input } from "@/shared/components/Input/Input";
 import { Disclosure } from "@/shared/components/Disclosure/Disclosure";
@@ -12,63 +13,77 @@ import { SearchCombobox } from "@/shared/components/SearchCombobox/SearchCombobo
 
 import styles from "./PostList.module.scss";
 
-export function PostFilters({ params, selectedCampaign }: { params: PostListParams; selectedCampaign: CampaignOption | null }) {
+export function PostFilters({ params, selectedCampaign, onApply }: {
+  params: PostListParams;
+  selectedCampaign: CampaignOption | null;
+  onApply: (params: PostListParams, campaign: CampaignOption | null) => void;
+}) {
   const [value, setValue] = useState(selectedCampaign?.title ?? "");
   const [selectedId, setSelectedId] = useState<number | null>(selectedCampaign?.id ?? null);
-  const [options, setOptions] = useState<CampaignOption[]>([]);
   const [expanded, setExpanded] = useState(false);
-  const [loading, setLoading] = useState(false);
-  const [searchError, setSearchError] = useState("");
   const [fieldError, setFieldError] = useState("");
+  const [debounced, setDebounced] = useState(value.trim());
   const formRef = useRef<HTMLFormElement>(null);
 
   useEffect(() => {
-    if (!expanded) return;
-    const controller = new AbortController();
-    const timer = window.setTimeout(async () => {
-      setLoading(true);
-      setSearchError("");
-      try {
-        const response = await searchCampaigns(value.trim(), controller.signal);
-        if (!controller.signal.aborted) {
-          setOptions(response.campaigns);
-        }
-      } catch {
-        if (!controller.signal.aborted) {
-          setOptions([]);
-          setSearchError("施策を検索できませんでした。もう一度入力してください。");
-        }
-      } finally {
-        if (!controller.signal.aborted) setLoading(false);
-      }
-    }, 300);
-    return () => { window.clearTimeout(timer); controller.abort(); };
-  }, [expanded, value]);
+    const timer = window.setTimeout(() => setDebounced(value.trim()), 300);
+    return () => window.clearTimeout(timer);
+  }, [value]);
 
-  function choose(campaign: CampaignOption) {
+  const candidates = useCampaignOptionsQuery({ query: debounced, enabled: expanded });
+  const options = candidates.data?.campaigns ?? [];
+  const loading = expanded && (debounced !== value.trim() || candidates.isFetching);
+  const searchError = candidates.error instanceof Error ? candidates.error.message : "";
+
+  function choose(campaign: CampaignListItem) {
     setValue(campaign.title);
     setSelectedId(campaign.id);
     setFieldError("");
-    window.setTimeout(() => formRef.current?.requestSubmit(), 0);
+    applyFilters(formRef.current, campaign);
   }
 
-  function validate(event: FormEvent<HTMLFormElement>) {
-    if (value.trim() && selectedId === null) {
-      event.preventDefault();
+  function applyFilters(form: HTMLFormElement | null, campaignOverride?: CampaignOption) {
+    if (!form) return;
+    const campaignId = campaignOverride?.id ?? selectedId;
+    if (value.trim() && campaignId === null) {
       setExpanded(true);
       setFieldError("候補から施策を選択してください。");
       return;
     }
-    const from = event.currentTarget.elements.namedItem("published_from") as HTMLInputElement;
-    const to = event.currentTarget.elements.namedItem("published_to") as HTMLInputElement;
+    const from = form.elements.namedItem("published_from") as HTMLInputElement;
+    const to = form.elements.namedItem("published_to") as HTMLInputElement;
     to.setCustomValidity("");
     if (from.value && to.value && from.value > to.value) {
-      event.preventDefault();
       to.setCustomValidity("終了日は開始日以降の日付を指定してください。");
       to.reportValidity();
+      return;
     }
-    const query = event.currentTarget.elements.namedItem("query") as HTMLInputElement;
-    if (query.value.trim()) (event.currentTarget.elements.namedItem("sort") as HTMLSelectElement).disabled = true;
+    const fields = Object.fromEntries(new FormData(form).entries()) as Record<string, string>;
+    fields.campaign_id = campaignId === null ? "" : String(campaignId);
+    if (fields.query?.trim()) delete fields.sort;
+    const campaign = campaignOverride ?? (campaignId === selectedCampaign?.id ? selectedCampaign : options.find((option) => option.id === campaignId) ?? null);
+    onApply(parsePostListParams(fields), campaign);
+  }
+
+  function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    applyFilters(event.currentTarget);
+  }
+
+  function clearFilters() {
+    setValue("");
+    setSelectedId(null);
+    setFieldError("");
+    setExpanded(false);
+    const form = formRef.current;
+    if (form) {
+      (form.elements.namedItem("query") as HTMLInputElement).value = "";
+      (form.elements.namedItem("published_from") as HTMLInputElement).value = "";
+      const to = form.elements.namedItem("published_to") as HTMLInputElement;
+      to.value = "";
+      to.setCustomValidity("");
+    }
+    onApply(parsePostListParams({}), null);
   }
 
   const hasAdvancedFilters = Boolean(params.publishedFrom || params.publishedTo);
@@ -76,7 +91,7 @@ export function PostFilters({ params, selectedCampaign }: { params: PostListPara
   return (
     <section className={styles.filters} aria-labelledby="post-filter-title">
       <h2 className={styles.visuallyHidden} id="post-filter-title">投稿を探す</h2>
-      <form ref={formRef} id="post-filters" action="/posts" method="get" className={styles.filterForm} onSubmit={validate}>
+      <form ref={formRef} id="post-filters" className={styles.filterForm} onSubmit={submit}>
         <div className={styles.searchField}>
           <label className={styles.visuallyHidden} htmlFor="post-query">投稿本文を検索</label>
           <Input id="post-query" type="search" name="query" defaultValue={params.query} maxLength={1000} placeholder="投稿本文を検索"
@@ -85,8 +100,8 @@ export function PostFilters({ params, selectedCampaign }: { params: PostListPara
         </div>
         <div className={styles.campaignField}>
           <SearchCombobox id="post-campaign-filter" label="施策で絞り込み" hideLabel value={value} placeholder="施策で絞り込み"
-            onValueChange={(nextValue) => { setValue(nextValue); setSelectedId(null); setOptions([]); setLoading(true); setFieldError(""); setSearchError(""); }}
-            options={options} onSelect={choose} open={expanded} onOpenChange={(nextOpen) => { if (nextOpen && !expanded) setLoading(true); setExpanded(nextOpen); }}
+            onValueChange={(nextValue) => { setValue(nextValue); setSelectedId(null); setFieldError(""); }}
+            options={options} onSelect={choose} open={expanded} onOpenChange={setExpanded}
             loading={loading} searchError={searchError} fieldError={fieldError}
             renderOption={(campaign) => <>{campaign.title}{campaign.archived_at ? "（アーカイブ済み）" : ""}</>}
           />
@@ -104,7 +119,7 @@ export function PostFilters({ params, selectedCampaign }: { params: PostListPara
         </label>
         <div className={styles.filterActions}>
           <Button type="submit" size="small">検索</Button>
-          <Link href="/posts">条件をクリア</Link>
+          <Button variant="ghost" size="small" onClick={clearFilters}>条件をクリア</Button>
         </div>
       </form>
       <div className={styles.advancedFilters}>

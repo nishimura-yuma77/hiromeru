@@ -2,18 +2,25 @@
 
 import type { FormEvent } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { Button } from "@/shared/components/Button/Button";
 import { Input } from "@/shared/components/Input/Input";
 import { Disclosure } from "@/shared/components/Disclosure/Disclosure";
+import { ListStatus } from "@/shared/components/ListStatus/ListStatus";
+import { useInvalidCursorRecovery, useQueryNavigation } from "@/shared/lib/useQueryNavigation";
 
 import type {
   CampaignListItem,
   CampaignListResponse,
   MetricsSummary,
 } from "@/features/campaigns/types/campaign";
+import { listCampaignsBrowser } from "@/features/campaigns/api/listCampaignsBrowser";
+import { campaignKeys } from "@/features/campaigns/queries/campaignKeys";
+import { useCampaignListQuery } from "@/features/campaigns/queries/campaignQueries";
 import {
   campaignPageHref,
   parsePositiveId,
+  parseCampaignListParams,
   type CampaignListParams,
 } from "@/features/campaigns/utils/campaignParams";
 
@@ -192,33 +199,63 @@ type CampaignListProps = {
   params: CampaignListParams;
 };
 
-export function CampaignList({ response, params }: CampaignListProps) {
+function parseCampaignSearch(search: string) {
+  return parseCampaignListParams(Object.fromEntries(new URLSearchParams(search)));
+}
+
+function campaignHref(params: CampaignListParams) {
+  return campaignPageHref(params, params.cursor || undefined);
+}
+function withoutCampaignCursor(params: CampaignListParams) { return params.cursor ? { ...params, cursor: "" } : null; }
+
+export function CampaignList({ response: initialResponse }: CampaignListProps) {
+  const router = useRouter();
+  const navigation = useQueryNavigation({
+    parse: parseCampaignSearch,
+    key: campaignKeys.list,
+    fetch: listCampaignsBrowser,
+    href: campaignHref,
+    withoutCursor: withoutCampaignCursor,
+    fallbackError: "施策を読み込めませんでした。",
+  });
+  const { params } = navigation;
+  const query = useCampaignListQuery(params);
+  useInvalidCursorRecovery(query.error, params, withoutCampaignCursor, navigation.apply);
+  const response = query.data ?? initialResponse;
+  const loading = navigation.pending || query.isFetching;
+  const error = navigation.pending ? "" : navigation.error || (query.error instanceof Error ? query.error.message : "");
+  const load = (nextParams: CampaignListParams) => void navigation.apply(nextParams);
   const hasAdvancedFilters = Boolean(params.createdFrom || params.createdTo);
   const hasFilters = Boolean(
     params.query || params.archived !== "all" || hasAdvancedFilters,
   );
 
   function validateDateRange(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
     const form = event.currentTarget;
     const from = form.elements.namedItem("created_from") as HTMLInputElement;
     const to = form.elements.namedItem("created_to") as HTMLInputElement;
     from.setCustomValidity("");
     to.setCustomValidity("");
     if (from.value && to.value && from.value > to.value) {
-      event.preventDefault();
       to.setCustomValidity("終了日は開始日以降の日付を指定してください。");
       to.reportValidity();
+      return;
     }
+    const fields = Object.fromEntries(new FormData(form).entries()) as Record<string, string>;
+    void load(parseCampaignListParams(fields));
   }
 
   function validateDirectId(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
     const input = event.currentTarget.elements.namedItem("id") as HTMLInputElement;
     input.setCustomValidity("");
     if (parsePositiveId(input.value.trim()) === null) {
-      event.preventDefault();
       input.setCustomValidity("施策IDは1以上の整数で入力してください。");
       input.reportValidity();
+      return;
     }
+    router.push(`/campaigns/${input.value.trim()}`);
   }
 
   return (
@@ -230,7 +267,7 @@ export function CampaignList({ response, params }: CampaignListProps) {
 
       <section className={styles.filters} aria-labelledby="campaign-search-title">
         <h2 className={styles.srOnly} id="campaign-search-title">施策を探す</h2>
-        <form action="/campaigns" method="get" id="campaign-filters" className={styles.filterForm} onSubmit={validateDateRange}>
+        <form key={`${params.query}:${params.archived}`} id="campaign-filters" className={styles.filterForm} onSubmit={validateDateRange}>
           <label className={styles.searchField}>
             <span className={styles.srOnly}>施策を検索</span>
             <Input
@@ -262,17 +299,17 @@ export function CampaignList({ response, params }: CampaignListProps) {
               </label>
               <label>
                 <span>作成日の終了</span>
-                <Input form="campaign-filters" type="date" name="created_to" defaultValue={params.createdTo} />
+                 <Input form="campaign-filters" type="date" name="created_to" defaultValue={params.createdTo} onInput={(event) => event.currentTarget.setCustomValidity("")} />
               </label>
               <div className={styles.filterActions}>
                 <Button form="campaign-filters" size="small" type="submit">条件を適用</Button>
-                <Link href="/campaigns">条件をクリア</Link>
+                 <Button variant="ghost" size="small" onClick={() => void load(parseCampaignListParams({}))}>条件をクリア</Button>
               </div>
             </div>
-            <form action="/campaigns/open" method="get" className={styles.idForm} onSubmit={validateDirectId}>
+            <form className={styles.idForm} onSubmit={validateDirectId}>
               <label>
                 <span>施策IDで直接開く</span>
-                <Input type="text" name="id" inputMode="numeric" pattern="[1-9][0-9]*" required />
+                <Input type="text" name="id" inputMode="numeric" pattern="[1-9][0-9]*" required onInput={(event) => event.currentTarget.setCustomValidity("")} />
               </label>
               <Button size="small" type="submit">開く</Button>
             </form>
@@ -281,7 +318,8 @@ export function CampaignList({ response, params }: CampaignListProps) {
         </div>
       </section>
 
-      <section aria-labelledby="campaign-results-title">
+       <section className={styles.results} aria-labelledby="campaign-results-title">
+          <ListStatus loading={loading} error={error} onRetry={() => navigation.error ? navigation.retry() : void query.refetch()} loadingLabel="施策を読み込んでいます" />
         <div className={params.query ? styles.resultHeading : styles.srOnly}>
           <h2 id="campaign-results-title">{params.query ? `「${params.query}」に近い施策` : "施策一覧"}</h2>
           {params.query ? <p>施策の内容をもとに関連度順で表示しています。</p> : null}
@@ -291,7 +329,7 @@ export function CampaignList({ response, params }: CampaignListProps) {
           <div className={styles.empty}>
             <h3>{hasFilters ? "条件に合う施策がありません" : "まだ施策がありません"}</h3>
             <p>{hasFilters ? "検索語や作成日の範囲を変更してください。" : "Hiromeru AIと相談して、最初の施策を作成しましょう。"}</p>
-            <Link href={hasFilters ? "/campaigns" : "/chat/new"}>{hasFilters ? "検索条件をクリア" : "新しい施策を作る"}</Link>
+             {hasFilters ? <Button variant="ghost" size="small" onClick={() => void load(parseCampaignListParams({}))}>検索条件をクリア</Button> : <Link href="/chat/new">新しい施策を作る</Link>}
           </div>
         ) : (
           <>
@@ -302,8 +340,8 @@ export function CampaignList({ response, params }: CampaignListProps) {
 
         {!params.query && (params.cursor || response.next_cursor) ? (
           <nav className={styles.pagination} aria-label="施策一覧のページ移動">
-            {params.cursor ? <Link href={campaignPageHref(params)}>先頭へ</Link> : null}
-            {response.next_cursor ? <Link href={campaignPageHref(params, response.next_cursor)}>次の20件</Link> : null}
+             {params.cursor ? <Button variant="ghost" size="small" disabled={loading} onClick={() => void load({ ...params, cursor: "" })}>先頭へ</Button> : null}
+             {response.next_cursor ? <Button variant="ghost" size="small" disabled={loading} onClick={() => void load({ ...params, cursor: response.next_cursor ?? "" })}>次の20件</Button> : null}
           </nav>
         ) : null}
       </section>

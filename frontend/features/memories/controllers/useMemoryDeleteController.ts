@@ -1,26 +1,25 @@
 "use client";
 
 import { useReducer } from "react";
-import { useRouter } from "next/navigation";
 
-import { deleteMemory } from "@/features/memories/api/deleteMemory";
+import { useDeleteMemoryMutation } from "@/features/memories/queries/useDeleteMemoryMutation";
 import {
   initialMemoryDeleteState,
   memoryDeleteReducer,
 } from "@/features/memories/state/memoryDeleteReducer";
 
-export function useMemoryDeleteController() {
-  const router = useRouter();
+export function useMemoryDeleteController(onDeleted: (memoryId: number) => void) {
   const [state, dispatch] = useReducer(memoryDeleteReducer, initialMemoryDeleteState);
+  const deleteMutation = useDeleteMemoryMutation();
 
   async function confirmDelete() {
     const memoryId = state.selectedId;
     if (memoryId === null || state.isPending) return;
     dispatch({ type: "deleteStarted" });
     try {
-      await deleteMemory(memoryId);
+      await deleteMutation.mutateAsync(memoryId);
       dispatch({ type: "deleteSucceeded", memoryId });
-      router.refresh();
+      onDeleted(memoryId);
     } catch {
       dispatch({ type: "deleteFailed", message: "記憶を削除できませんでした。もう一度お試しください。" });
     }

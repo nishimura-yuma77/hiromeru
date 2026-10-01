@@ -424,21 +424,23 @@ controllerは業務ルールの正本にならない。入力の最終検証、�
 - **必須:** 状態変更Requestを暗黙に自動再試行しない
 - **必須:** Backendが`CSRF_VALIDATION_FAILED`を返した場合だけ、CSRF Token再発行後に元Requestを1回再送する。承認Requestは同じ`Idempotency-Key`を維持し、2回目のCSRF Errorでは停止する
 - **必須:** 更新中は同じ操作の重複実行を防ぐ
-- **必須:** 更新成功後は必要に応じて`router.refresh()`し、Server Componentの表示を再取得する
+- **必須:** 更新成功後は影響を受ける表示を更新する。一覧・詳細のClient側で管理する結果は局所的に更新または必要な情報だけ再取得し、Server Componentの表示を再取得する必要がある場合に限り`router.refresh()`する
 - **必須:** API Errorを共通の`ApiError`へ正規化する
 - **必須:** Idempotency-Keyが必要な更新では、同じ承認操作の再送に同じKeyを使用する
 
 ### 11.3 Client側の再取得
 
-検索候補、PollingなどClient側の再取得が必要な場合だけ個別実装を許可する。
+検索候補、Pollingに加え、認証後の施策・投稿・計測結果・記憶一覧の検索、絞り込み、並び替え、ページ送りでは、App Shellと入力Draftを維持するためTanStack Queryで結果領域だけを再取得する。初回アクセスは11.1に従いServer Componentで取得し、Query CacheへHydrateする。
 
 - **必須:** Server Componentで実現できない理由をPull Requestへ記載する
 - **必須:** 責務別controllerまたは専用Hookへ閉じ込め、UI Componentから直接Requestしない
 - **必須:** `AbortSignal`を使用し、古いRequestを中断できるようにする
 - **必須:** 検索Requestは入力Eventから開始し、必要に応じてdebounceする
+- **必須:** 一覧の再取得中は現在の結果とApp Shellを保持し、対象領域だけにLoadingとErrorを表示する。取得成功後にURLの検索条件を更新し、戻る・進むでは`useSearchParams`をQuery Keyへ反映する
 - **必須:** PollingのTimer登録と解除だけをEffectで扱い、Request関数をEffect本体へ直接記述しない
 - **必須:** Pollingを停止する条件、間隔、Error時の扱いを明示する
-- **推奨:** Client再取得の仕組みをFeature間で安易に共通化しない
+- **必須:** Query Keyと`useXxxQuery`/`useXxxMutation`はFeatureごとに定義する。TanStack Queryの`signal`をAPI Clientへ渡し、更新後は影響するQuery Cacheを更新またはInvalidateする
+- **推奨:** 汎用のデータ取得Hookを自作せず、URL確定の補助処理だけを共通化する。Paramsの解釈・API Path・期限切れCursorの回復はFeatureに置く
 
 ## 12. useEffect規約
 

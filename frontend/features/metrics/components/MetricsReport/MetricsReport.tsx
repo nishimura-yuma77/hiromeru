@@ -1,9 +1,17 @@
+"use client";
+
 import Link from "next/link";
+import type { FormEvent } from "react";
 import { Button } from "@/shared/components/Button/Button";
 import { Input } from "@/shared/components/Input/Input";
+import { ListStatus } from "@/shared/components/ListStatus/ListStatus";
+import { useInvalidCursorRecovery, useQueryNavigation } from "@/shared/lib/useQueryNavigation";
 
+import { getMetricsReportBrowser } from "@/features/metrics/api/getMetricsReportBrowser";
+import { metricsKeys } from "@/features/metrics/queries/metricsKeys";
+import { useMetricsReportQuery } from "@/features/metrics/queries/metricsQueries";
 import type { CampaignMetrics, MetricsReportResponse, MetricsSummary } from "@/features/metrics/types/metrics";
-import { metricsPageHref, type MetricsParams } from "@/features/metrics/utils/metricsParams";
+import { metricsPageHref, parseMetricsParams, type MetricsParams } from "@/features/metrics/utils/metricsParams";
 import { MetricBar } from "@/shared/components/MetricBar/MetricBar";
 
 import styles from "./MetricsReport.module.scss";
@@ -89,7 +97,45 @@ function CampaignName({ campaign, params, linked = true }: { campaign: CampaignM
   );
 }
 
-export function MetricsReport({ report, params }: { report: MetricsReportResponse; params: MetricsParams }) {
+function parseMetricsSearch(search: string) {
+  return parseMetricsParams(Object.fromEntries(new URLSearchParams(search)));
+}
+
+function metricsHref(params: MetricsParams) {
+  return metricsPageHref(params, params.cursor || undefined);
+}
+function withoutMetricsCursor(params: MetricsParams) { return params.cursor ? { ...params, cursor: "" } : null; }
+
+export function MetricsReport({ report: initialReport }: { report: MetricsReportResponse; params: MetricsParams }) {
+  const navigation = useQueryNavigation({
+    parse: parseMetricsSearch,
+    key: metricsKeys.report,
+    fetch: getMetricsReportBrowser,
+    href: metricsHref,
+    withoutCursor: withoutMetricsCursor,
+    fallbackError: "計測結果を読み込めませんでした。",
+  });
+  const { params } = navigation;
+  const query = useMetricsReportQuery(params);
+  useInvalidCursorRecovery(query.error, params, withoutMetricsCursor, navigation.apply);
+  const report = query.data ?? initialReport;
+  const loading = navigation.pending || query.isFetching;
+  const error = navigation.pending ? "" : navigation.error || (query.error instanceof Error ? query.error.message : "");
+  const load = (nextParams: MetricsParams) => void navigation.apply(nextParams);
+
+  function submitPeriod(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const from = form.elements.namedItem("published_from") as HTMLInputElement;
+    const to = form.elements.namedItem("published_to") as HTMLInputElement;
+    to.setCustomValidity("");
+    if (from.value && to.value && from.value > to.value) {
+      to.setCustomValidity("終了日は開始日以降の日付を指定してください。");
+      to.reportValidity();
+      return;
+    }
+    void load(parseMetricsParams(Object.fromEntries(new FormData(form).entries()) as Record<string, string>));
+  }
   const rates = report.campaigns.flatMap((campaign) => campaign.landing_rate === null ? [] : [campaign.landing_rate * 100]);
   const scaleMax = Math.max(0, ...rates);
   const summaryReason = rateUnavailableReason(report.summary);
@@ -100,16 +146,17 @@ export function MetricsReport({ report, params }: { report: MetricsReportRespons
     <main id="main-content" className={styles.page}>
       <header className={styles.header}>
         <h1>計測結果</h1>
-        <form action="/metrics" method="get" className={styles.periodForm} aria-label="集計期間">
+        <form key={`${params.publishedFrom}:${params.publishedTo}`} className={styles.periodForm} aria-label="集計期間" onSubmit={submitPeriod}>
           <label><span>開始日</span><Input type="date" name="published_from" defaultValue={params.publishedFrom} /></label>
           <span className={styles.periodSeparator} aria-hidden="true">〜</span>
-          <label><span>終了日</span><Input type="date" name="published_to" defaultValue={params.publishedTo} /></label>
+          <label><span>終了日</span><Input type="date" name="published_to" defaultValue={params.publishedTo} onInput={(event) => event.currentTarget.setCustomValidity("")} /></label>
           <Button size="small" type="submit">適用</Button>
-          {params.publishedFrom || params.publishedTo ? <Link href="/metrics">全期間</Link> : <span className={styles.disabledAction}>全期間</span>}
+          {params.publishedFrom || params.publishedTo ? <Button variant="ghost" size="small" onClick={() => void load(parseMetricsParams({}))}>全期間</Button> : <span className={styles.disabledAction}>全期間</span>}
         </form>
       </header>
 
       <div className={styles.body}>
+      <ListStatus loading={loading} error={error} onRetry={() => navigation.error ? navigation.retry() : void query.refetch()} loadingLabel="計測結果を読み込んでいます" />
       <p className={styles.period}>集計期間: {periodLabel(params)} <span>（日本時間・終了日を含む）</span></p>
 
       <section className={styles.summary} aria-labelledby="overall-metrics-title">
@@ -208,8 +255,8 @@ export function MetricsReport({ report, params }: { report: MetricsReportRespons
         )}
         {params.cursor || report.next_cursor ? (
           <nav className={styles.pagination} aria-label="施策別集計のページ移動">
-            {params.cursor ? <Link href={metricsPageHref(params)}>先頭へ</Link> : null}
-            {report.next_cursor ? <Link href={metricsPageHref(params, report.next_cursor)}>次の20件</Link> : null}
+            {params.cursor ? <Button variant="ghost" size="small" disabled={loading} onClick={() => void load({ ...params, cursor: "" })}>先頭へ</Button> : null}
+            {report.next_cursor ? <Button variant="ghost" size="small" disabled={loading} onClick={() => void load({ ...params, cursor: report.next_cursor ?? "" })}>次の20件</Button> : null}
           </nav>
         ) : null}
       </section>

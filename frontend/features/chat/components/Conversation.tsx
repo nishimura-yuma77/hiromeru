@@ -2,8 +2,10 @@
 
 import Link from "next/link";
 import { useEffect, useEffectEvent, useReducer, useRef, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 
-import { getCampaign } from "@/features/campaigns/api/getCampaign";
+import { campaignKeys } from "@/features/campaigns/queries/campaignKeys";
+import { useCampaignLabelQuery, useCampaignOptionsQuery } from "@/features/campaigns/queries/campaignQueries";
 import type { CampaignListItem } from "@/features/campaigns/types/campaign";
 import { ApiError } from "@/shared/api/ApiError";
 import { Button } from "@/shared/components/Button/Button";
@@ -13,7 +15,7 @@ import { Spinner } from "@/shared/components/Spinner/Spinner";
 import { Input } from "@/shared/components/Input/Input";
 
 import { ClarificationCard } from "./ClarificationCard";
-import { approveCampaign, approveXPost, searchActiveCampaigns } from "../api";
+import { useApproveCampaignMutation, useApprovePostMutation } from "../queries/chatMutations";
 import { useChatController } from "../controller";
 import type { AgentTurn, ApprovalAction, ApprovalState, CampaignProposal, ClarificationAnswer, SecurityNotice, SessionHistory, TurnItem, XPostProposal } from "../types";
 import styles from "../styles/Chat.module.scss";
@@ -202,45 +204,29 @@ function CampaignCombobox({ disabled, error, idPrefix, onChange, onArchived, val
   value: number;
 }) {
   const [query, setQuery] = useState("");
-  const [options, setOptions] = useState<CampaignListItem[]>([]);
   const [open, setOpen] = useState(false);
-  const [loading, setLoading] = useState(false);
-  const [searchError, setSearchError] = useState("");
-  const [selectedTitle, setSelectedTitle] = useState(`施策ID ${value}`);
+  const [debounced, setDebounced] = useState(query.trim());
+  const client = useQueryClient();
+  const label = useCampaignLabelQuery(value > 0 ? value : null);
+  const candidates = useCampaignOptionsQuery({ query: debounced, archived: false, enabled: open && !disabled });
+  const options = candidates.data?.campaigns ?? [];
+  const loading = open && !disabled && (debounced !== query.trim() || candidates.isFetching);
+  const searchError = candidates.error instanceof Error ? candidates.error.message : "";
   const inputId = `proposal-${idPrefix}-campaign_id`;
   const notifyArchived = useEffectEvent(onArchived);
 
   useEffect(() => {
-    let active = true;
-    void getCampaign(value).then(({ campaign }) => {
-      if (!active) return;
-      setSelectedTitle(campaign.title);
-      if (campaign.archived_at) notifyArchived("この施策はアーカイブ済みのため、投稿先に選択できません。");
-    }).catch(() => { /* The searchable list remains available if the current label cannot be restored. */ });
-    return () => { active = false; };
-  }, [value]);
+    if (label.data?.archived_at) notifyArchived("この施策はアーカイブ済みのため、投稿先に選択できません。");
+  }, [label.data?.archived_at]);
 
   useEffect(() => {
-    if (!open || disabled) return;
-    const controller = new AbortController();
-    const timeout = window.setTimeout(() => {
-      setLoading(true);
-      setSearchError("");
-      void searchActiveCampaigns(query, controller.signal).then((response) => {
-        if (!controller.signal.aborted) setOptions(response.campaigns);
-      }).catch((loadError) => {
-        if (!controller.signal.aborted && !(loadError instanceof DOMException && loadError.name === "AbortError")) setSearchError("施策を検索できませんでした。もう一度お試しください。");
-      }).finally(() => { if (!controller.signal.aborted) setLoading(false); });
-    }, 300);
-    return () => {
-      window.clearTimeout(timeout);
-      controller.abort();
-    };
-  }, [query, open, disabled]);
+    const timer = window.setTimeout(() => setDebounced(query.trim()), 300);
+    return () => window.clearTimeout(timer);
+  }, [query]);
 
   function select(option: CampaignListItem) {
     onChange(String(option.id));
-    setSelectedTitle(option.title);
+    client.setQueryData(campaignKeys.label(option.id), option);
     setQuery(option.title);
   }
 
@@ -251,11 +237,11 @@ function CampaignCombobox({ disabled, error, idPrefix, onChange, onArchived, val
         label="対象施策"
         type="search"
         value={query}
-        onValueChange={(nextQuery) => { setQuery(nextQuery); setOptions([]); setLoading(true); setSearchError(""); }}
+        onValueChange={setQuery}
         options={options}
         onSelect={select}
         open={open}
-        onOpenChange={(nextOpen) => { if (nextOpen && !open) setLoading(true); setOpen(nextOpen); }}
+        onOpenChange={setOpen}
         loading={loading}
         searchError={searchError}
         fieldError={error}
@@ -263,7 +249,7 @@ function CampaignCombobox({ disabled, error, idPrefix, onChange, onArchived, val
         placeholder="施策名で検索"
         renderOption={(option) => <>{option.title} <span>ID {option.id}</span></>}
       />
-      <p className={styles.selectedCampaign}>選択中: {selectedTitle}（ID {value}）</p>
+      <p className={styles.selectedCampaign}>選択中: {label.data?.title ?? `施策ID ${value}`}（ID {value}）</p>
     </div>
   );
 }
@@ -279,6 +265,8 @@ function ProposalForm({ actionable, item, sessionId, audits, refreshHistory, sen
 }) {
   const campaign = item.type === "campaign_proposal";
   const [state, proposalDispatch] = useReducer(proposalReducer, item.content, initialProposalState);
+  const campaignMutation = useApproveCampaignMutation();
+  const postMutation = useApprovePostMutation();
   const { values, confirming, submitting, generalError, fieldErrors, success, revising, revision } = state;
   const keyRef = useRef<{ signature: string; key: string } | null>(null);
   const approveButtonRef = useRef<HTMLButtonElement>(null);
@@ -365,10 +353,10 @@ function ProposalForm({ actionable, item, sessionId, audits, refreshHistory, sen
       while (true) {
         try {
           if (campaign) {
-            const result = await approveCampaign(sessionId, values as CampaignProposal, key);
+             const result = await campaignMutation.mutateAsync({ sessionId, proposal: values as CampaignProposal, idempotencyKey: key });
             proposalDispatch({ type: "success", value: { message: "施策を承認して保存しました。", href: `/campaigns/${result.id}`, linkLabel: "施策の詳細を見る" } });
           } else {
-            const result = await approveXPost(sessionId, values as XPostProposal, key);
+             const result = await postMutation.mutateAsync({ sessionId, proposal: values as XPostProposal, idempotencyKey: key });
             proposalDispatch({ type: "success", value: { message: externalSucceeded ? "公開済み投稿の保存を完了しました。" : "Xへの投稿を公開しました。", href: `/posts/${result.post_id}`, linkLabel: "投稿の詳細を見る" } });
           }
           break;

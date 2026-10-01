@@ -4,8 +4,12 @@ import { useEffect, useReducer, useRef } from "react";
 import { useRouter } from "next/navigation";
 
 import { ApiError } from "@/shared/api/ApiError";
+import { useQueryClient } from "@tanstack/react-query";
 
-import { createSession, getHistory, getTurn, streamTurn } from "./api";
+import { getHistory, getTurn, streamTurn } from "./api";
+import { useCreateSessionMutation } from "./queries/chatMutations";
+import { sessionHistoryOptions, useSessionHistoryQuery } from "./queries/sessionQueries";
+import { sessionKeys } from "./queries/sessionKeys";
 import { chatReducer, initialChatState } from "./state";
 import { parseTurn } from "./parsers";
 import type { Activity, ClarificationAnswer, SessionHistory, SseEvent, TurnRequest } from "./types";
@@ -22,7 +26,10 @@ function errorMessage(error: unknown) {
 
 export function useChatController(initialHistory: SessionHistory | null) {
   const router = useRouter();
+  const client = useQueryClient();
+  const createMutation = useCreateSessionMutation();
   const [state, dispatch] = useReducer(chatReducer, initialHistory, initialChatState);
+  const historyQuery = useSessionHistoryQuery(initialHistory?.session.session_id ?? null);
   const abortRef = useRef<AbortController | null>(null);
   const sendingRef = useRef(false);
   const sessionIdRef = useRef(initialHistory?.session.session_id ?? null);
@@ -30,10 +37,20 @@ export function useChatController(initialHistory: SessionHistory | null) {
 
   useEffect(() => () => abortRef.current?.abort(), []);
 
+  useEffect(() => {
+    if (historyQuery.data && historyQuery.data !== initialHistory && !state.sending) {
+      dispatch({ type: "history_replaced", history: historyQuery.data });
+    }
+  }, [historyQuery.data, initialHistory, state.sending]);
+
   async function pollTurn(sessionId: number, turnId: number, signal: AbortSignal) {
     const deadline = Date.now() + POLL_TIMEOUT_MS;
     while (!signal.aborted && Date.now() < deadline) {
-      const turn = await getTurn(sessionId, turnId, signal);
+      const turn = await client.fetchQuery({
+        queryKey: sessionKeys.turn(sessionId, turnId),
+        queryFn: ({ signal: querySignal }) => getTurn(sessionId, turnId, AbortSignal.any([signal, querySignal])),
+        staleTime: 0,
+      });
       if (TERMINAL_STATUSES.has(turn.status)) {
         dispatch({ type: "turn_finished", turn });
         window.dispatchEvent(new Event("chat:sessions-changed"));
@@ -57,7 +74,11 @@ export function useChatController(initialHistory: SessionHistory | null) {
       return;
     }
 
-    const history = await getHistory(sessionId, signal);
+    const history = await client.fetchQuery({
+      queryKey: sessionKeys.history(sessionId),
+      queryFn: ({ signal: querySignal }) => getHistory(sessionId, AbortSignal.any([signal, querySignal])),
+      staleTime: 0,
+    });
     dispatch({ type: "history_replaced", history });
     const latest = history.turns.at(-1);
     if (latest && "clarification_response" in input && latest.items.some((item) =>
@@ -127,7 +148,7 @@ export function useChatController(initialHistory: SessionHistory | null) {
     try {
       let sessionId = sessionIdRef.current;
       if (sessionId === null) {
-        const session = await createSession(controller.signal);
+        const session = await createMutation.mutateAsync(controller.signal);
         sessionId = session.session_id;
         createdSessionId = sessionId;
         sessionIdRef.current = sessionId;
@@ -147,7 +168,11 @@ export function useChatController(initialHistory: SessionHistory | null) {
       }
       if (error instanceof ApiError && error.code === "CLARIFICATION_ALREADY_ANSWERED" && "clarification_response" in input && sessionIdRef.current !== null) {
         try {
-          const question = await getTurn(sessionIdRef.current, input.clarification_response.question_turn_id, controller.signal);
+          const question = await client.fetchQuery({
+            queryKey: sessionKeys.turn(sessionIdRef.current, input.clarification_response.question_turn_id),
+            queryFn: ({ signal }) => getTurn(sessionIdRef.current!, input.clarification_response.question_turn_id, AbortSignal.any([signal, controller.signal])),
+            staleTime: 0,
+          });
           dispatch({ type: "question_refreshed", turn: question });
         } catch {
           // The original API error is still shown if the question cannot be refreshed.
@@ -207,7 +232,11 @@ export function useChatController(initialHistory: SessionHistory | null) {
     const controller = new AbortController();
     abortRef.current = controller;
     try {
-      const history = await getHistory(sessionId, controller.signal, first.turn_number);
+      const history = await client.fetchQuery({
+        queryKey: sessionKeys.history(sessionId, first.turn_number),
+        queryFn: ({ signal }) => getHistory(sessionId, AbortSignal.any([controller.signal, signal]), first.turn_number),
+        staleTime: 0,
+      });
       dispatch({ type: "history_prepended", history });
     } catch (error) {
       if (!controller.signal.aborted) dispatch({ type: "failed", message: errorMessage(error) });
@@ -217,7 +246,7 @@ export function useChatController(initialHistory: SessionHistory | null) {
   async function refreshHistory() {
     const sessionId = sessionIdRef.current;
     if (sessionId === null) return;
-    const history = await getHistory(sessionId, AbortSignal.timeout(15_000));
+    const history = await client.fetchQuery({ ...sessionHistoryOptions(sessionId), staleTime: 0 });
     dispatch({ type: "history_replaced", history });
     window.dispatchEvent(new Event("chat:sessions-changed"));
   }

@@ -1,10 +1,13 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
+import { dehydrate, HydrationBoundary } from "@tanstack/react-query";
 
 import { Conversation } from "@/features/chat/components/Conversation";
 import { getSessionHistory } from "@/features/chat/server";
+import { sessionKeys } from "@/features/chat/queries/sessionKeys";
 import type { SessionHistory } from "@/features/chat/types";
 import { ApiError } from "@/shared/api/ApiError";
+import { makeQueryClient } from "@/shared/api/queryClient";
 
 export const metadata: Metadata = { title: "会話 | Hiromeru" };
 
@@ -18,5 +21,7 @@ export default async function SessionPage({ params }: { params: Promise<{ sessio
     if (error instanceof ApiError && error.code === "AGENT_SESSION_NOT_FOUND") notFound();
     throw error;
   }
-  return <Conversation initialHistory={history} />;
+  const client = makeQueryClient();
+  client.setQueryData(sessionKeys.history(sessionId), history);
+  return <HydrationBoundary state={dehydrate(client)}><Conversation initialHistory={history} /></HydrationBoundary>;
 }

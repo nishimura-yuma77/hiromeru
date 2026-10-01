@@ -1,9 +1,20 @@
-import Link from "next/link";
+"use client";
 
-import type { CampaignOption } from "@/features/posts/api/searchCampaigns";
+import Link from "next/link";
+import { useQueryClient } from "@tanstack/react-query";
+
+import type { CampaignOption } from "@/features/campaigns/queries/campaignKeys";
+import { listPostsBrowser } from "@/features/posts/api/listPostsBrowser";
+import { campaignKeys } from "@/features/campaigns/queries/campaignKeys";
+import { useCampaignLabelQuery } from "@/features/campaigns/queries/campaignQueries";
 import type { PostListResponse, PostMetrics } from "@/features/posts/types/post";
-import { postPageHref, type PostListParams } from "@/features/posts/utils/postParams";
+import { parsePostListParams, postPageHref, type PostListParams } from "@/features/posts/utils/postParams";
+import { postKeys } from "@/features/posts/queries/postKeys";
+import { usePostListQuery } from "@/features/posts/queries/postQueries";
+import { Button } from "@/shared/components/Button/Button";
+import { ListStatus } from "@/shared/components/ListStatus/ListStatus";
 import { MetricBar } from "@/shared/components/MetricBar/MetricBar";
+import { useInvalidCursorRecovery, useQueryNavigation } from "@/shared/lib/useQueryNavigation";
 
 import { PostFilters } from "./PostFilters";
 import styles from "./PostList.module.scss";
@@ -62,7 +73,39 @@ function PublishInfo({ post }: { post: PostListResponse["posts"][number] }) {
   );
 }
 
-export function PostList({ response, params, selectedCampaign }: { response: PostListResponse; params: PostListParams; selectedCampaign: CampaignOption | null }) {
+function parsePostSearch(search: string) {
+  return parsePostListParams(Object.fromEntries(new URLSearchParams(search)));
+}
+
+function postHref(params: PostListParams) {
+  return postPageHref(params, params.cursor || undefined);
+}
+function withoutPostCursor(params: PostListParams) { return params.cursor ? { ...params, cursor: "" } : null; }
+
+export function PostList({ response: initialResponse, selectedCampaign: initialCampaign }: { response: PostListResponse; params: PostListParams; selectedCampaign: CampaignOption | null }) {
+  const client = useQueryClient();
+  const navigation = useQueryNavigation({
+    parse: parsePostSearch,
+    key: postKeys.list,
+    fetch: listPostsBrowser,
+    href: postHref,
+    withoutCursor: withoutPostCursor,
+    fallbackError: "投稿を読み込めませんでした。",
+  });
+  const { params } = navigation;
+  const query = usePostListQuery(params);
+  useInvalidCursorRecovery(query.error, params, withoutPostCursor, navigation.apply);
+  const label = useCampaignLabelQuery(params.campaignId, initialCampaign);
+  const selectedCampaign: CampaignOption | null = label.data
+    ? { id: label.data.id, title: label.data.title, archived_at: label.data.archived_at ?? null } : null;
+  const response = query.data ?? initialResponse;
+  const loading = navigation.pending || query.isFetching;
+  const error = navigation.pending ? "" : navigation.error || (query.error instanceof Error ? query.error.message : "");
+  function apply(nextParams: PostListParams, campaign?: CampaignOption | null) {
+    if (campaign) client.setQueryData(campaignKeys.label(campaign.id), campaign);
+    void navigation.apply(nextParams);
+  }
+
   const currentListUrl = postPageHref(params, params.cursor || undefined);
   const hasFilters = Boolean(params.query || params.campaignId || params.publishedFrom || params.publishedTo);
   const maxCompletedPv = response.posts.reduce((max, post) => (
@@ -75,9 +118,10 @@ export function PostList({ response, params, selectedCampaign }: { response: Pos
         <h1>投稿</h1>
       </header>
 
-      <PostFilters key={`${params.query}:${params.campaignId ?? ""}:${params.sort}:${params.publishedFrom}:${params.publishedTo}`} params={params} selectedCampaign={selectedCampaign} />
+      <PostFilters key={`${params.query}:${params.campaignId ?? ""}:${params.sort}:${params.publishedFrom}:${params.publishedTo}:${selectedCampaign?.title ?? ""}`} params={params} selectedCampaign={selectedCampaign} onApply={apply} />
 
       <section className={styles.results} aria-labelledby="post-results-title">
+        <ListStatus loading={loading} error={error} onRetry={() => navigation.error ? navigation.retry() : void query.refetch()} loadingLabel="投稿を読み込んでいます" />
         <div className={params.query ? styles.resultHeading : styles.visuallyHidden}>
           <h2 id="post-results-title">{params.query ? `「${params.query}」に近い投稿` : "公開済み投稿"}</h2>
           {params.query ? <p>投稿本文をもとに関連度順で表示しています。</p> : null}
@@ -86,7 +130,7 @@ export function PostList({ response, params, selectedCampaign }: { response: Pos
           <div className={styles.empty}>
             <h3>{hasFilters ? "条件に合う投稿がありません" : "公開済みの投稿がありません"}</h3>
             <p>{hasFilters ? "検索語、施策ID、公開日の範囲を変更してください。" : "投稿案を承認すると、ここに表示されます。"}</p>
-            <Link href={hasFilters ? "/posts" : "/chat/new"}>{hasFilters ? "条件をクリア" : "投稿案を相談する"}</Link>
+            {hasFilters ? <Button variant="ghost" size="small" onClick={() => void navigation.apply(parsePostListParams({}))}>条件をクリア</Button> : <Link href="/chat/new">投稿案を相談する</Link>}
           </div>
         ) : (
           <>
@@ -128,8 +172,8 @@ export function PostList({ response, params, selectedCampaign }: { response: Pos
         )}
         {!params.query && (params.cursor || response.next_cursor) ? (
           <nav className={styles.pagination} aria-label="投稿一覧のページ移動">
-            {params.cursor ? <Link href={postPageHref(params)}>先頭へ</Link> : null}
-            {response.next_cursor ? <Link href={postPageHref(params, response.next_cursor)}>次の20件</Link> : null}
+            {params.cursor ? <Button variant="ghost" size="small" disabled={loading} onClick={() => apply({ ...params, cursor: "" })}>先頭へ</Button> : null}
+            {response.next_cursor ? <Button variant="ghost" size="small" disabled={loading} onClick={() => apply({ ...params, cursor: response.next_cursor ?? "" })}>次の20件</Button> : null}
           </nav>
         ) : null}
       </section>
