@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useState } from "react";
 import { Button } from "@/shared/components/Button/Button";
+import { Disclosure } from "@/shared/components/Disclosure/Disclosure";
 
 import {
   listMemoryCampaigns,
@@ -99,8 +100,7 @@ function RelatedPosts({ memory }: { memory: Memory }) {
   return (
     <div className={styles.postRelations}>
       {posts.length || cursor ? (
-        <details>
-          <summary>関連投稿: {posts.length}件{cursor ? "以上" : ""}</summary>
+        <Disclosure summary={`関連投稿: ${posts.length}件${cursor ? "以上" : ""}`}>
           <ul>
             {posts.map((post) => (
               <li key={post.post_id}>
@@ -114,7 +114,7 @@ function RelatedPosts({ memory }: { memory: Memory }) {
           <p className={styles.relationStatus} role={error ? "alert" : "status"} aria-live="polite">
             {error || (isLoading ? "関連する投稿を読み込んでいます。" : "")}
           </p>
-        </details>
+        </Disclosure>
       ) : <span>関連投稿: 0件</span>}
     </div>
   );

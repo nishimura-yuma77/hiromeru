@@ -67,27 +67,6 @@
 .advancedFilters {
   font-size: var(--font-size-sm);
   margin-block-start: var(--space-2);
-
-  summary { color: var(--color-brand-strong); cursor: pointer; inline-size: fit-content; }
-}
-
-@supports (interpolate-size: allow-keywords) {
-  .advancedFilters {
-    interpolate-size: allow-keywords;
-
-    &::details-content {
-      block-size: 0;
-      overflow: hidden;
-      transition: block-size var(--duration-normal) var(--easing-standard),
-        content-visibility var(--duration-normal) allow-discrete;
-    }
-
-    &[open]::details-content { block-size: auto; }
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .advancedFilters::details-content { transition: none; }
 }
 
 .advancedContent {
@@ -260,7 +239,7 @@
   white-space: nowrap;
 }
 
-.page :is(a, summary):focus-visible {
+.page a:focus-visible {
   outline: var(--focus-ring-width) solid var(--color-focus-ring);
   outline-offset: var(--focus-ring-offset);
 }

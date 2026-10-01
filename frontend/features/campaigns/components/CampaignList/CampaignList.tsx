@@ -4,6 +4,7 @@ import type { FormEvent } from "react";
 import Link from "next/link";
 import { Button } from "@/shared/components/Button/Button";
 import { Input } from "@/shared/components/Input/Input";
+import { Disclosure } from "@/shared/components/Disclosure/Disclosure";
 
 import type {
   CampaignListItem,
@@ -251,8 +252,8 @@ export function CampaignList({ response, params }: CampaignListProps) {
           </label>
           <Button size="small" type="submit">検索</Button>
         </form>
-        <details className={styles.advancedFilters} open={hasAdvancedFilters ? true : undefined}>
-          <summary>詳細条件{hasAdvancedFilters ? "（適用中）" : ""}</summary>
+        <div className={styles.advancedFilters}>
+          <Disclosure key={`${params.createdFrom}:${params.createdTo}`} defaultOpen={hasAdvancedFilters} summary={`詳細条件${hasAdvancedFilters ? "（適用中）" : ""}`}>
           <div className={styles.advancedContent}>
             <div className={styles.advancedFields}>
               <label>
@@ -276,7 +277,8 @@ export function CampaignList({ response, params }: CampaignListProps) {
               <Button size="small" type="submit">開く</Button>
             </form>
           </div>
-        </details>
+          </Disclosure>
+        </div>
       </section>
 
       <section aria-labelledby="campaign-results-title">

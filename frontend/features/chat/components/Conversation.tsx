@@ -7,6 +7,8 @@ import { getCampaign } from "@/features/campaigns/api/getCampaign";
 import type { CampaignListItem } from "@/features/campaigns/types/campaign";
 import { ApiError } from "@/shared/api/ApiError";
 import { Button } from "@/shared/components/Button/Button";
+import { Disclosure } from "@/shared/components/Disclosure/Disclosure";
+import { SearchCombobox } from "@/shared/components/SearchCombobox/SearchCombobox";
 import { Spinner } from "@/shared/components/Spinner/Spinner";
 import { Input } from "@/shared/components/Input/Input";
 
@@ -205,9 +207,7 @@ function CampaignCombobox({ disabled, error, idPrefix, onChange, onArchived, val
   const [loading, setLoading] = useState(false);
   const [searchError, setSearchError] = useState("");
   const [selectedTitle, setSelectedTitle] = useState(`施策ID ${value}`);
-  const [activeIndex, setActiveIndex] = useState(-1);
   const inputId = `proposal-${idPrefix}-campaign_id`;
-  const listId = `${inputId}-options`;
   const notifyArchived = useEffectEvent(onArchived);
 
   useEffect(() => {
@@ -221,66 +221,49 @@ function CampaignCombobox({ disabled, error, idPrefix, onChange, onArchived, val
   }, [value]);
 
   useEffect(() => {
+    if (!open || disabled) return;
     const controller = new AbortController();
     const timeout = window.setTimeout(() => {
       setLoading(true);
       setSearchError("");
       void searchActiveCampaigns(query, controller.signal).then((response) => {
-        setOptions(response.campaigns);
-        setActiveIndex(response.campaigns.length > 0 ? 0 : -1);
+        if (!controller.signal.aborted) setOptions(response.campaigns);
       }).catch((loadError) => {
-        if (!(loadError instanceof DOMException && loadError.name === "AbortError")) setSearchError("施策を検索できませんでした。もう一度お試しください。");
-      }).finally(() => setLoading(false));
+        if (!controller.signal.aborted && !(loadError instanceof DOMException && loadError.name === "AbortError")) setSearchError("施策を検索できませんでした。もう一度お試しください。");
+      }).finally(() => { if (!controller.signal.aborted) setLoading(false); });
     }, 300);
     return () => {
       window.clearTimeout(timeout);
       controller.abort();
     };
-  }, [query]);
+  }, [query, open, disabled]);
 
   function select(option: CampaignListItem) {
     onChange(String(option.id));
     setSelectedTitle(option.title);
     setQuery(option.title);
-    setOpen(false);
   }
 
   return (
     <div className={styles.campaignCombobox}>
-      <label htmlFor={inputId}>対象施策</label>
-      <Input
-        aria-activedescendant={open && activeIndex >= 0 ? `${listId}-${activeIndex}` : undefined}
-        aria-autocomplete="list"
-        aria-controls={listId}
-        aria-describedby={error ? `${inputId}-error` : `${inputId}-status`}
-        aria-expanded={open}
-        aria-invalid={Boolean(error)}
-        autoComplete="off"
-        disabled={disabled}
+      <SearchCombobox
         id={inputId}
-        onBlur={() => window.setTimeout(() => setOpen(false), 100)}
-        onChange={(event) => { setQuery(event.target.value); setOptions([]); setActiveIndex(-1); setOpen(true); }}
-        onFocus={() => setOpen(true)}
-        onKeyDown={(event) => {
-          if (event.key === "ArrowDown" && options.length > 0) { event.preventDefault(); setActiveIndex((current) => (current + 1) % options.length); }
-          if (event.key === "ArrowUp" && options.length > 0) { event.preventDefault(); setActiveIndex((current) => (current <= 0 ? options.length - 1 : current - 1)); }
-          if (event.key === "Enter" && open && activeIndex >= 0) { event.preventDefault(); select(options[activeIndex]); }
-          if (event.key === "Escape") setOpen(false);
-        }}
-        placeholder="施策名で検索"
-        role="combobox"
+        label="対象施策"
         type="search"
         value={query}
+        onValueChange={(nextQuery) => { setQuery(nextQuery); setOptions([]); setLoading(true); setSearchError(""); }}
+        options={options}
+        onSelect={select}
+        open={open}
+        onOpenChange={(nextOpen) => { if (nextOpen && !open) setLoading(true); setOpen(nextOpen); }}
+        loading={loading}
+        searchError={searchError}
+        fieldError={error}
+        disabled={disabled}
+        placeholder="施策名で検索"
+        renderOption={(option) => <>{option.title} <span>ID {option.id}</span></>}
       />
       <p className={styles.selectedCampaign}>選択中: {selectedTitle}（ID {value}）</p>
-      {open ? (
-        <ul id={listId} role="listbox">
-          {options.map((option, index) => <li aria-selected={index === activeIndex} id={`${listId}-${index}`} key={option.id} onClick={() => select(option)} onMouseDown={(event) => event.preventDefault()} role="option">{option.title}<span>ID {option.id}</span></li>)}
-          {!loading && !searchError && options.length === 0 ? <li className={styles.comboboxMessage}>該当する施策がありません</li> : null}
-        </ul>
-      ) : null}
-      <p aria-live="polite" className={styles.comboboxStatus} id={`${inputId}-status`}>{loading ? <><Spinner size="small" />施策を検索しています</> : searchError || (open ? `${options.length}件の候補があります` : "")}</p>
-      {error ? <small id={`${inputId}-error`}>{error}</small> : null}
     </div>
   );
 }
@@ -524,7 +507,7 @@ function Item({ actionable, item, sessionId, questionTurnId, previousAnswers, ma
       <article className={`${styles.message} ${styles.userMessage}`}>
         <span className={styles.speaker}>あなた</span>
         <p>{label}</p>
-        <details><summary>承認内容を見る</summary><pre>{JSON.stringify(item.content.request, null, 2)}</pre></details>
+        <Disclosure summary="承認内容を見る"><pre>{JSON.stringify(item.content.request, null, 2)}</pre></Disclosure>
         <time dateTime={item.created_at}>{dateFormatter.format(new Date(item.created_at))}</time>
       </article>
     );

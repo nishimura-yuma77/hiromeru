@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { Button } from "@/shared/components/Button/Button";
+import { Disclosure } from "@/shared/components/Disclosure/Disclosure";
 
 import { useCopyUrlController } from "@/features/posts/controllers/useCopyUrlController";
 import type { PostDetailResponse } from "@/features/posts/types/post";
@@ -87,15 +88,14 @@ export function PostDetail({ detail, returnTo }: { detail: PostDetailResponse; r
           <div><span>UTM付きURL</span><code>{tracking.tracked_url}</code></div>
           <Button variant="secondary" size="small" disabled={Boolean(copyController.state.pendingField && copyController.state.pendingField !== "tracked")} isLoading={copyController.state.pendingField === "tracked"} loadingLabel="コピー中" onClick={() => void copyController.copy("tracked", tracking.tracked_url)}>URLをコピー</Button>
         </div>
-        <details>
-          <summary>UTMパラメータを見る</summary>
+        <Disclosure summary="UTMパラメータを見る">
           <dl className={styles.utmList}>
             <div><dt>utm_source</dt><dd>{tracking.utm_source}</dd></div>
             <div><dt>utm_medium</dt><dd>{tracking.utm_medium}</dd></div>
             <div><dt>utm_campaign</dt><dd>{tracking.utm_campaign}</dd></div>
             <div><dt>utm_content</dt><dd>{tracking.utm_content}</dd></div>
           </dl>
-        </details>
+        </Disclosure>
         <p className={styles.liveMessage} aria-live="polite">
           {copyController.state.error ?? (copyController.state.copiedField ? "URLをコピーしました。" : "")}
         </p>

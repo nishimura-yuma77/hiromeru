@@ -1,17 +1,18 @@
 import Link from "next/link";
-import { Button } from "@/shared/components/Button/Button";
-import { Input } from "@/shared/components/Input/Input";
 
+import type { CampaignOption } from "@/features/posts/api/searchCampaigns";
 import type { PostListResponse, PostMetrics } from "@/features/posts/types/post";
 import { postPageHref, type PostListParams } from "@/features/posts/utils/postParams";
 import { MetricBar } from "@/shared/components/MetricBar/MetricBar";
 
+import { PostFilters } from "./PostFilters";
 import styles from "./PostList.module.scss";
 
 const numberFormat = new Intl.NumberFormat("ja-JP");
 const dateFormat = new Intl.DateTimeFormat("ja-JP", {
-  dateStyle: "medium",
-  timeStyle: "short",
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
   timeZone: "Asia/Tokyo",
 });
 
@@ -22,20 +23,11 @@ function formatDate(value: string | null): string {
 }
 
 function PvMetric({ metrics, maxPv }: { metrics: PostMetrics; maxPv: number }) {
-  if (metrics.status === "completed") {
-    return (
-      <div className={styles.pvMetric}>
-        <span>{numberFormat.format(metrics.x_pv_count ?? 0)}</span>
-        {maxPv > 0 ? <MetricBar value={metrics.x_pv_count ?? 0} max={maxPv} /> : null}
-        <span className={styles.completedBadge}>計測済み</span>
-      </div>
-    );
-  }
-  return (
-    <p className={styles.metricStatus}>
-      {metrics.status === "pending" ? <>計測待ち<br /><span>{formatDate(metrics.scheduled_at)}予定</span></> : "計測に失敗しました"}
-    </p>
-  );
+  if (metrics.status !== "completed") return <span aria-label="未計測">—</span>;
+  return <div className={styles.pvMetric}>
+    <span>{numberFormat.format(metrics.x_pv_count ?? 0)}</span>
+    {maxPv > 0 ? <MetricBar value={metrics.x_pv_count ?? 0} max={maxPv} /> : null}
+  </div>;
 }
 
 function LandingMetric({ metrics }: { metrics: PostMetrics }) {
@@ -45,11 +37,17 @@ function LandingMetric({ metrics }: { metrics: PostMetrics }) {
 }
 
 function PostBody({ post, returnTo }: { post: PostListResponse["posts"][number]; returnTo: string }) {
-  const excerpt = post.body.slice(0, 40);
+  const excerpt = post.body.slice(0, 60);
   return (
     <div className={styles.postBody}>
-      <p className={styles.body}>{post.body}</p>
-      <Link href={`/posts/${post.post_id}?return_to=${returnTo}`} aria-label={`${formatDate(post.published_at)}の投稿「${excerpt}」の詳細を見る`}>詳細を見る</Link>
+      <Link className={styles.body} href={`/posts/${post.post_id}?return_to=${returnTo}`} aria-label={`${formatDate(post.published_at)}の投稿「${excerpt}」の詳細を見る`}>{post.body}</Link>
+      <div className={styles.postMeta}>
+        <span>POST-{String(post.post_id).padStart(3, "0")}</span>
+        <span className={post.metrics.status === "completed" ? styles.completedBadge : post.metrics.status === "pending" ? styles.pendingBadge : styles.failedBadge}>
+          {post.metrics.status === "completed" ? "計測済み" : post.metrics.status === "pending" ? "計測待ち" : "計測失敗"}
+        </span>
+        {post.metrics.status === "pending" && post.metrics.scheduled_at ? <span>計測予定 {formatDate(post.metrics.scheduled_at)}</span> : null}
+      </div>
     </div>
   );
 }
@@ -59,12 +57,12 @@ function PublishInfo({ post }: { post: PostListResponse["posts"][number] }) {
     <div className={styles.publishInfo}>
       <Link href={`/campaigns/${post.campaign_id}`}>{post.campaign_title}</Link>
       {post.campaign_archived_at ? <span className={styles.archivedBadge}>アーカイブ済み</span> : null}
-      <time dateTime={post.published_at}>{formatDate(post.published_at)} 公開</time>
+      <time dateTime={post.published_at}>{formatDate(post.published_at)}</time>
     </div>
   );
 }
 
-export function PostList({ response, params }: { response: PostListResponse; params: PostListParams }) {
+export function PostList({ response, params, selectedCampaign }: { response: PostListResponse; params: PostListParams; selectedCampaign: CampaignOption | null }) {
   const currentListUrl = postPageHref(params, params.cursor || undefined);
   const hasFilters = Boolean(params.query || params.campaignId || params.publishedFrom || params.publishedTo);
   const maxCompletedPv = response.posts.reduce((max, post) => (
@@ -74,57 +72,15 @@ export function PostList({ response, params }: { response: PostListResponse; par
   return (
     <main id="main-content" className={styles.page}>
       <header className={styles.header}>
-        <div>
-          <p className={styles.eyebrow}>Published work</p>
-          <h1>投稿</h1>
-          <p>Xへ公開済みの投稿と初週の成果を確認できます。</p>
-        </div>
-        <Link className={styles.primaryLink} href="/chat/new">投稿案を相談する</Link>
+        <h1>投稿</h1>
       </header>
 
-      <section className={styles.filters} aria-labelledby="post-filter-title">
-        <h2 id="post-filter-title">投稿を探す</h2>
-        <form action="/posts" method="get" className={styles.filterForm}>
-          <label className={styles.searchField}>
-            <span>投稿を検索</span>
-            <Input type="search" name="query" defaultValue={params.query} maxLength={1000} placeholder="投稿本文を自然な言葉で検索" />
-          </label>
-          <label>
-            <span>施策ID</span>
-            <Input type="text" inputMode="numeric" pattern="[1-9][0-9]*" name="campaign_id" defaultValue={params.campaignId ?? ""} />
-          </label>
-          <label>
-            <span>公開日の開始</span>
-            <Input type="date" name="published_from" defaultValue={params.publishedFrom} />
-          </label>
-          <label>
-            <span>公開日の終了</span>
-            <Input type="date" name="published_to" defaultValue={params.publishedTo} />
-          </label>
-          <label>
-            <span>並び順</span>
-            <select name="sort" defaultValue={params.sort} disabled={Boolean(params.query)}>
-              <option value="published_at_desc">公開日時の新しい順</option>
-              <option value="published_at_asc">公開日時の古い順</option>
-              <option value="x_pv_count_desc">初週PVの多い順</option>
-              <option value="x_pv_count_asc">初週PVの少ない順</option>
-            </select>
-          </label>
-          <div className={styles.filterActions}>
-            <Button type="submit">条件を適用</Button>
-            <Link href="/posts">条件をクリア</Link>
-          </div>
-        </form>
-        {params.query ? <p className={styles.hint}>検索中は関連度順で表示し、並び替えは利用できません。</p> : null}
-      </section>
+      <PostFilters key={`${params.query}:${params.campaignId ?? ""}:${params.sort}:${params.publishedFrom}:${params.publishedTo}`} params={params} selectedCampaign={selectedCampaign} />
 
-      <section aria-labelledby="post-results-title">
-        <div className={styles.resultHeading}>
-          <div>
-            <p className={styles.eyebrow}>Results</p>
-            <h2 id="post-results-title">{params.query ? `「${params.query}」に近い投稿` : "公開済み投稿"}</h2>
-          </div>
-          <p>{params.query ? "投稿本文をもとに関連度順で表示しています。" : "20件ずつ表示"}</p>
+      <section className={styles.results} aria-labelledby="post-results-title">
+        <div className={params.query ? styles.resultHeading : styles.visuallyHidden}>
+          <h2 id="post-results-title">{params.query ? `「${params.query}」に近い投稿` : "公開済み投稿"}</h2>
+          {params.query ? <p>投稿本文をもとに関連度順で表示しています。</p> : null}
         </div>
         {response.posts.length === 0 ? (
           <div className={styles.empty}>
@@ -134,10 +90,9 @@ export function PostList({ response, params }: { response: PostListResponse; par
           </div>
         ) : (
           <>
-            {maxCompletedPv === 0 ? <p className={styles.comparisonUnavailable}>比較できる計測結果がありません</p> : null}
             <div className={styles.desktopTable}>
               <table>
-                <caption>公開済み投稿一覧</caption>
+                <caption className={styles.visuallyHidden}>公開済み投稿一覧</caption>
                 <thead><tr><th scope="col">投稿</th><th scope="col">公開情報</th><th scope="col">初週PV</th><th scope="col">流入</th></tr></thead>
                 <tbody>
                   {response.posts.map((post) => {
