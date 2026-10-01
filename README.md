@@ -119,6 +119,7 @@ docker compose run --rm migrate
 
 ```bash
 docker compose run --rm --no-deps frontend npm run lint
+docker compose run --rm --no-deps frontend npm run format:scss:check
 docker compose run --rm --no-deps frontend npm run build
 docker compose run --rm backend pytest
 ```

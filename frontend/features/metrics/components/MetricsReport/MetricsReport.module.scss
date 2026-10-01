@@ -6,9 +6,18 @@
   flex-wrap: wrap;
   gap: var(--space-2);
 }
-.periodForm label { color: var(--color-text-secondary); display: grid; font-size: var(--font-size-xs); gap: var(--space-1); }
-.periodSeparator { color: var(--color-text-secondary); margin-block-end: var(--space-3); }
-.periodForm a, .disabledAction {
+.periodForm label {
+  color: var(--color-text-secondary);
+  display: grid;
+  font-size: var(--font-size-xs);
+  gap: var(--space-1);
+}
+.periodSeparator {
+  color: var(--color-text-secondary);
+  margin-block-end: var(--space-3);
+}
+.periodForm a,
+.disabledAction {
   align-items: center;
   background: var(--color-login-background);
   border: var(--border-width-thin) solid var(--color-border);
@@ -22,19 +31,40 @@
   padding-inline: var(--space-3);
   text-decoration: none;
 }
-.disabledAction { color: var(--color-text-secondary); opacity: 0.55; }
+.disabledAction {
+  color: var(--color-text-secondary);
+  opacity: 0.55;
+}
 
-.body { min-block-size: 12rem; position: relative; }
-.period { color: var(--color-text-secondary); font-size: var(--font-size-xs); margin: 0 0 var(--space-3); }
-.period span { font-weight: var(--font-weight-regular); }
+.body {
+  min-block-size: 12rem;
+  position: relative;
+}
+.period {
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  margin: 0 0 var(--space-3);
+}
+.period span {
+  font-weight: var(--font-weight-regular);
+}
 
-.rateCard, .summaryMetrics > div, .graph, .campaigns {
+.rateCard,
+.summaryMetrics > div,
+.graph,
+.campaigns {
   background: var(--color-surface);
   border: var(--border-width-thin) solid var(--color-border);
   border-radius: var(--radius-sm);
 }
-.rateCard { padding: var(--space-5); }
-.rateCard p { color: var(--color-text-secondary); font-size: var(--font-size-xs); margin: 0; }
+.rateCard {
+  padding: var(--space-5);
+}
+.rateCard p {
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  margin: 0;
+}
 .rateCard strong {
   color: var(--color-brand-strong);
   display: block;
@@ -45,8 +75,17 @@
   margin-block: var(--space-1);
   overflow-wrap: anywhere;
 }
-.rateCard strong span { color: var(--color-text-secondary); font-family: var(--font-family-sans); font-size: var(--font-size-lg); font-weight: var(--font-weight-regular); margin-inline-start: var(--space-1); }
-.rateReason { color: var(--color-text-secondary); font-size: var(--font-size-xs); }
+.rateCard strong span {
+  color: var(--color-text-secondary);
+  font-family: var(--font-family-sans);
+  font-size: var(--font-size-lg);
+  font-weight: var(--font-weight-regular);
+  margin-inline-start: var(--space-1);
+}
+.rateReason {
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+}
 
 .summaryMetrics {
   display: grid;
@@ -54,86 +93,344 @@
   grid-template-columns: repeat(4, minmax(0, 1fr));
   margin: var(--space-4) 0 0;
 }
-.summaryMetrics > div { min-inline-size: 0; padding: var(--space-4); }
-.summaryMetrics dt { color: var(--color-text-secondary); font-size: var(--font-size-xs); }
-.summaryMetrics dd { font-family: var(--font-family-mono); font-size: var(--font-size-xl); font-weight: var(--font-weight-bold); line-height: var(--line-height-heading); margin: var(--space-2) 0 0; overflow-wrap: anywhere; }
-.summaryMetrics p { color: var(--color-text-secondary); font-size: var(--font-size-xs); margin: var(--space-1) 0 0; }
-.statusCard dd { display: grid; font-family: inherit; font-size: var(--font-size-xs); font-weight: var(--font-weight-regular); gap: var(--space-1); }
-.statusCard dd span { align-items: center; color: var(--color-text-secondary); display: flex; gap: var(--space-2); }
-.statusCard dd strong { color: var(--color-text-primary); font-family: var(--font-family-mono); font-weight: var(--font-weight-semibold); margin-inline-start: auto; }
-.statusCard i { block-size: 0.5rem; border-radius: 50%; flex: none; inline-size: 0.5rem; }
-.completedDot { background: var(--color-brand-primary); }
-.pendingDot { background: #db8000; }
-.failedDot { background: var(--color-danger); }
-.overallStatus { color: var(--color-text-secondary); font-size: var(--font-size-xs); }
-.overallStatus:empty { display: none; }
-.overallStatus p { margin: var(--space-2) 0 0; }
+.summaryMetrics > div {
+  min-inline-size: 0;
+  padding: var(--space-4);
+}
+.summaryMetrics dt {
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+}
+.summaryMetrics dd {
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-xl);
+  font-weight: var(--font-weight-bold);
+  line-height: var(--line-height-heading);
+  margin: var(--space-2) 0 0;
+  overflow-wrap: anywhere;
+}
+.summaryMetrics p {
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  margin: var(--space-1) 0 0;
+}
+.statusCard dd {
+  display: grid;
+  font-family: inherit;
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-regular);
+  gap: var(--space-1);
+}
+.statusCard dd span {
+  align-items: center;
+  color: var(--color-text-secondary);
+  display: flex;
+  gap: var(--space-2);
+}
+.statusCard dd strong {
+  color: var(--color-text-primary);
+  font-family: var(--font-family-mono);
+  font-weight: var(--font-weight-semibold);
+  margin-inline-start: auto;
+}
+.statusCard i {
+  block-size: 0.5rem;
+  border-radius: 50%;
+  flex: none;
+  inline-size: 0.5rem;
+}
+.completedDot {
+  background: var(--color-brand-primary);
+}
+.pendingDot {
+  background: #db8000;
+}
+.failedDot {
+  background: var(--color-danger);
+}
+.overallStatus {
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+}
+.overallStatus:empty {
+  display: none;
+}
+.overallStatus p {
+  margin: var(--space-2) 0 0;
+}
 
-.graph, .campaigns { margin-block-start: var(--space-5); overflow: hidden; }
-.sectionHeading, .campaigns > h2 {
+.graph,
+.campaigns {
+  margin-block-start: var(--space-5);
+  overflow: hidden;
+}
+.sectionHeading,
+.campaigns > h2 {
   border-block-end: var(--border-width-thin) solid var(--color-border);
   font-size: var(--font-size-sm);
   font-weight: var(--font-weight-semibold);
   margin: 0;
   padding: var(--space-3) var(--space-4);
 }
-.sectionHeading h2 { font-size: inherit; margin: 0; }
-.graphList { display: grid; gap: var(--space-4); list-style: none; margin: 0; padding: var(--space-4); }
-.graphList li { align-items: end; display: grid; gap: var(--space-4); grid-template-columns: minmax(0, 1fr) auto; }
-.graphContent { min-inline-size: 0; }
-.graphTitle { display: block; font-size: var(--font-size-sm); margin-block-end: var(--space-2); overflow-wrap: anywhere; }
-.graphContent .rateReason { margin: var(--space-1) 0 0; }
-.graphValues { display: grid; font-size: var(--font-size-xs); gap: var(--space-1); min-inline-size: 4rem; text-align: end; }
-.graphValues strong { color: var(--color-brand-strong); font-family: var(--font-family-mono); }
-.graphValues span { color: var(--color-text-secondary); font-family: var(--font-family-mono); }
-.comparisonUnavailable { background: var(--color-background-secondary); color: var(--color-text-primary); font-size: var(--font-size-sm); margin: var(--space-4); padding: var(--space-4); }
+.sectionHeading h2 {
+  font-size: inherit;
+  margin: 0;
+}
+.graphList {
+  display: grid;
+  gap: var(--space-4);
+  list-style: none;
+  margin: 0;
+  padding: var(--space-4);
+}
+.graphList li {
+  align-items: end;
+  display: grid;
+  gap: var(--space-4);
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+.graphContent {
+  min-inline-size: 0;
+}
+.graphTitle {
+  display: block;
+  font-size: var(--font-size-sm);
+  margin-block-end: var(--space-2);
+  overflow-wrap: anywhere;
+}
+.graphContent .rateReason {
+  margin: var(--space-1) 0 0;
+}
+.graphValues {
+  display: grid;
+  font-size: var(--font-size-xs);
+  gap: var(--space-1);
+  min-inline-size: 4rem;
+  text-align: end;
+}
+.graphValues strong {
+  color: var(--color-brand-strong);
+  font-family: var(--font-family-mono);
+}
+.graphValues span {
+  color: var(--color-text-secondary);
+  font-family: var(--font-family-mono);
+}
+.comparisonUnavailable {
+  background: var(--color-background-secondary);
+  color: var(--color-text-primary);
+  font-size: var(--font-size-sm);
+  margin: var(--space-4);
+  padding: var(--space-4);
+}
 
-.desktopTable { overflow-x: auto; }
-.desktopTable table { border-collapse: collapse; inline-size: 100%; table-layout: fixed; }
-.desktopTable caption { block-size: 1px; clip-path: inset(50%); inline-size: 1px; overflow: hidden; position: absolute; white-space: nowrap; }
-.desktopTable th, .desktopTable td { border-block-end: var(--border-width-thin) solid var(--color-border); overflow-wrap: anywhere; padding: var(--space-3) var(--space-4); text-align: end; vertical-align: middle; }
-.desktopTable tr:last-child > * { border-block-end: 0; }
-.desktopTable thead th { background: var(--color-login-background); color: var(--color-text-secondary); font-size: var(--font-size-xs); font-weight: var(--font-weight-medium); }
-.desktopTable th:first-child { inline-size: 52%; text-align: start; }
-.desktopTable tbody th { font-weight: var(--font-weight-regular); }
-.desktopTable td { color: var(--color-text-secondary); font-family: var(--font-family-mono); font-size: var(--font-size-sm); }
-.desktopTable td strong { color: var(--color-brand-strong); }
-.desktopTable td small { color: var(--color-text-secondary); display: block; font-family: var(--font-family-sans); font-size: var(--font-size-xs); }
-.campaignName { align-items: center; display: flex; flex-wrap: wrap; gap: var(--space-2); }
-.campaignName a, .campaignName h3 { color: var(--color-text-primary); font-size: var(--font-size-sm); font-weight: var(--font-weight-semibold); margin: 0; overflow-wrap: anywhere; text-decoration: none; }
-.campaignName a:hover { color: var(--color-brand-strong); text-decoration: underline; }
-.campaignId { color: var(--color-text-secondary); display: block; font-family: var(--font-family-mono); font-size: var(--font-size-xs); margin-block-start: var(--space-1); }
-.archivedBadge { background: var(--color-background-secondary); border-radius: var(--radius-sm); color: var(--color-text-secondary); font-size: var(--font-size-xs); padding: var(--space-1) var(--space-2); }
-.statusBadges { display: flex; flex-wrap: wrap; gap: var(--space-2); margin-block-start: var(--space-1); }
-.statusBadges span { color: var(--color-text-secondary); font-size: var(--font-size-xs); }
-.campaignLinks { display: flex; flex-wrap: wrap; gap: var(--space-3); justify-content: flex-end; }
-.campaignLinks a { color: var(--color-brand-strong); font-weight: var(--font-weight-semibold); }
-.empty { color: var(--color-text-secondary); font-size: var(--font-size-sm); padding: var(--space-5); text-align: center; }
-.empty h3 { color: var(--color-text-primary); }
-.pagination { display: flex; gap: var(--space-4); justify-content: flex-end; padding: var(--space-4); }
-.pagination a { color: var(--color-brand-strong); font-weight: var(--font-weight-semibold); }
-.mobileCards { display: none; }
-.visuallyHidden { block-size: 1px; clip-path: inset(50%); inline-size: 1px; overflow: hidden; position: absolute; white-space: nowrap; }
-.page a:focus-visible { outline: var(--focus-ring-width) solid var(--color-focus-ring); outline-offset: var(--focus-ring-offset); }
+.desktopTable {
+  overflow-x: auto;
+}
+.desktopTable table {
+  border-collapse: collapse;
+  inline-size: 100%;
+  table-layout: fixed;
+}
+.desktopTable caption {
+  block-size: 1px;
+  clip-path: inset(50%);
+  inline-size: 1px;
+  overflow: hidden;
+  position: absolute;
+  white-space: nowrap;
+}
+.desktopTable th,
+.desktopTable td {
+  border-block-end: var(--border-width-thin) solid var(--color-border);
+  overflow-wrap: anywhere;
+  padding: var(--space-3) var(--space-4);
+  text-align: end;
+  vertical-align: middle;
+}
+.desktopTable tr:last-child > * {
+  border-block-end: 0;
+}
+.desktopTable thead th {
+  background: var(--color-login-background);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+}
+.desktopTable th:first-child {
+  inline-size: 52%;
+  text-align: start;
+}
+.desktopTable tbody th {
+  font-weight: var(--font-weight-regular);
+}
+.desktopTable td {
+  color: var(--color-text-secondary);
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-sm);
+}
+.desktopTable td strong {
+  color: var(--color-brand-strong);
+}
+.desktopTable td small {
+  color: var(--color-text-secondary);
+  display: block;
+  font-family: var(--font-family-sans);
+  font-size: var(--font-size-xs);
+}
+.campaignName {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+.campaignName a,
+.campaignName h3 {
+  color: var(--color-text-primary);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  margin: 0;
+  overflow-wrap: anywhere;
+  text-decoration: none;
+}
+.campaignName a:hover {
+  color: var(--color-brand-strong);
+  text-decoration: underline;
+}
+.campaignId {
+  color: var(--color-text-secondary);
+  display: block;
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-xs);
+  margin-block-start: var(--space-1);
+}
+.archivedBadge {
+  background: var(--color-background-secondary);
+  border-radius: var(--radius-sm);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  padding: var(--space-1) var(--space-2);
+}
+.statusBadges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-block-start: var(--space-1);
+}
+.statusBadges span {
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+}
+.campaignLinks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  justify-content: flex-end;
+}
+.campaignLinks a {
+  color: var(--color-brand-strong);
+  font-weight: var(--font-weight-semibold);
+}
+.empty {
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+  padding: var(--space-5);
+  text-align: center;
+}
+.empty h3 {
+  color: var(--color-text-primary);
+}
+.pagination {
+  display: flex;
+  gap: var(--space-4);
+  justify-content: flex-end;
+  padding: var(--space-4);
+}
+.pagination a {
+  color: var(--color-brand-strong);
+  font-weight: var(--font-weight-semibold);
+}
+.mobileCards {
+  display: none;
+}
+.visuallyHidden {
+  block-size: 1px;
+  clip-path: inset(50%);
+  inline-size: 1px;
+  overflow: hidden;
+  position: absolute;
+  white-space: nowrap;
+}
+.page a:focus-visible {
+  outline: var(--focus-ring-width) solid var(--color-focus-ring);
+  outline-offset: var(--focus-ring-offset);
+}
 
 @media (max-width: bp.$tablet) {
-  .summaryMetrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .desktopTable { display: none; }
-  .mobileCards { display: grid; gap: var(--space-3); padding: var(--space-4); }
-  .campaignCard { background: var(--color-login-background); border: var(--border-width-thin) solid var(--color-border); border-radius: var(--radius-sm); padding: var(--space-4); }
-  .campaignCard > p { color: var(--color-text-secondary); font-size: var(--font-size-xs); margin-block: var(--space-2); }
-  .campaignCard dl { display: grid; gap: var(--space-2); margin-block: var(--space-4); }
-  .campaignCard dl > div { display: flex; gap: var(--space-4); justify-content: space-between; }
-  .campaignCard dt { color: var(--color-text-secondary); font-size: var(--font-size-sm); }
-  .campaignCard dd { font-family: var(--font-family-mono); margin: 0; overflow-wrap: anywhere; text-align: end; }
-  .campaignCard .campaignLinks { justify-content: flex-start; }
+  .summaryMetrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .desktopTable {
+    display: none;
+  }
+  .mobileCards {
+    display: grid;
+    gap: var(--space-3);
+    padding: var(--space-4);
+  }
+  .campaignCard {
+    background: var(--color-login-background);
+    border: var(--border-width-thin) solid var(--color-border);
+    border-radius: var(--radius-sm);
+    padding: var(--space-4);
+  }
+  .campaignCard > p {
+    color: var(--color-text-secondary);
+    font-size: var(--font-size-xs);
+    margin-block: var(--space-2);
+  }
+  .campaignCard dl {
+    display: grid;
+    gap: var(--space-2);
+    margin-block: var(--space-4);
+  }
+  .campaignCard dl > div {
+    display: flex;
+    gap: var(--space-4);
+    justify-content: space-between;
+  }
+  .campaignCard dt {
+    color: var(--color-text-secondary);
+    font-size: var(--font-size-sm);
+  }
+  .campaignCard dd {
+    font-family: var(--font-family-mono);
+    margin: 0;
+    overflow-wrap: anywhere;
+    text-align: end;
+  }
+  .campaignCard .campaignLinks {
+    justify-content: flex-start;
+  }
 }
 
 @media (max-width: bp.$mobile) {
-  .periodForm { inline-size: 100%; }
-  .periodForm label { flex: 1 1 7rem; }
-  .summaryMetrics { gap: var(--space-2); }
-  .summaryMetrics > div { padding: var(--space-3); }
-  .graphList li { gap: var(--space-2); }
-  .pagination { flex-direction: column; }
+  .periodForm {
+    inline-size: 100%;
+  }
+  .periodForm label {
+    flex: 1 1 7rem;
+  }
+  .summaryMetrics {
+    gap: var(--space-2);
+  }
+  .summaryMetrics > div {
+    padding: var(--space-3);
+  }
+  .graphList li {
+    gap: var(--space-2);
+  }
+  .pagination {
+    flex-direction: column;
+  }
 }

@@ -6,7 +6,9 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint ."
+    "lint": "eslint .",
+    "format:scss": "prettier --write \"**/*.scss\"",
+    "format:scss:check": "prettier --check \"**/*.scss\""
   },
   "dependencies": {
     "@tanstack/react-query": "^5.104.0",
@@ -20,6 +22,7 @@
     "@types/react-dom": "^19.0.0",
     "eslint": "9.39.5",
     "eslint-config-next": "16.3.5",
+    "prettier": "^3.9.9",
     "sass": "^1.104.1",
     "typescript": "^5.9.0"
   }

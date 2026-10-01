@@ -629,6 +629,7 @@ $breakpoint-desktop: 80rem;
 
 ## 14. SCSS規約
 
+- **必須:** SCSSは`frontend/`で`npm run format:scss`（Prettier）を使用して整形し、`npm run format:scss:check`で検証する。1行に宣言を詰めず、各宣言を改行して可読性を保つ
 - **必須:** Component StyleにはSCSS Modulesを使用する
 - **必須:** Global Styleは`shared/styles/globals.scss`だけに記述する
 - **必須:** `globals.scss`をRoot Layoutから一度だけ読み込む

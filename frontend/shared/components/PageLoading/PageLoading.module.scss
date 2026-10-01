@@ -18,5 +18,7 @@
 }
 
 @media (min-width: bp.$tablet) {
-  .withinShell { min-block-size: calc(100dvb - 2 * var(--space-6)); }
+  .withinShell {
+    min-block-size: calc(100dvb - 2 * var(--space-6));
+  }
 }

@@ -24,7 +24,10 @@
   position: sticky;
   z-index: var(--z-index-app-header);
 
-  svg { block-size: var(--space-5); inline-size: var(--space-5); }
+  svg {
+    block-size: var(--space-5);
+    inline-size: var(--space-5);
+  }
 }
 
 .main {
@@ -46,11 +49,21 @@
     margin: 0;
     padding: 0;
 
-    li:nth-child(1) svg { color: var(--color-nav-icon-chat); }
-    li:nth-child(2) svg { color: var(--color-nav-icon-campaigns); }
-    li:nth-child(3) svg { color: var(--color-nav-icon-posts); }
-    li:nth-child(4) svg { color: var(--color-nav-icon-metrics); }
-    li:nth-child(5) svg { color: var(--color-nav-icon-memories); }
+    li:nth-child(1) svg {
+      color: var(--color-nav-icon-chat);
+    }
+    li:nth-child(2) svg {
+      color: var(--color-nav-icon-campaigns);
+    }
+    li:nth-child(3) svg {
+      color: var(--color-nav-icon-posts);
+    }
+    li:nth-child(4) svg {
+      color: var(--color-nav-icon-metrics);
+    }
+    li:nth-child(5) svg {
+      color: var(--color-nav-icon-memories);
+    }
   }
 
   a {
@@ -108,7 +121,9 @@
     overflow-wrap: anywhere;
   }
 
-  button { text-align: start; }
+  button {
+    text-align: start;
+  }
 }
 
 .drawerLayer {
@@ -141,7 +156,10 @@
     flex: 1 1 auto;
     margin-block: var(--space-5);
 
-    a:hover, a[aria-current="page"] { background: var(--color-nav-active); }
+    a:hover,
+    a[aria-current="page"] {
+      background: var(--color-nav-active);
+    }
   }
 }
 
@@ -150,7 +168,9 @@
   display: flex;
   justify-content: space-between;
 
-  button { font-size: var(--font-size-xl); }
+  button {
+    font-size: var(--font-size-xl);
+  }
 }
 
 .logoutError {
@@ -189,7 +209,10 @@
     .navigation {
       flex: 1 1 auto;
 
-      a:hover, a[aria-current="page"] { background: var(--color-nav-active); }
+      a:hover,
+      a[aria-current="page"] {
+        background: var(--color-nav-active);
+      }
     }
   }
 

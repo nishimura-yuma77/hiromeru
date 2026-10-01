@@ -47,7 +47,9 @@
   --color-text-disabled: var(--palette-ink-500);
   --color-overlay: rgb(7 31 22 / 58%);
 
-  --font-family-sans: "Noto Sans CJK JP", "Noto Sans JP", "Hiragino Sans", "Yu Gothic UI", "Yu Gothic", Meiryo, sans-serif;
+  --font-family-sans:
+    "Noto Sans CJK JP", "Noto Sans JP", "Hiragino Sans", "Yu Gothic UI", "Yu Gothic", Meiryo,
+    sans-serif;
   --font-family-latin: Arial, Helvetica, sans-serif;
   --font-family-mono: "IBM Plex Mono", "SFMono-Regular", Consolas, "Liberation Mono", monospace;
   --font-size-xs: 0.75rem;

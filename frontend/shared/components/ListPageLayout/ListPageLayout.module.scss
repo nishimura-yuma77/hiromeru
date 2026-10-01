@@ -21,10 +21,25 @@
   z-index: calc(var(--z-index-app-header) - 1);
 }
 
-.heading { min-inline-size: 0; }
-.heading h1 { font-size: var(--font-size-md); margin: 0; overflow-wrap: anywhere; }
-.heading p { color: var(--color-text-secondary); font-size: var(--font-size-xs); margin: var(--space-1) 0 0; }
-.actions { align-items: center; display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.heading {
+  min-inline-size: 0;
+}
+.heading h1 {
+  font-size: var(--font-size-md);
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.heading p {
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  margin: var(--space-1) 0 0;
+}
+.actions {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
 .action {
   align-items: center;
   background: var(--color-accent);
@@ -41,7 +56,9 @@
   text-align: center;
   text-decoration: none;
 }
-.action:hover { filter: brightness(0.95); }
+.action:hover {
+  filter: brightness(0.95);
+}
 
 .filters {
   background: var(--color-surface);
@@ -50,7 +67,10 @@
   padding: var(--space-3) var(--space-5);
 }
 
-.content { min-inline-size: 0; padding: var(--space-5); }
+.content {
+  min-inline-size: 0;
+  padding: var(--space-5);
+}
 
 .page :is(a, summary):focus-visible {
   outline: var(--focus-ring-width) solid var(--color-focus-ring);
@@ -62,18 +82,30 @@
 }
 
 @media (min-width: bp.$tablet) {
-  .page { margin: calc(-1 * var(--space-6)) calc(-1 * var(--space-5)); min-block-size: 100dvb; }
-  .header { inset-block-start: 0; }
+  .page {
+    margin: calc(-1 * var(--space-6)) calc(-1 * var(--space-5));
+    min-block-size: 100dvb;
+  }
+  .header {
+    inset-block-start: 0;
+  }
   .page :is(h2, h3, a, button, input, select, summary):focus-visible {
     scroll-margin-block-start: calc(var(--app-header-height) + var(--space-4));
   }
 }
 
 @media (min-width: bp.$desktop) {
-  .page { margin-inline: calc(-1 * var(--space-6)); }
+  .page {
+    margin-inline: calc(-1 * var(--space-6));
+  }
 }
 
 @media (max-width: bp.$mobile) {
-  .header, .filters { padding-inline: var(--space-4); }
-  .content { padding: var(--space-4); }
+  .header,
+  .filters {
+    padding-inline: var(--space-4);
+  }
+  .content {
+    padding: var(--space-4);
+  }
 }

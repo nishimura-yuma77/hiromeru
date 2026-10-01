@@ -18,7 +18,9 @@
   padding: var(--space-4);
 }
 
-.brandIntro { margin-block-start: var(--space-3); }
+.brandIntro {
+  margin-block-start: var(--space-3);
+}
 
 .heroTitle {
   font-size: var(--font-size-lg);
@@ -26,7 +28,9 @@
   line-height: var(--line-height-heading);
   margin: 0;
 
-  br { display: none; }
+  br {
+    display: none;
+  }
 }
 
 .brandDescription {
@@ -34,7 +38,9 @@
   display: none;
 }
 
-.desktopBreak { display: none; }
+.desktopBreak {
+  display: none;
+}
 
 .benefits {
   display: none;
@@ -126,7 +132,9 @@
   font-size: var(--font-size-sm);
   margin-block-start: var(--space-2);
 
-  &:empty { display: none; }
+  &:empty {
+    display: none;
+  }
 }
 
 .formError {
@@ -137,7 +145,11 @@
   overflow-wrap: anywhere;
   padding: var(--space-3) var(--space-4);
 
-  p { font-size: var(--font-size-sm); line-height: var(--line-height-body); margin: 0; }
+  p {
+    font-size: var(--font-size-sm);
+    line-height: var(--line-height-body);
+    margin: 0;
+  }
 
   button {
     margin-block-start: var(--space-2);
@@ -162,11 +174,15 @@
     padding: var(--login-panel-padding-block) var(--login-panel-padding-inline);
   }
 
-  .brandIntro { margin-block-start: var(--space-8); }
+  .brandIntro {
+    margin-block-start: var(--space-8);
+  }
   .heroTitle {
     font-size: var(--font-size-login-hero);
 
-    br { display: revert; }
+    br {
+      display: revert;
+    }
   }
   .brandDescription {
     display: block;
@@ -175,20 +191,35 @@
     margin: var(--space-5) 0 0;
     max-inline-size: 27rem;
   }
-  .desktopBreak { display: initial; }
-  .benefits { display: grid; margin-block-start: auto; }
+  .desktopBreak {
+    display: initial;
+  }
+  .benefits {
+    display: grid;
+    margin-block-start: auto;
+  }
 
   .main {
     min-block-size: 100dvb;
     padding: var(--space-6) var(--space-page);
   }
 
-  .formColumn { gap: var(--space-5); }
-  .card { padding: var(--login-card-padding-block) var(--login-card-padding-inline); }
-  .cardIntro { margin-block-end: var(--space-6); }
-  .field { margin-block-end: var(--space-5); }
+  .formColumn {
+    gap: var(--space-5);
+  }
+  .card {
+    padding: var(--login-card-padding-block) var(--login-card-padding-inline);
+  }
+  .cardIntro {
+    margin-block-end: var(--space-6);
+  }
+  .field {
+    margin-block-end: var(--space-5);
+  }
 }
 
 @media (max-width: breakpoints.$mobile) {
-  .card { padding-inline: var(--space-4); }
+  .card {
+    padding-inline: var(--space-4);
+  }
 }
