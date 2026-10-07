@@ -102,7 +102,7 @@
 | `MARKETER_A2` | `COMPANY_A` | 同一会社の業務データ共有と、他マーケターのSession非公開確認 |
 | `MARKETER_B` | `COMPANY_B` | Tenant境界の確認 |
 | `ADMIN_A` | `COMPANY_A` | 初期設定で作成する責任者。管理ユーザーのログイン、招待、停止禁止の確認 |
-| `ADMIN_A2` | `COMPANY_A` | 責任者ではない管理ユーザー。本人・責任者への停止禁止と同一会社内の境界確認 |
+| `ADMIN_A2` | `COMPANY_A` | 責任者ではない管理ユーザー。本人・責任者への停止・種別変更禁止と同一会社内の境界確認 |
 | `ADMIN_B` | `COMPANY_B` | 他社ユーザーに対する管理操作の境界確認 |
 | `INVITEE_A` | `COMPANY_A` | 管理画面から招待する対象。ケースごとに新しい識別子を用意する |
 
@@ -159,6 +159,7 @@
 | E2E-017 | 正常系 | マーケターユーザーを招待し、本人が登録・ログインする | 必須 |
 | E2E-018 | 正常系 | 管理ユーザーを招待し、本人が登録・管理画面を開く | 必須 |
 | E2E-019 | 正常系 | 自社ユーザーの一覧・ページ移動・表示名編集を行う | 必須 |
+| E2E-020 | 正常系 | 利用中ユーザーを昇格・降格し、旧ログインと本人の会話履歴を確認する | 必須 |
 | E2E-E01 | 異常系 | 認証切れ後に再ログインして元画面へ戻る | 必須 |
 | E2E-E02 | 異常系 | Agent通信切断後に既存Turnを復元する | 必須 |
 | E2E-E03 | 異常系 | 承認と公開を再送しても重複実行しない | 必須 |
@@ -172,6 +173,7 @@
 | E2E-E11 | 異常系 | SESの明確な失敗とスロットリング再試行を区別する | 必須 |
 | E2E-E12 | 異常系 | SESの結果不明で自動再送せず、管理者が手動再送する | 必須 |
 | E2E-E13 | 異常系 | 管理ユーザーの認証切れ後に管理者ログインへ戻る | 必須 |
+| E2E-E14 | 異常系 | 禁止対象の種別変更と同時編集の競合を拒否する | 必須 |
 
 ## 8. 正常系テストケース
 
@@ -575,12 +577,31 @@
 | ---: | --- | --- | --- | --- | --- |
 | 1 | `ADMIN_A` | `/admin/users?page=1`を開く | 登録日時の新しい順で先頭20人と総件数・総ページ数を表示する。責任者・利用状態・直近のメール送信状態を確認できる | SC-11 | `GET /api/v1/admin/users?page=1` |
 | 2 | `ADMIN_A` | ページネーションで次・前・最後・先頭を操作する | URLのpageと表示内容が同期し、現在ページと前後2ページを含む操作範囲が表示される | SC-11 | `GET /api/v1/admin/users?page=2`、`GET /api/v1/admin/users?page=1` |
-| 3 | `ADMIN_A` | 自社ユーザーの操作モーダルで表示名を編集する | `200`で新しい表示名を反映し、メールアドレス・ユーザー種別・利用状態は変わらない | SC-11 | `PATCH /api/v1/admin/users/{user_id}` |
+| 3 | `ADMIN_A` | 招待中・停止中のユーザーの操作モーダルで表示名を編集する | 種別は読み取り専用で、確認モーダルを出さずに`200`で新しい表示名を反映する。メールアドレス・ユーザー種別・利用状態・認証世代は変わらない | SC-11 | `PATCH /api/v1/admin/users/{user_id}` |
 
 **最終確認**
 
 - 各ページが20件以内で、同じ作成日時の行はユーザーIDで順序が固定される
 - 範囲外のpageは`400 INVALID_ARGUMENT`を受け、画面は`/admin/users?page=1`へ戻る
+
+### E2E-020 利用中ユーザーを昇格・降格し、旧ログインと本人の会話履歴を確認する
+
+**事前条件**
+
+- `ADMIN_A`、`MARKETER_A`、責任者ではない`ADMIN_A2`が同じ`COMPANY_A`でactive。対象の2人は別々のBrowser Contextでログイン済みで、それぞれ本人の会話履歴を持つ
+
+| Step | 操作者 | 操作 | 確認項目 | 関連画面 | 関連API |
+| ---: | --- | --- | --- | --- | --- |
+| 1 | `ADMIN_A` | `MARKETER_A`の操作モーダルで表示名と種別を管理ユーザーへ変更し、確認モーダルを開いて一度キャンセルする | 変更前後の種別と旧ログインの失効を示す。下のモーダルは操作できず、キャンセル後も入力内容が残る。PATCHはまだ送られない | SC-11 | なし |
+| 2 | `ADMIN_A` | 再度確認し、昇格を確定する | 表示名と種別を1回のPATCHで更新し、`200`の`data.user`を一覧に反映する。`admins`を追加して認証世代を1回更新する。本人の`marketers`・パスワード・会話履歴は変わらず、SES送信と`emails`・`invitations`の変更もない | SC-11 | `PATCH /api/v1/admin/users/{user_id}` |
+| 3 | `MARKETER_A` | 昇格前のCookieで認証付き画面を再読み込みし、既存のリンクから管理者ログインへ移って再ログインする | 旧Cookieは`401 UNAUTHENTICATED`。管理者ログイン成功後にユーザー管理と本人の会話履歴を利用できる。他人の会話履歴は見られない | SC-01、SC-10、SC-11、SC-02 | `GET /api/v1/auth/me`、`POST /api/v1/admin/auth/login`、`GET /api/v1/agent-sessions` |
+| 4 | `ADMIN_A` | `ADMIN_A2`の種別だけをマーケターユーザーに変更し、確認して確定する | 1回のPATCHで`admins`を削除し認証世代を1回更新する。表示名・`marketers`・会話履歴・パスワードは維持され、メールは送信されない | SC-11 | `PATCH /api/v1/admin/users/{user_id}` |
+| 5 | `ADMIN_A2` | 降格前のCookieで管理画面を再読み込みし、既存のリンクからマーケター用ログインへ移って再ログインする | 旧Cookieは`401 UNAUTHENTICATED`。管理者ログインは拒否され、マーケター用ログインが成功し本人の会話履歴を開ける。管理画面・管理APIは利用できない | SC-11、SC-10、SC-01、SC-02 | `GET /api/v1/auth/me`、`POST /api/v1/admin/auth/login`、`POST /api/v1/auth/login`、`GET /api/v1/admin/users?page=1` |
+
+**最終確認**
+
+- 両方向とも同じユーザーID・marketer_idで会話履歴を保持し、変更前のCookieは新種別でのログイン後も復活しない
+- 招待メールは送られず、招待・送信履歴は増減しない
 
 ## 9. 異常系テストケース
 
@@ -840,6 +861,26 @@
 - 入口ヒントCookieがない場合は`/login`を既定にする。両ログイン画面には互いへの移動リンクがある
 - 入口ヒントCookieの値を書き換えても、管理APIの認可は変わらない
 
+### E2E-E14 禁止対象の種別変更と同時編集の競合を拒否する
+
+**事前条件**
+
+- `ADMIN_A2`・`ADMIN_A`・`ADMIN_B`・`MARKETER_A2`が別々のBrowser Contextでログイン済み。`ADMIN_A`は同じ会社の責任者で、`MARKETER_A`はactive。別の招待中ユーザーと停止中ユーザーを同じ会社に用意する
+
+| Step | 操作者 | 操作 | 確認項目 | 関連画面 | 関連API |
+| ---: | --- | --- | --- | --- | --- |
+| 1 | `ADMIN_A2` | 自分自身・責任者・招待中・停止中の操作モーダルを開く | 種別は読み取り専用で表示され、表示名は編集できる | SC-11 | `GET /api/v1/admin/users?page=1` |
+| 2 | `ADMIN_A2` | 自分自身と責任者の種別変更を、認証済みBrowser ContextからAPIで試す | いずれも`409 USER_ROLE_CHANGE_FORBIDDEN`。表示名・種別・認証世代は変わらない | SC-11 | `PATCH /api/v1/admin/users/{user_id}` |
+| 3 | `ADMIN_A2` | 招待中・停止中のユーザーに新しい表示名と異なる種別を同時に指定し、APIで変更を試す | いずれも`409 USER_STATE_CONFLICT`。表示名も含めて部分更新されず、認証世代も変わらない | SC-11 | `PATCH /api/v1/admin/users/{user_id}` |
+| 4 | `ADMIN_A2`・`ADMIN_A` | `ADMIN_A2`が`MARKETER_A`の表示名と種別を入力して確認モーダルを開き、`ADMIN_A`が別Browser Contextから対象を停止する。その後`ADMIN_A2`が確定する | `409 USER_STATE_CONFLICT`。表示名も種別も変更されず、一覧の再取得後は種別が読み取り専用になる | SC-11 | `POST /api/v1/admin/users/{user_id}/suspensions`、`PATCH /api/v1/admin/users/{user_id}`、`GET /api/v1/admin/users?page=1` |
+| 5 | `ADMIN_A2` | 停止中ユーザーに表示名と現在と同じ種別を指定してAPIで更新する | 種別が実際には変わらないため`200`。表示名のみ更新され、認証世代更新・メール送信はない | SC-11 | `PATCH /api/v1/admin/users/{user_id}` |
+| 6 | `ADMIN_A2`・`ADMIN_B`・`MARKETER_A2` | `ADMIN_A2`が他社ユーザーと存在しないID、`ADMIN_B`が`COMPANY_A`のユーザー、`MARKETER_A2`が管理APIへの種別変更を試す | 他社・存在しないIDはいずれも`404 ADMIN_USER_NOT_FOUND`で区別できず、管理権限なしは`403 ADMIN_FORBIDDEN`。どのユーザーも変更されない | SC-11 | `PATCH /api/v1/admin/users/{user_id}` |
+
+**最終確認**
+
+- 種別変更の条件とエラーは表示制御だけでなくAPIでも適用し、同時編集の失敗では部分更新しない
+- 他社ユーザーの種別変更は存在しないユーザーと同じ`404 ADMIN_USER_NOT_FOUND`、管理権限のないユーザーからの種別変更は`403 ADMIN_FORBIDDEN`となる
+
 ## 10. 手動動作確認
 
 自動E2Eと同じ業務結果を再確認するのではなく、視覚、操作感、支援技術、実行環境に依存する項目を確認する。
@@ -884,7 +925,7 @@
 | MAN-019 | E2E実行中の構造化Logを確認する | `request_id`、`session_id`、`turn_id`で処理を追跡できる | Backend Log |
 | MAN-020 | 認証・Agent・CronのLogを検索する | Password、Cookie、Token、API Key、会話本文、投稿本文、GA4 Filter値が出力されていない | Backend Log |
 | MAN-021 | E2E環境の外部通信を確認する | 許可したFake以外の外部Hostへ通信していない | Network Log |
-| MAN-022 | 招待・ユーザー操作モーダルから確認モーダルを重ねて開閉する | 最上位だけ操作でき、キャンセル時は起点の操作へFocusが戻る。送信中と結果不明を色だけで区別しない | SC-11 |
+| MAN-022 | 招待・ユーザー操作モーダルから確認モーダルを重ねて開閉する | 最上位だけ操作でき、キャンセル時は起点の操作へFocusが戻り種別変更中の表示名・種別入力は残る。変更できない対象の種別は読み取り専用で分かり、送信中と結果不明を色だけで区別しない | SC-11 |
 | MAN-023 | 招待リンクと認証状態をBrowser Network・Logで確認する | 招待画面ではパスワード設定完了までtokenクエリを保持し、登録APIではBodyだけに含める。画面応答は`Referrer-Policy: no-referrer`と`Cache-Control: no-store`を持ち、後続RequestのRefererへトークンを付けない。初回アクセスのクエリをアクセスログでマスクし、トークン・パスワード・Cookieをアプリケーションログへ残さない。登録完了後は履歴を置き換えてトークン付き画面を復元しない | SC-10からSC-12、Browser Network、Backend Log |
 
 ## 11. 合否基準

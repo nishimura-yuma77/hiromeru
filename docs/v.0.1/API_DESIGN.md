@@ -53,7 +53,7 @@ Agentは`propose_campaign`と`propose_x_post`で編集可能な内容を提案�
 | 22 | `GET` | `/api/v1/memories/{memory_id}/posts` | 記憶の関連投稿取得 | 記憶に関連する公開済み投稿をCursorでページングして返す | SC-09 | 6.9 |
 | 23 | `DELETE` | `/api/v1/memories/{memory_id}` | 記憶削除 | 長期記憶の内容とEmbeddingを削除する。Sessionに関わらず、Agent履歴と`Idempotency-Key`は使用しない | SC-09 | 7.1 |
 | 24 | `POST` | `/api/v1/admin/auth/login` | 管理ユーザーのログイン | usersで認証し、adminsの所属を確認できた場合だけ共通Cookieを発行する | SC-10 | 11.1 |
-| 25 | `PATCH` | `/api/v1/admin/users/{user_id}` | 表示名編集 | 自社ユーザーの表示名を部分更新する | SC-11 | 11.2 |
+| 25 | `PATCH` | `/api/v1/admin/users/{user_id}` | 表示名・ユーザー種別編集 | 自社ユーザーの表示名と、対象条件を満たすユーザーの種別を部分更新する | SC-11 | 11.2 |
 | 26 | `POST` | `/api/v1/admin/users/{user_id}/suspensions` | 利用停止 | 自社ユーザーのログインと未使用招待リンクを失効させる | SC-11 | 11.2 |
 | 27 | `POST` | `/api/v1/admin/users/{user_id}/reactivations` | 利用再開 | invitedへ戻し、新しい送信操作と招待行を登録してから送信する | SC-11 | 11.2 |
 | 28 | `POST` | `/api/v1/admin/users/{user_id}/invitations` | 招待メール再送 | invitedユーザーの古いリンクを無効化し、新しい招待行と送信操作を登録してから送信する | SC-11 | 11.2 |
@@ -218,7 +218,7 @@ Agent履歴へ保存しない認証・Session・JSON解析・冪等性Headerエ�
 ### 2.7 HTTP Status
 | Status | 用途 |
 | --- | --- |
-| `200 OK` | 既存施策の上書き成功、記憶の忘却の成功、取得API（GET）の成功、自社ユーザーの表示名編集・利用停止・利用再開の成功、またはSSEによるTurnの実行開始（5.3。Turnの結果は`turn_finished`で示す） |
+| `200 OK` | 既存施策の上書き成功、記憶の忘却の成功、取得API（GET）の成功、自社ユーザーの表示名・種別編集・利用停止・利用再開の成功、またはSSEによるTurnの実行開始（5.3。Turnの結果は`turn_finished`で示す） |
 | `201 Created` | 施策の新規作成、X投稿成功、Sessionの作成、Agent Turnの完了、招待ユーザーの作成または招待メールの手動再送の成功 |
 | `400 Bad Request` | JSON、型、必須項目、Idempotency-Keyが不正、または招待リンクが存在しない・期限切れ・使用済み・無効化済み |
 | `401 Unauthorized` | 未認証、または認証Cookieの期限切れ・署名不正 |
@@ -233,7 +233,7 @@ Agent履歴へ保存しない認証・Session・JSON解析・冪等性Headerエ�
 | `503 Service Unavailable` | 運用向けエンドポイントのDB接続確認に失敗した（2.11） |
 
 ### 2.8 認証とCSRF
-認証は署名付きCookieで行う。CookieにSession表を対応させないが、利用停止・再開による旧ログインの即時失効のため、認証付きRequestごとにusersの利用状態と認証世代をDBで照合する。管理ユーザー・マーケターユーザーは同じCookieを使用し、前者はadmins、両者のマーケター向け操作は本人のmarketersで認可する。
+認証は署名付きCookieで行う。CookieにSession表を対応させないが、利用停止・再開・種別変更による旧ログインの即時失効のため、認証付きRequestごとにusersの利用状態と認証世代をDBで照合する。管理ユーザー・マーケターユーザーは同じCookieを使用し、前者はadmins、両者のマーケター向け操作は本人のmarketersで認可する。
 
 #### 認証Cookie
 - 属性は`HttpOnly`、`Secure`、`SameSite=Lax`とする
@@ -243,7 +243,7 @@ Agent履歴へ保存しない認証・Session・JSON解析・冪等性Headerエ�
   - 絶対上限はログイン日時から7日とし、延長しない
 - 署名不正、またはいずれかの期限を超過したCookieは`401 UNAUTHENTICATED`とし、Cookieを削除する
 - Next.jsのServer Componentから呼び出したAPIの`Set-Cookie`は、Browserへ返せないため、この経路ではアイドル期限は延長されない。延長されるのは、Browserからの呼び出し（状態変更API、Turnのポーリングなど）だけである。参照だけの操作が8時間続くと`401 UNAUTHENTICATED`となり、UIはログインへ移動する（MVPの既知の制約。Next.jsのMiddlewareで再発行する案は未確定）
-- 認証付きRequestではDBの`users.status = active`かつCookieの`auth_generation`がDBの値と一致することを毎回確認する。利用停止時と再開時に世代を更新し、停止前のCookieは再開後も使えない。停止時にはパスワードハッシュも消去する。ログアウトはBrowserのCookie削除とする
+- 認証付きRequestではDBの`users.status = active`かつCookieの`auth_generation`がDBの値と一致することを毎回確認する。利用停止・再開と、実際にユーザー種別が変わるときに世代を更新し、変更前のCookieは使えない。種別変更後は新種別のログイン画面から再ログインする。停止時にはパスワードハッシュも消去する。ログアウトはBrowserのCookie削除とする
 
 #### CSRF対策
 状態変更API（POST・PUT・PATCH・DELETE）には、次の2つをどちらも適用する。
@@ -1981,7 +1981,8 @@ APIが返すエラーコードの一覧である。`docs/backend/CODING_STANDARD
 | `ADMIN_USER_NOT_FOUND` | `404` | × | 11.2。対象なし・他社所属を区別しない |
 | `USER_INVITATION_CONFLICT` | `409` | × | 11.2。メールアドレス重複などの招待競合 |
 | `USER_SUSPENSION_FORBIDDEN` | `409` | × | 11.2。本人・責任者の利用停止は禁止 |
-| `USER_STATE_CONFLICT` | `409` | × | 11.2。利用中ユーザーの再開、招待中以外への再送などの状態競合 |
+| `USER_ROLE_CHANGE_FORBIDDEN` | `409` | × | 11.2。本人・責任者の種別変更は禁止 |
+| `USER_STATE_CONFLICT` | `409` | × | 11.2。利用中ユーザーの再開、招待中以外への再送、利用中以外への種別変更などの状態競合 |
 | `INVITATION_LINK_INVALID` | `400` | × | 11.3。存在しない・期限切れ・使用済み・無効化済みを区別しない |
 | `INVITATION_SEND_FAILED` | `502` | × | 11.2。明確なSES送信失敗。手動再送は別操作 |
 | `INVITATION_SEND_OUTCOME_UNKNOWN` | `504` | × | 11.2。SES受付結果が不明。自動再送しない |
@@ -2026,7 +2027,7 @@ APIが返すエラーコードの一覧である。`docs/backend/CODING_STANDARD
 
 ##### 自社ユーザーの返却形式
 
-`GET /api/v1/admin/users`の`data.users`の各要素、および表示名編集・停止・再開の`data.user`には同じ項目を使用する。パスワードハッシュ、招待トークン、`company_id`は返さない。
+`GET /api/v1/admin/users`の`data.users`の各要素、および表示名・種別編集、停止・再開の`data.user`には同じ項目を使用する。パスワードハッシュ、招待トークン、`company_id`は返さない。
 
 | 項目 | 型 | 必須 | 説明 |
 | --- | --- | :---: | --- |
@@ -2042,7 +2043,7 @@ APIが返すエラーコードの一覧である。`docs/backend/CODING_STANDARD
 | --- | --- |
 | `GET /api/v1/admin/users` | 自社ユーザーを登録日時の新しい順で取得する。同じ登録日時の行はユーザーIDで順序を固定する。1ページ20件のページ番号方式とする |
 | `POST /api/v1/admin/users` | ユーザー種別・表示名・メールアドレスを受け取り、招待中ユーザー・送信操作・招待行を同じトランザクションで保存してからSESへ送る。受付成功の場合は`201 Created`でユーザーID、invited状態、送信受付状態を返す |
-| `PATCH /api/v1/admin/users/{user_id}` | 自社ユーザーの表示名だけを部分更新する。招待中も編集可能 |
+| `PATCH /api/v1/admin/users/{user_id}` | 表示名とユーザー種別を部分更新する。表示名は招待中・利用中・停止中で編集可能。実際の種別変更は同じ会社の別のactiveユーザー（責任者を除く）だけに許可する |
 | `POST /api/v1/admin/users/{user_id}/suspensions` | 招待中・登録済みユーザーを停止する。本人と責任者は停止できない。人数による「最後の管理ユーザー」制限は設けない。パスワードハッシュ消去、認証世代更新、未使用リンク無効化を同一トランザクションで行う。すでにsuspendedなら変更しない |
 | `POST /api/v1/admin/users/{user_id}/reactivations` | 停止中のユーザーをinvitedにし、認証世代を更新して新しい送信操作・招待行を同一トランザクションで作る。登録済み・招待中のどちらから停止したユーザーにも使える。パスワード設定までログイン不可。すでにinvitedなら変更もメール送信もしない。activeからの再開は拒否する |
 | `POST /api/v1/admin/users/{user_id}/invitations` | invitedユーザーだけが対象。古い未使用リンクを無効化し、新しい送信操作・招待行を同一トランザクションで作って手動再送する。active・suspendedには再送しない |
@@ -2095,16 +2096,19 @@ SES受付成功時は`201 Created`とし、`data`に必須の`user_id: integer`�
 
 Bodyの必須項目欠落・空文字列は`400 INVALID_ARGUMENT`とし、対象の`field_errors`には`REQUIRED`を設定する。`name`または`email`が255文字を超える場合は`TOO_LONG`、`email`の形式や`user_type`が不正な場合は`INVALID_FORMAT`を設定する。メールアドレスの登録済み判定は入力検証の後に行い、自社・他社のどちらで使用中かは区別せず`409 USER_INVITATION_CONFLICT`を返す。
 
-##### 表示名編集 `PATCH /api/v1/admin/users/{user_id}`
+##### 表示名・ユーザー種別編集 `PATCH /api/v1/admin/users/{user_id}`
 
 | 場所 | 項目 | 型 | 必須 | 説明 |
 | --- | --- | --- | :---: | --- |
 | Path | `user_id` | integer | ○ | 自社ユーザーの正のID |
-| Body | `name` | string | ○ | 前後の空白を除いて1～255文字。メールアドレス・種別・利用状態はこのAPIでは変更しない |
+| Body | `name` | string |  | 前後の空白を除いて1～255文字。招待中・利用中・停止中の対象で編集できる |
+| Body | `user_type` | `"admin"` または `"marketer"` |  | 管理ユーザーへの昇格またはマーケターユーザーへの降格。実際の種別変更は別のactiveユーザー（責任者を除く）に限る |
 
-成功時は`200 OK`で`data.user`に更新後の自社ユーザーを返す。内容と型は「自社ユーザーの返却形式」に従う。
+Bodyには`name`または`user_type`の少なくとも一方を指定する。両方を指定した場合は両方の条件を検証し、表示名と種別を同一トランザクションで更新する。管理ユーザーへの変更では`admins`を追加し、マーケターユーザーへの変更では`admins`を削除する。本人の`marketers`と会話履歴、パスワード、`invitations`、`emails`は維持する。実際に種別が変わる場合だけ`users.auth_generation`を同じトランザクションで更新して旧Cookieを失効させる。種別が現在と同じ場合は種別変更の制限を適用せず、認証世代も更新しない。メールは送信しない。
 
-`name`の欠落・空文字列は`400 INVALID_ARGUMENT`と`field_errors`の`REQUIRED`、255文字超は`TOO_LONG`とする。
+成功時は`200 OK`で`data.user`に更新後の自社ユーザーを返す。内容と型は「自社ユーザーの返却形式」に従う。値が変わらないRequestも`200`で現在の状態を返し、認証世代は更新しない。
+
+両Body項目の欠落は`400 INVALID_ARGUMENT`とする。指定した`name`が空文字列なら`400 INVALID_ARGUMENT`と`field_errors.name`の`REQUIRED`、255文字超なら`TOO_LONG`、不正な`user_type`なら`field_errors.user_type`の`INVALID_FORMAT`とする。種別が変わる場合に対象がinvited・suspendedなら`409 USER_STATE_CONFLICT`、操作中の管理ユーザー本人または責任者なら`409 USER_ROLE_CHANGE_FORBIDDEN`とし、同時に指定した表示名も更新しない。
 
 ##### 利用停止・利用再開・招待メール再送
 
@@ -2141,7 +2145,8 @@ Bodyの必須項目欠落・空文字列は`400 INVALID_ARGUMENT`とし、対象
 | `404` | `ADMIN_USER_NOT_FOUND` | Pathで指定したユーザーが存在しない、または別会社に属する |
 | `409` | `USER_INVITATION_CONFLICT` | 新規招待のメールアドレスがすでに使われている。所属会社は明かさない |
 | `409` | `USER_SUSPENSION_FORBIDDEN` | 自分自身または責任者の停止を試みた |
-| `409` | `USER_STATE_CONFLICT` | 利用中のユーザーの再開、招待中以外のユーザーへの再送 |
+| `409` | `USER_ROLE_CHANGE_FORBIDDEN` | 自分自身または責任者の種別変更を試みた |
+| `409` | `USER_STATE_CONFLICT` | 利用中のユーザーの再開、招待中以外のユーザーへの再送、招待中・停止中のユーザーの種別変更 |
 | `502` | `INVITATION_SEND_FAILED` | 招待・再開・再送時にSESが明確な失敗を返した。ユーザー・リンクは残る |
 | `504` | `INVITATION_SEND_OUTCOME_UNKNOWN` | SES受付結果を確認できない。ユーザー・リンクは残り、自動再送しない |
 | `500` | `INTERNAL_ERROR` | 想定外の内部・DB保存エラー。処理結果を決めつけず一覧を再取得する |
