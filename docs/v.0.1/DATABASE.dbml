@@ -12,7 +12,7 @@ Project hiromeru {
     - 提案Tool Resultは変更せず、UIフォームの中間編集は保存しない。Agentへの再相談内容とAPIが受け取った最終フォーム値をエージェント履歴へ追記する。
     - 会社は業務データを所有し、マーケターはそのデータを操作する主体となる。管理ユーザーにも本人のマーケタープロファイルを作成し、マーケター向け操作と本人の会話履歴にはそのmarketer_idを使う。
     - 認証はusersで行い、管理権限はadminsの存在で判定する。認証Cookieにはuser_idとauth_generationを署名して保持し、認証付きRequestごとにDBのstatusとauth_generationを検証する。会社とmarketer_idは認証済みユーザーの所属から決定する。
-    - 会社・責任者ユーザー・責任者のmarketersとadminsは初期設定スクリプトで同一トランザクションに登録する。DBのデータは初期化して再投入し、既存会社・既存マーケターの移行は行わない。責任者は会社ごとに1人とし、責任者の削除・利用停止・責任者フラグ解除を禁止する。会社も削除しない。最低1人の責任者は登録手順と操作禁止で維持し、部分ユニーク索引だけでは保証しない。
+    - 初期設定スクリプトは会社名・責任者の表示名・メールアドレス・パスワードを受け取り、会社・責任者ユーザー・責任者のmarketersとadminsを同一トランザクションに登録する。責任者のパスワードはargon2のハッシュとして保存し、users.statusをactiveにして作成直後からログインできるようにする。招待リンクは使わない。DBのデータは初期化して再投入し、既存会社・既存マーケターの移行は行わない。責任者は会社ごとに1人とし、責任者の削除・利用停止・責任者フラグ解除を禁止する。会社も削除しない。最低1人の責任者は登録手順と操作禁止で維持し、部分ユニーク索引だけでは保証しない。
     - 招待時にusersとmarketersを作成し、管理ユーザーならadminsも作成する。パスワード設定前はログインできない。停止時はパスワードハッシュを消去し、認証世代を更新して既存Cookieと招待リンクを即時失効させる。再開時も認証世代を更新し、古いログインを復活させず新しいリンクによるパスワード設定までログインさせない。
     - 招待トークンはハッシュだけを保存し、発行時から1時間有効とする。使用済み・無効化済み・期限切れのリンクを拒否する。手動再送は古いリンクを無効化して新しいリンクと送信操作を作成する。同じ送信操作内の自動再試行では同じリンクを使用する。
     - SESの成功応答は送信受付を示し配達完了は示さない。明確なスロットリング応答だけ最大2回自動再試行する。5xx、408、応答なし、処理中断は結果不明として自動再試行しない。送信前と送信開始後は区別せず、処理中断でpendingのまま残った送信操作も結果不明として扱う。SDK側の自動再試行も無効にする。送信失敗・結果不明でもユーザーを残し、管理画面で手動再送できる。
@@ -47,7 +47,7 @@ Project hiromeru {
     - JSONB内容スキーマとツール固有の入出力スキーマは、保存前にアプリケーションで検証する。
     - 記憶を忘却する場合は、その内容と埋め込みベクトルを完全に削除する。
     - すべてのtimestamptzはUTCとして保存し、APIもUTCで返す。Frontendの表示と日付Filterの暦日境界はAsia/Tokyoを使用する。
-    - Noteに記載したCHECK制約はSQL migrationで追加する。
+    - DBMLのchecksに定義した制約はDBのCHECK制約として追加する。DBMLに未記載でNoteだけに記載したCHECK制約もSQL migrationで追加する。
   '''
 }
 
@@ -168,7 +168,12 @@ Table users {
     email [unique]
   }
 
-  Note: '認証主体。メールアドレスは全社で一意。statusがactiveならpasswordを必須とし、invited・suspendedならNULLとするCHECK制約を追加する。招待からパスワード設定でactive、停止でsuspended、再開でinvitedへ遷移する。停止時はpasswordを消去し、停止・再開でauth_generationを更新する。'
+  checks {
+    `(status = 'active' AND password IS NOT NULL) OR (status IN ('invited', 'suspended') AND password IS NULL)` [name: 'users_status_password_check']
+    `auth_generation >= 0` [name: 'users_auth_generation_check']
+  }
+
+  Note: '認証主体。メールアドレスは全社で一意。招待ユーザーはinvitedからパスワード設定でactive、停止でsuspended、再開でinvitedへ遷移する。初期設定スクリプトで作る責任者は、指定されたパスワードをハッシュ化して保存し、作成時からactiveにする。停止時はpasswordを消去し、停止・再開でauth_generationを更新する。'
 }
 
 Table companies {
@@ -233,7 +238,12 @@ Table emails {
     (user_id, created_at)
   }
 
-  Note: '1行が1回の送信操作。自動再試行は同じ行で試行回数を増やし、手動再送・利用再開では新しい行を作る。明確なスロットリング応答だけ同じリンクで最大2回再試行し、5xx・408・応答なし・処理中断は結果不明として自動再試行しない。送信前と送信開始後は区別せず、中断後pendingのまま残った操作も結果不明として扱う。送信失敗・結果不明でも招待中のユーザーは残る。attempt_countは0以上3以下とするCHECK制約を追加する。statusがpendingならses_message_idとlast_error_codeはともにNULL、acceptedならses_message_idが必須でlast_error_codeはNULL、failed・outcome_unknownならses_message_idはNULLでlast_error_codeが必須とするCHECK制約を追加する。acceptedになった場合は以前のスロットリングエラーをlast_error_codeに残さない。'
+  checks {
+    `attempt_count BETWEEN 0 AND 3` [name: 'emails_attempt_count_check']
+    `(status = 'pending' AND ses_message_id IS NULL AND last_error_code IS NULL) OR (status = 'accepted' AND ses_message_id IS NOT NULL AND last_error_code IS NULL) OR (status IN ('failed', 'outcome_unknown') AND ses_message_id IS NULL AND last_error_code IS NOT NULL)` [name: 'emails_status_result_check']
+  }
+
+  Note: '1行が1回の送信操作。自動再試行は同じ行で試行回数を増やし、手動再送・利用再開では新しい行を作る。明確なスロットリング応答だけ同じリンクで最大2回再試行し、5xx・408・応答なし・処理中断は結果不明として自動再試行しない。送信前と送信開始後は区別せず、中断後pendingのまま残った操作も結果不明として扱う。送信失敗・結果不明でも招待中のユーザーは残る。acceptedになった場合は以前のスロットリングエラーをlast_error_codeに残さない。'
 }
 
 Ref: emails.user_id > users.id [delete: restrict]
@@ -252,7 +262,12 @@ Table invitations {
     (user_id, created_at)
   }
 
-  Note: '1人のユーザーに未使用・未無効化の招待リンクは最大1件とする部分ユニーク索引をSQL migrationで追加する。期限切れのリンクも新しいリンクを作る前に明示的に無効化する。使用時は期限・使用済み・無効化済み・usersの状態を確認し、条件付き更新で二重使用を防ぎ、パスワード設定と同じトランザクションでused_atを記録する。used_atとinvalidated_atを同時に持たないCHECK制約、およびexpires_atがcreated_atの1時間後である制約をSQL migrationで追加する。'
+  checks {
+    `used_at IS NULL OR invalidated_at IS NULL` [name: 'invitations_used_or_invalidated_check']
+    `expires_at = created_at + interval '1 hour'` [name: 'invitations_expiry_check']
+  }
+
+  Note: '1人のユーザーに未使用・未無効化の招待リンクは最大1件とする部分ユニーク索引をSQL migrationで追加する。期限切れのリンクも新しいリンクを作る前に明示的に無効化する。使用時は期限・使用済み・無効化済み・usersの状態を確認し、条件付き更新で二重使用を防ぎ、パスワード設定と同じトランザクションでused_atを記録する。'
 }
 
 Ref: invitations.user_id > users.id [delete: restrict]
