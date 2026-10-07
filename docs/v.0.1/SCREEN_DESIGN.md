@@ -15,19 +15,19 @@
 
 ## 2. 設計方針
 
-1. **チャット中心にする。** 施策と投稿の作成、Agentの提案を受けた変更、承認は、チャット画面（SC-02）で行う。SC-04からSC-09は原則として参照用とし、例外は、施策を人が直接書き換えるSC-05の編集と、不要な記憶を削除するSC-09の操作だけとする
+1. **マーケター向け業務はチャット中心にする。** 施策と投稿の作成、Agentの提案を受けた変更、承認は、チャット画面（SC-02）で行う。SC-04からSC-09は原則として参照用とし、例外は、施策を人が直接書き換えるSC-05の編集と、不要な記憶を削除するSC-09の操作だけとする。自社ユーザーの管理（SC-11）は別の管理画面で行う
 2. **承認は、フォームの最終承認ボタンで行う。** ボタン押下時のAPI呼び出しが最終承認になる。自由文の同意は承認として扱わない
 3. **業務画面には、確定した情報だけを表示する。** 提案中の施策と未公開の投稿案は、チャットの履歴とフォームにだけ存在する。施策一覧と投稿一覧には、承認して保存された施策と、Xへ公開済みの投稿だけを表示する
 4. **施策の直接編集は、SC-05で行える。削除の画面は作らない。** Agentに相談して変更する場合はSC-02で提案を受けて承認し、人が自分で書き換える場合はSC-05の編集フォームで保存する。前者は施策のupsert（`API_DESIGN.md`の4.1。Sessionの配下）、後者は施策編集API（同4.2。Sessionに関わらない）を使い、上書きには画面を表示した（または提案を受けた）時点の`updated_at`を使う。Archive済み施策は参照専用とし、編集と新しい投稿の追加を行わない。公開済みの投稿は、変更も削除もできない
 5. **他の会社・他のマーケターの情報は、存在しないものとして扱う。** 該当しないIDを開いた場合は、「見つかりません」を表示する
 6. **計測の指標は2つに限る。** X投稿の初週PV数と、応募ページへの流入ユーザー数だけを表示する。いいね数、CTR、CVRなどは表示しない
-7. **未認証の場合は、ログイン画面へ移動する**
+7. **未認証の場合は、利用する画面に対応するログイン画面へ移動する。** マーケターユーザーのログインはSC-01、管理ユーザーのログインはSC-10とする。管理ユーザーの認証Cookieはマーケター向け画面でも使用できる
 
 ## 3. 画面一覧
 
 | ID | 画面名 | パス | 目的 | 使用するAPI |
 | --- | --- | --- | --- | --- |
-| SC-01 | ログイン | `/login` | メールアドレスとパスワードでログインする | `POST /auth/login`、`POST /auth/logout`、`POST /auth/csrf`、`GET /auth/me` |
+| SC-01 | マーケターユーザーのログイン | `/login` | マーケターユーザーがメールアドレスとパスワードでログインする | `POST /auth/login`、`POST /auth/logout`、`POST /auth/csrf`、`GET /auth/me` |
 | SC-02 | チャット | `/chat`、`/chat/new`、`/chat/{session_id}` | 会話一覧から会話を選んで再開する、または新しい会話を始める。親Agentと会話し、施策案・投稿案を編集・再相談・最終承認する | `GET /agent-sessions`、`POST /agent-sessions`、`POST /agent-sessions/{id}/turns`、`GET /agent-sessions/{id}`、`GET /agent-sessions/{id}/turns/{turn_id}`、`GET /campaigns`、`POST /agent-sessions/{id}/campaigns`、`POST /agent-sessions/{id}/x/posts` |
 | SC-03 | （欠番） | — | SC-02に統合した。旧「会話一覧」（`/sessions`） | — |
 | SC-04 | 施策一覧 | `/campaigns` | 承認して保存した施策を一覧・検索する | `GET /campaigns` |
@@ -36,10 +36,14 @@
 | SC-07 | 投稿詳細 | `/posts/{post_id}` | 公開済み投稿の本文、UTM付きURL、計測結果を確認する | `GET /posts/{post_id}` |
 | SC-08 | 計測結果 | `/metrics` | 初週PV数、流入ユーザー数、流入率を、全体と施策ごとに比較する | `GET /metrics`（施策別結果はCursor Pagination） |
 | SC-09 | 記憶一覧 | `/memories` | 長期記憶を意味検索または施策で絞り込み、不要な記憶を削除する | `GET /memories`、`GET /memories/{memory_id}/campaigns`、`GET /memories/{memory_id}/posts`、`GET /campaigns`（施策の絞り込みの選択肢）、`GET /campaigns/{campaign_id}`（選択中の施策）、`DELETE /memories/{memory_id}` |
+| SC-10 | 管理ユーザーのログイン | `/admin/login` | 管理ユーザーだけがログインし、成功後はSC-11へ進む | `GET /auth/me`（ログイン済み判定）、`POST /admin/auth/login` |
+| SC-11 | 自社ユーザー一覧・管理 | `/admin/users` | 自社ユーザーを一覧し、新規招待モーダルと対象ユーザーの操作モーダルを使う | `GET /admin/users`、`POST /admin/users`、`PATCH /admin/users/{user_id}`、`POST /admin/users/{user_id}/suspensions`、`POST /admin/users/{user_id}/reactivations`、`POST /admin/users/{user_id}/invitations` |
+| SC-12 | 招待からのパスワード設定 | `/invitations/accept` | 両ユーザー種別が共通の画面で、招待リンクから未ログインでパスワードを設定する | `POST /invitation-acceptances`（初期表示でのリンク検証APIは呼ばない） |
 
 - `/`は`/chat`へ移動する
 - 会話一覧は、独立した画面にせず、SC-02の一部とする（デスクトップでは会話の横に並べ、モバイルでは`/chat`に一覧だけを表示する）。SC-03は、他の画面の番号を変えないため欠番とする
 - APIのパスは、`/api/v1`を前置する
+- SC-10とSC-11にはマーケター向けApp Shellとは別の管理用レイアウトを使用する。SC-12は未ログインの画面とする
 - 参照用のAPI（`GET`）の一覧と共通の扱いは、7章に示す
 
 ### 3.1 実装上の対応（Frontend規約）
@@ -56,9 +60,11 @@
 | SC-08 | `app/(authenticated)/metrics/` | `metrics` | Server Component | 期間の絞り込みと施策別結果のPagination（URLを更新する） |
 | SC-09 | `app/(authenticated)/memories/` | `memories` | Server Component | 検索、施策による絞り込み、関連先の追加読込、記憶の削除、Response不明時の同じDELETEによる結果確定 |
 
+SC-10～SC-12の具体的な`app/`配下の配置とFeature名は、各画面の実装構成を決める際に確認する。
+
 - 初回アクセスとURLの直接読み込みではServer Componentが業務データを取得し、`HydrationBoundary`でFeature別のTanStack Queryへ渡す。認証済みの一覧（SC-04、SC-06、SC-08、SC-09）での検索・絞り込み・並び替え・ページ送りは、Client側の`useCampaignListQuery`・`usePostListQuery`・`useMetricsReportQuery`・`useMemoryListQuery`が結果領域だけ更新する。Query Keyは正規化した条件とCursorを含み、RequestのAbort・キャッシュ・Error再試行をTanStack Queryが担当する
 - URLはNext.js対応のHistory APIと`useSearchParams`で同期する。明示的な条件変更は`fetchQuery`成功後だけURLを確定し、戻る・進むはQuery Keyの切替で対応する。認証後のQueryClientはログイン・ログアウト時に消去し、他の利用者へキャッシュを持ち越さない
-- 認証後App ShellとGlobal navigationは共通`layout.tsx`で維持する。一覧の条件変更にはnative GETフォームによるページ再読込を使わず、詳細への遷移にはClient navigationを使う。ログイン前の初回認証・直接アクセスはApp Shellの表示前にLoadingとなり得る
+- マーケター向けの認証後App ShellとGlobal navigationは共通`layout.tsx`で維持する。管理画面には別レイアウトを使う。一覧の条件変更にはnative GETフォームによるページ再読込を使わず、詳細への遷移にはClient navigationを使う。ログイン前の初回認証・直接アクセスはApp Shellの表示前にLoadingとなり得る
 - QueryClientProviderは認証後のLayoutとログイン画面のClient境界で用意し、Query Key・`useXxxQuery`・`useXxxMutation`はFeatureごとに配置する。通常の一覧・詳細と施策候補、記憶の関連先、会話一覧・履歴をQuery Cacheで管理する。ログイン・ログアウト時はキャッシュを消去し、別利用者の情報を再利用しない
 - 施策編集・記憶削除・会話作成・施策承認・投稿承認の成功後は関係するQueryを更新またはInvalidateする。チャットのSSE進行と切断時の結果確認は専用controllerが担当し、承認の処理キーとResponse不明時の判断はQueryの自動再試行へ委ねない
 - Feature間の直接参照は原則禁止のため（規約4.4）、複数のFeatureにまたがる画面は`app/`で組み立てる。該当する箇所は、SC-05の編集フォーム（下記）である
@@ -77,6 +83,14 @@ flowchart TD
     NAV --> POSTS[SC-06 投稿一覧]
     NAV --> METRICS[SC-08 計測結果]
     NAV --> MEMORIES[SC-09 記憶一覧]
+    ADMINLOGIN[SC-10 管理ユーザーログイン] -- 成功 --> USERS[SC-11 自社ユーザー一覧]
+    LOGIN -- 管理者ログインへ --> ADMINLOGIN
+    ADMINLOGIN -- マーケターログインへ --> LOGIN
+    ADMINNAV[管理画面のアカウントメニュー] -- チャット・施策へ --> CHAT
+    MARKETINGNAV[マーケター用Shell] -- 管理ユーザーのみ: 管理画面へ --> USERS
+    USERS -- ログアウト --> ADMINLOGIN
+    INVITE[SC-12 招待からのパスワード設定] -- 管理ユーザーの登録完了 --> ADMINLOGIN
+    INVITE -- マーケターユーザーの登録完了 --> LOGIN
 
     CAMPAIGNS --> CAMPAIGN[SC-05 施策詳細]
     POSTS --> POST[SC-07 投稿詳細]
@@ -93,25 +107,29 @@ flowchart TD
     CHAT -- 施策の保存後: 施策を開く --> CAMPAIGN
     CHAT -- 投稿の公開後: 投稿を開く --> POST
 
-    ANY[すべての画面] -- 401 --> LOGIN
+    MARKETING[マーケター向け画面] -- 401: 入口ヒントがadmin --> ADMINLOGIN
+    MARKETING -- 401: 入口ヒントがmarketerまたは不明 --> LOGIN
+    ADMINSCREEN[管理画面] -- 401 --> ADMINLOGIN
 ```
 
 ## 5. 画面の概要
 
-### SC-01 ログイン
+### SC-01 マーケターユーザーのログイン
 - 入力: メールアドレス、パスワード
 - ログイン済み（`GET /auth/me`が`200`）の場合は、ログイン画面を表示せず、SC-02へ移動する
 - 成功時は、認証Cookieと`csrf_token`を受け取り、元のURL（なければSC-02）へ移動する。`csrf_token`は、以降の状態変更APIの`X-CSRF-Token` Headerへ設定する
 - `INVALID_CREDENTIALS`（401）: メールアドレスの登録有無を判別できない、同じ文言で表示する
 - `429`（試行回数の超過）: 「しばらくしてから再試行してください」と表示する
-- ユーザー登録、パスワード再設定の画面は設けない（マーケターは事前登録する）
+- 管理ユーザー用のSC-10へのリンクを設ける。`next`がある場合は、検証済みの同一Origin相対URLだけを引き継ぐ
+- マーケターユーザーのログイン成功時は、フロントエンドが管理する入口ヒントCookieを`marketer`に更新する。認証切れ時の再ログイン先選択にのみ使用し、権限判定には使わない
+- 管理ユーザーのログインはSC-10で行う。招待された本人のパスワード設定はSC-12で行う。招待とは無関係のパスワード再設定画面は設けない
 
 **Design plan**
 
 | 項目 | 方針 |
 | --- | --- |
 | Subject | Hiromeruへ安全にログインし、採用Xの運用を再開する入口 |
-| Audience | 事前にアカウントを発行された採用マーケター |
+| Audience | 招待からパスワードを設定済みのマーケターユーザー |
 | Primary job | メールアドレスとパスワードを入力し、元の業務画面へ移動する |
 | 情報の優先順位 | Login Form、入力Error、Brandと機能説明、管理者への問い合わせ文 |
 | Palette | 左カラムは`--color-login-brand-panel`と反転文字、右カラムは`--color-login-background`、CardはWhite Surface、ErrorはDanger状態色 |
@@ -212,6 +230,7 @@ flowchart TD
 | Password | `401 INVALID_CREDENTIALS` | メールアドレスまたはパスワードが正しくありません |
 
 - `INVALID_CREDENTIALS`では両InputをError状態とし、利用者が登録有無や誤っている項目を判別できない同じ文言を両方のInput下に表示する
+- 管理ユーザーがSC-01のログインフォームから認証しようとした場合も、ユーザー種別を特定できない同じ認証エラーを表示する
 - 同じ認証Errorを支援技術へ二重に割り込ませない。VisibleなErrorは各Inputの`aria-describedby`で関連付け、FormのStatus領域から認証失敗を1回だけ通知する
 - Field固有のErrorは、入力変更後の再検証で解消した場合に取り除く。認証Errorは次のSubmit開始時に取り除き、入力変更だけでは自動で消さない
 
@@ -782,7 +801,7 @@ SC-02に統合した。会話一覧の表示と操作は、SC-02の「会話一�
 | `EMBEDDING_FAILED` | 入力した検索語を残して「検索できませんでした」＋「もう一度検索」。条件をクリアすれば通常一覧へ戻れる |
 | `INTERNAL_ERROR` | 「施策を読み込めませんでした」＋「もう一度読み込む」 |
 | `400 INVALID_ARGUMENT`かつ`cursor`あり | 検索・作成日を維持して`cursor`だけを取り除き、先頭を1回再取得する。「ページの状態を復元できなかったため、先頭を表示しました」と通知する |
-| `401 UNAUTHENTICATED` | SC-01へ移動し、ログイン後に検索条件を含む元URLへ戻す |
+| `401 UNAUTHENTICATED` | 6.2に従って再ログインを案内し、ログイン後に検索条件を含む元URLへ戻す |
 
 - Skeletonは実データと同じ4列またはCardの外形とし、Loading中だけTable semanticsを持つ空要素を作らない
 - Error時もHeaderと検索条件を維持する。Notification Toastだけで一覧全体のErrorを伝えない
@@ -1276,7 +1295,7 @@ App ShellのNavigationは残す
 | `INTERNAL_ERROR` | 「投稿一覧を読み込めませんでした」＋「もう一度読み込む」 |
 | `CAMPAIGN_NOT_FOUND` | 他社IDと存在しないIDを区別せず「施策が見つかりません」＋「施策の絞り込みを解除」 |
 | `400 INVALID_ARGUMENT`かつ`cursor`あり | 検索・施策・公開期間・並び順を維持して`cursor`だけを取り除き、先頭を1回再取得する。「ページの状態を復元できなかったため、先頭を表示しました」と通知する |
-| `401 UNAUTHENTICATED` | SC-01へ移動し、ログイン後に検索条件を含む元URLへ戻す |
+| `401 UNAUTHENTICATED` | 6.2に従って再ログインを案内し、ログイン後に検索条件を含む元URLへ戻す |
 
 - 更新に失敗し、現在の結果がある場合は結果を残し、「投稿一覧を更新できませんでした。現在は前回の結果を表示しています」とInline Errorを表示する
 - 更新に失敗し、現在の結果が0件の場合も結果領域にInline Errorを表示する。検索Errorを0件確定の空状態またはNotification Toastだけで表現しない
@@ -1485,7 +1504,7 @@ App ShellのNavigationは残す
 | --- | --- |
 | `404 POST_NOT_FOUND` | 「投稿が見つかりません」「投稿が存在しないか、表示できません」＋検証済みの戻り先を使う「投稿一覧へ」 |
 | `500`または通信Error | 「投稿を読み込めませんでした。通信状態を確認して、もう一度お試しください」＋「もう一度読み込む」＋「投稿一覧へ」 |
-| `401 UNAUTHENTICATED` | SC-01へ移動し、ログイン後に`return_to`を含む元の投稿詳細URLへ戻す |
+| `401 UNAUTHENTICATED` | 6.2に従って再ログインを案内し、ログイン後に`return_to`を含む元の投稿詳細URLへ戻す |
 
 - 投稿が存在しない、別会社に属する、公開済みではない場合を区別せず、同じ`POST_NOT_FOUND`表示にする。未公開案や公開結果が確定していないRequestの存在を示さない
 - ErrorをNotification Toastだけで表示しない。「もう一度読み込む」はSpinnerと「再読込中」を表示し、重複実行を受け付けない
@@ -1747,7 +1766,7 @@ App ShellのNavigationは残す
 | 計測済みの初週PVがすべて0 | Summaryと施策別詳細を表示し、Graphへ「初週PVが0のため比較できる流入率がありません」 |
 | `500 INTERNAL_ERROR`または通信Error | Filterを保持して「計測結果を読み込めませんでした」＋「もう一度読み込む」 |
 | `400 INVALID_ARGUMENT`かつ`cursor`あり | 期間を維持して`cursor`だけを取り除き、先頭を1回再取得する。「ページの状態を復元できなかったため、先頭を表示しました」と通知する |
-| `401 UNAUTHENTICATED` | SC-01へ移動し、ログイン後に期間Paramsを含む元URLへ戻す |
+| `401 UNAUTHENTICATED` | 6.2に従って再ログインを案内し、ログイン後に期間Paramsを含む元URLへ戻す |
 
 - `post_count > 0`で計測待ちまたは失敗だけの場合は、Page全体を空状態にしない。初週PVと流入ユーザーを0、流入率を「—」として、未計測である理由を併記する
 - 更新に失敗し、現在の結果がある場合は結果を残し、「計測結果を更新できませんでした。現在は前回の結果を表示しています」とInline Errorを表示する
@@ -1971,7 +1990,7 @@ Hiromeru AIが次の施策や投稿を考えるときに参照する長期記憶
 - Response不明後のModalは「キャンセル」で閉じられる。閉じた場合は結果を成功とも失敗とも通知せず、一覧を再取得する。対象Cardが残る場合、利用者は改めて削除操作を開始できる
 - 通常のDELETEが直接`404 MEMORY_NOT_FOUND`を返した場合も、すでに削除済みとして扱い、成功時と同じ一覧更新を行う。他社IDと存在しないIDを区別する文言を表示しない
 - `500 MEMORY_DELETE_FAILED`ではModalを閉じず、「記憶を削除できませんでした」と「もう一度削除する」を表示する。同じDELETEを利用者の操作で再実行できる
-- `403 CSRF_VALIDATION_FAILED`は6.2のToken再発行と1回だけの再送を行い、それでも失敗した場合に再ログインを促す。`401 UNAUTHENTICATED`はSC-01へ移動し、ログイン後に検索条件を含む元URLへ戻す
+- `403 CSRF_VALIDATION_FAILED`は6.2のToken再発行と1回だけの再送を行い、それでも失敗した場合に再ログインを促す。`401 UNAUTHENTICATED`は6.2に従って再ログインを案内し、ログイン後に検索条件を含む元URLへ戻す
 
 **初期Loading**
 
@@ -2041,7 +2060,7 @@ Hiromeru AIが次の施策や投稿を考えるときに参照する記憶です
 | `400 INVALID_ARGUMENT`かつ`cursor`あり | 不透明Cursorと現在の条件の組をFrontendで検証できないため、`cursor`だけを取り除いて先頭を再取得し、「ページの状態を復元できなかったため、先頭を表示しました」と通知する |
 | `400 INVALID_ARGUMENT`かつ`cursor`なし | 「検索条件を適用できませんでした」＋「条件をクリア」。BackendのMessageは表示しない |
 | `INTERNAL_ERROR`または通信Error | 「記憶を読み込めませんでした」＋「もう一度読み込む」 |
-| `401 UNAUTHENTICATED` | SC-01へ移動し、ログイン後に検索条件を含む元URLへ戻す |
+| `401 UNAUTHENTICATED` | 6.2に従って再ログインを案内し、ログイン後に検索条件を含む元URLへ戻す |
 
 - 更新に失敗し、現在の結果がある場合はCardを残し、「記憶一覧を更新できませんでした。現在は前回の結果を表示しています」とInline Errorを表示する
 - 更新に失敗し、現在の結果が0件の場合はSkeletonを取り除いてInline Errorを表示する。取得Errorを0件確定の空状態として表示しない
@@ -2058,16 +2077,75 @@ Hiromeru AIが次の施策や投稿を考えるときに参照する記憶です
 - Loading、削除中、結果確認、削除成功、Errorを文言とSemantic HTMLで伝え、色、Icon、Animationだけに依存しない。同じ状態をLive regionから重複して読み上げない
 - Reduced MotionでもLoading、Modal、削除結果、Errorを理解できる。Card削除時に不要な移動Animationを行わない
 
+### SC-10 管理ユーザーのログイン
+
+#### 確定事項
+
+- パスは`/admin/login`。管理ユーザーがメールアドレスとパスワードでログインする。初期設定で作った責任者も、招待後にパスワードを設定した管理ユーザーも利用できる。SC-01へのリンクを設け、`next`がある場合は検証済みの同一Origin相対URLだけを引き継ぐ
+- ログイン操作は`POST /api/v1/admin/auth/login`を使用し、管理権限を確認できた場合だけ共通の認証CookieとCSRF Tokenを受け取る。成功後の通常の行き先はSC-11（`/admin/users`）とする
+- マーケターユーザーの認証情報、メールアドレス不明、誤ったパスワード、招待中・利用停止中のアカウントは、登録有無や種別を判別できない同じ認証失敗として表示する
+- ログイン後は同じCookieでSC-11と既存のマーケター向け画面の両方を利用できる。管理画面ではadmins、マーケター向け画面では本人のmarketersの権限をサーバーで検証する
+- 管理ユーザーのログイン成功時は、フロントエンドが管理する入口ヒントCookieを`admin`に更新する。認証切れ時の再ログイン先選択にのみ使用し、権限判定には使わない
+- 初期表示で`GET /api/v1/auth/me`を呼び、`is_admin = true`ならフォームを表示せずSC-11へ移動する。`is_admin = false`または未ログインなら管理ユーザーログインフォームを表示する
+
+| 区分 | 項目 | 初期表示・操作 |
+| --- | --- | --- |
+| 入力 | メールアドレス | ログインに使用する |
+| 入力 | パスワード | ログインに使用する |
+| 表示 | 認証失敗 | メールアドレスの登録有無・ユーザー種別を示さない |
+
+`GET /api/v1/auth/me`は両ユーザー種別で共通とする。
+
+### SC-11 自社ユーザー一覧・管理
+
+#### 確定事項
+
+- パスは`/admin/users`。管理ユーザー専用の管理用レイアウトを使用し、ナビ項目は「ユーザー管理」のみとする。アカウントメニューの「チャット・施策へ」で既存の`/chat`に移動できる
+- 自社の管理ユーザー・マーケターユーザーを一覧に表示し、招待中のユーザーも含める。ユーザーID・表示名・メールアドレス・ユーザー種別・利用状態・責任者かどうか・直近の招待メール送信状態を確認できる。送信受付成功は配達完了を意味しない。送信失敗と送信結果不明を分け、pendingのまま結果を確認できない場合も既存の「送信結果を確認できませんでした」と表示する。時間経過による自動判定は行わない
+- 初期表示は`GET /api/v1/admin/users?page=1`で20件を取得する。登録日時の新しい順で、同じ日時はユーザーIDで順序を固定する。画面URLは`/admin/users?page={page}`とし、ページ番号で移動する。手入力や古いURLで範囲外のpageを開き`400 INVALID_ARGUMENT`を受けた場合は、`/admin/users?page=1`へ移動して先頭を表示する
+- ページネーションコンポーネントには先頭・前・現在ページの前2ページ・現在ページ・後2ページ・次・最後を表示し、存在しないページへの操作は無効にする。APIから現在ページ・1ページ20件・総件数・総ページ数を取得する
+- 新規招待ボタンは別の招待用モーダルを開く。種別・表示名・メールアドレスを入力して自社ユーザーを招待する。ユーザー・送信操作・招待リンクを同一トランザクションで登録してから送信する。送信失敗・結果不明では一覧を再取得し、保存済みユーザーの送信状態と再送の導線を表示する
+- 一覧で対象ユーザーを選ぶと、表示名編集・利用停止／再開・招待メール再送のUIをまとめた1つの操作用モーダルを開く。表示名は`PATCH /api/v1/admin/users/{user_id}`で編集する。停止は`POST /api/v1/admin/users/{user_id}/suspensions`、再開は`POST /api/v1/admin/users/{user_id}/reactivations`、再送は`POST /api/v1/admin/users/{user_id}/invitations`を使う
+- 停止・再開・再送の操作では、操作用モーダルの上に確認用モーダルを重ねる。確認中は下のモーダルを操作できず、キャンセル時には元の操作へ戻る
+- 自分自身と責任者の停止は禁止し、「最後の管理ユーザー」という人数による停止制限は設けない。再送はinvitedに限り、suspendedには利用再開、activeには再送を提供しない。再開しただけではログインできず、本人の新しいパスワード設定後にactiveとなる
+- 管理画面の操作はサーバー側でもadminsの権限と会社境界を検証する。管理権限がない場合は`403`、存在しない・他社のユーザーを指定した場合は同じ`404`とする。画面に表示されない操作もAPI経由で実行可能にしない
+
+| 発生元 | API・処理 | 結果による表示 |
+| --- | --- | --- |
+| 初期表示・ページ移動・一覧の再取得 | `GET /api/v1/admin/users?page={page}` | 招待中を含む自社ユーザーを20件ずつ表示する。`page`・`page_size`・`total_count`・`total_pages`からページネーションを表示する。pendingが残った操作は結果不明として表示する。範囲外pageの`400 INVALID_ARGUMENT`ではpage=1に戻す |
+| 招待用モーダル | `POST /api/v1/admin/users` | SES受付成功なら`201`でユーザーID・invited状態・受付状態を受け取る。送信失敗`502`・結果不明`504`では一覧を再取得する。リンクは送信結果にかかわらず登録済み |
+| 操作用モーダルの表示名編集 | `PATCH /api/v1/admin/users/{user_id}` | 成功時は`200`で更新後のユーザー状態を受け取り、表示名を更新する |
+| 確認用モーダルの停止 | `POST /api/v1/admin/users/{user_id}/suspensions` | 成功時は`200`で停止したユーザー状態を受け取る。旧ログインと招待リンクは利用できない |
+| 確認用モーダルの再開 | `POST /api/v1/admin/users/{user_id}/reactivations` | SES受付成功なら`200`で更新後の状態を受け取る。送信失敗`502`・結果不明`504`では一覧を再取得する |
+| 確認用モーダルの再送 | `POST /api/v1/admin/users/{user_id}/invitations` | SES受付成功なら`201`で受付状態を受け取る。送信失敗`502`・結果不明`504`では一覧を再取得する |
+
+各状態変更APIの具体的なRequest・Responseキーと型は`API_DESIGN.md`の11章の検討事項とする。
+
+### SC-12 招待からのパスワード設定
+
+#### 確定事項
+
+- パスは`/invitations/accept`で、管理ユーザーとマーケターユーザーが共通で使用する。リンクの`token`クエリはパスワード設定が完了するまでURLに保持し、送信前に再読み込みしても続けられるようにする。招待画面の応答には`Referrer-Policy: no-referrer`と`Cache-Control: no-store`を設定し、後続RequestのRefererやキャッシュにトークンを残さない。初回アクセスのURLはサーバーに届くため、アクセスログ等ではクエリをマスクする。APIへはURLでなくRequest Bodyで渡す
+- 未ログインでパスワードを入力できる。初期表示時はリンクを検証するAPIを呼ばず、送信時に`POST /api/v1/invitation-acceptances`のBodyへトークンとパスワードを渡す。許可Originとトークンの有効性をサーバーで検証する
+- パスワードは12～128文字で、空白を除く半角英数字・記号だけを使用できる。英大文字・英小文字・数字・記号をそれぞれ1文字以上含める。入力時と送信時にこの条件を示す
+- 期限切れ・使用済み・無効化済み・存在しないトークンは同じ`400 INVITATION_LINK_INVALID`、同じ文言として扱い、原因を区別せず「この招待リンクは利用できません。管理者に再送を依頼してください」と表示する。登録成功後は履歴を置き換えてトークン付きURLから移動し、管理ユーザーに`/admin/login`、マーケターユーザーに`/login`を案内する
+
+| 実行タイミング・操作 | API | 表示の変化 |
+| --- | --- | --- |
+| 初期表示 | リンク検証APIは呼ばない | パスワード入力を表示する。リンクの有効性はこの時点では未確認 |
+| パスワード設定 | `POST /api/v1/invitation-acceptances` | 成功なら登録完了と種別に応じたログイン先、リンクが無効なら`400 INVITATION_LINK_INVALID`を表示する |
+
 ## 6. 共通仕様
 
 ### 6.1 グローバルナビ
-ログイン後の全画面に表示する。項目は、チャット（会話一覧を含む）、施策、投稿、計測結果、記憶、ログアウトとする。ログイン中のメールアドレスは、`GET /auth/me`で取得して表示する（Server Componentで取得し、画面の再読み込み後も表示する）。配置とレスポンシブ動作は、6.15の認証後App Shellに従う。
+マーケター向け画面では、通常のナビ5項目をチャット（会話一覧を含む）、施策、投稿、計測結果、記憶とする。管理ユーザーにだけ、ナビとは別の目立つ色の「管理画面へ」ボタンを下寄せでAccount・ログアウトの直前に表示し、SC-11（`/admin/users`）へ移動する。マーケターユーザーには表示しない。ログイン中のメールアドレスと管理権限の有無は共通の`GET /auth/me`で取得する。SC-10・SC-11の管理用レイアウトはマーケター向けApp Shellとは分け、管理ナビは「ユーザー管理」のみとする。管理用レイアウトのアカウントメニューには「チャット・施策へ」を置き、`/chat`へ移動する。
 
 ### 6.2 認証とCSRF
-- 認証は、署名付きCookieで行う。`401 UNAUTHENTICATED`を受けた場合は、SC-01へ移動する（ログイン後は元のURLへ戻る）
-- 状態変更API（POST・PUT・PATCH・DELETE）には、`X-CSRF-Token` Headerを付ける。`403 CSRF_VALIDATION_FAILED`では、`POST /auth/csrf`を1回だけ呼んでTokenを再発行し、元Requestを新しいTokenで1回だけ再送する。承認APIは同じ`Idempotency-Key`を維持する
-- CSRF Token再発行失敗、再送時の`401 UNAUTHENTICATED`、または2回目の`CSRF_VALIDATION_FAILED`では自動再試行を止めてSC-01へ移動する。それ以外の再送Responseは各Errorの通常処理に従う。再発行処理自体をLoopさせない
-- Server Componentの読取で`401`を受けた場合も、SC-01へ移動する（`redirect`で現在のURLを引き継ぐ）
+- 認証は、署名付きCookieで行う。管理ユーザーのCookieは管理画面とマーケター向け画面で共用し、利用停止・再開時は旧Cookieを失効させる。管理画面で`401 UNAUTHENTICATED`を受けたらSC-10へ移動する。マーケター向け画面ではフロントエンドが管理する入口ヒントCookieで遷移先を選び、adminならSC-10、marketerまたはヒントなしならSC-01へ移動する。ヒントは認証・認可には使用しない
+- 入口ヒントCookieはフロントエンドが`hiromeru_login_portal`という名前で管理する。値はSC-01へのログイン成功時は`marketer`、SC-10への成功時は`admin`、有効期間は30日、`Path=/`、`SameSite=Lax`、HTTPS環境では`Secure`とする。JavaScriptから更新するため`HttpOnly`は付けず、明示的なログアウト時は削除する。バックエンドの認証・権限判定には使用しない。元のURLを引き継ぐときは検証済みの同一Origin相対URLだけを使う。両ログイン画面には互いへのリンクを置く
+- 認証付きの状態変更API（POST・PUT・PATCH・DELETE）には、`X-CSRF-Token` Headerを付ける。`403 CSRF_VALIDATION_FAILED`では、`POST /auth/csrf`を1回だけ呼んでTokenを再発行し、元Requestを新しいTokenで1回だけ再送する。承認APIは同じ`Idempotency-Key`を維持する。未ログインのSC-12ではOriginを検証するが、認証Cookieに結びつくCSRF Tokenや再発行は使用しない
+- CSRF Token再発行失敗、再送時の`401 UNAUTHENTICATED`、または2回目の`CSRF_VALIDATION_FAILED`では自動再試行を止め、利用画面に対応するログイン画面へ移動する。それ以外の再送Responseは各Errorの通常処理に従う。再発行処理自体をLoopさせない
+- Server Componentの読取で`401`を受けた場合も、利用画面に対応するログイン画面へ移動する。マーケター向け画面のServer Componentはフロントエンド管理の`hiromeru_login_portal` Cookieを読み、adminならSC-10、それ以外ならSC-01を選ぶ。管理画面ではSC-10を使用する
 - ログアウトは、Cookieを削除する
 
 ### 6.3 エラーの表示
@@ -2075,6 +2153,13 @@ Hiromeru AIが次の施策や投稿を考えるときに参照する記憶です
 | --- | --- | --- |
 | 未認証 | `401 UNAUTHENTICATED` | ログイン画面へ移動する |
 | ログインの試行超過 | `429`（WAF） | 「しばらくしてから再試行してください」 |
+| 管理画面で未認証 | `401 UNAUTHENTICATED` | SC-10へ移動する |
+| 招待リンクが無効 | `400 INVITATION_LINK_INVALID` | SC-12では期限切れ・使用済み・無効化済み・存在しないリンクを区別せず、再送を管理者に依頼する |
+| 管理APIを管理権限なしで呼ぶ | `403 ADMIN_FORBIDDEN` | 自社ユーザーの情報を表示しない。CSRFエラーと区別する |
+| 管理対象ユーザーが存在しない・他社に属する | `404 ADMIN_USER_NOT_FOUND` | 両方を同じ「見つかりません」で表示する |
+| 自分自身・責任者の利用停止 | `409 USER_SUSPENSION_FORBIDDEN` | 利用停止できないことを示す |
+| 招待・再開・再送時のメール送信失敗 | `502 INVITATION_SEND_FAILED` | 保存済みユーザーとリンクを一覧に残し、状態を再取得して手動再送へ誘導する |
+| 招待・再開・再送時の送信結果不明 | `504 INVITATION_SEND_OUTCOME_UNKNOWN`。処理中断時は`pending`の行が残り得る | 「送信結果を確認できませんでした」と表示し、自動再送しない。状態を再取得し、手動再送へ誘導する。pendingに時間条件は設けない |
 | 他の会社・他のマーケターのID、または存在しないID | `404` | 「見つかりません」を表示し、一覧へ戻る導線を出す |
 | Turnが実行中 | `409 TURN_IN_PROGRESS` | 前のTurnの完了を待って再送を促す。送信ボタンは実行中は無効にする |
 | Turnの上限超過、ブロック、実行失敗 | `422` / `504` / `500`（`TURN_*`、`CONTEXT_COMPACTION_FAILED`、`AGENT_EXECUTION_FAILED`） | 理由を表示し、ユーザーが同じ依頼を再送できるようにする |
@@ -2093,6 +2178,7 @@ Hiromeru AIが次の施策や投稿を考えるときに参照する記憶です
 - X投稿の最終承認（Xに公開される。公開後は変更・削除できない）
 - 既存施策の上書きの最終承認（既存の内容を置き換える）と、SC-05の施策の編集の保存
 - 記憶の削除（元に戻せない）
+- SC-11の利用停止・利用再開・招待メール再送（操作用モーダルの上に確認用モーダルを開く）
 
 ### 6.5 待機と再読み込み
 - Turnの実行中は、最大200秒待つ。待つ間は、SSEで届くTool・サブエージェントの呼び出しの進捗を表示する（`API_DESIGN.md`の5.3）。Toolの引数や結果は届かないため表示しない。Tool名は画面用の表示名へ変換し、未知の名前は「処理中」とする
@@ -2104,7 +2190,7 @@ Hiromeru AIが次の施策や投稿を考えるときに参照する記憶です
 チャットには、会話（`user_message`、`assistant_message`）、質問カード（`clarification_request`）、提案、承認の結果だけを表示する。Toolの呼び出しと、表示用に投影した提案・質問以外の結果、Webの取得内容、隔離された内容は表示しない（`API_DESIGN.md`の5.1）。
 
 ### 6.7 URL state（Frontend規約9.4）
-再読み込み、共有、ブラウザの戻る操作で復元したい状態は、URLに保持する。Secret、個人情報、未確定のフォーム入力は、URLに保持しない。
+再読み込み、共有、ブラウザの戻る操作で復元したい状態は、URLに保持する。Secret、個人情報、未確定のフォーム入力はURLに保持しない。ただし招待メールのリンクに含まれる一時的なtokenクエリは例外とし、SC-12での登録完了までは保持する。登録完了後は履歴を置き換えてログイン画面へ移動する。
 
 | 画面 | パス | Search Params | 備考 |
 | --- | --- | --- | --- |
@@ -2115,11 +2201,13 @@ Hiromeru AIが次の施策や投稿を考えるときに参照する記憶です
 | SC-07 | `/posts/{post_id}` | `return_to` | SC-06から渡す検証済みの相対URL。投稿一覧の検索・絞り込み・並び順・Pageを復元する。無効または未指定なら`/posts`へ戻す |
 | SC-08 | `/metrics` | `published_from`、`published_to`、`cursor` | 初期状態は全期間。画面の終了日は含むものとして保持し、API Requestでは翌日開始の排他的な`published_to`へ変換する。`cursor`は施策別集計のPage |
 | SC-09 | `/memories` | `query`、`campaign_id`、`cursor` | `campaign_id`はSC-05から関連する記憶を開くときに使う |
+| SC-11 | `/admin/users` | `page` | 1始まりのページ番号をURLへ保持し、ページネーションコンポーネントで20件ずつ移動する |
+| SC-12 | `/invitations/accept` | `token` | 一時的な招待リンクの値。パスワード設定までURLに保持して再読み込みを可能にし、送信時はRequest Bodyへ渡す。登録完了後は履歴を置き換える |
 
 - Path ParamsとSearch Paramsは、使用する前に検証する。不正な値は、無視して既定の値（絞り込みなし、先頭のページ）に戻し、APIへ送らない（`400 INVALID_ARGUMENT`を画面に出さない）。Path Paramsの`session_id`、`campaign_id`、`post_id`などが正の整数でない場合は、`404`の画面とする
 - SC-02の引継ぎでは、`campaign_id`と`intent=create_post|revise_campaign`、または`post_id`と`intent=discuss_post`の組だけを許可する。値の不足、組の不一致、2種類のIDの併存は、すべての引継ぎParamsを無視する
 - SC-07の`return_to`は、同一Originの相対URLでPathが正確に`/posts`となり、SC-06で許可されたSearch Paramsだけを有効な形式で含む場合に限り使用する。不正な値はAPIへ送らず、戻り先を`/posts`とする
-- SC-02の会話一覧を除く一覧のページングは、`cursor`をURLに持つ「次のページ」リンクにする。`cursor`は前へ戻れない（`API_DESIGN.md`の6.1）ため、ブラウザの戻る操作と「先頭へ」で戻る。意味検索（`query`あり）は、上位の件だけを返し、ページングしない
+- SC-04・SC-06・SC-08・SC-09の一覧のページングは、`cursor`をURLに持つ「次のページ」リンクにする。`cursor`は前へ戻れない（`API_DESIGN.md`の6.1）ため、ブラウザの戻る操作と「先頭へ」で戻る。意味検索（`query`あり）は、上位の件だけを返し、ページングしない。SC-11はページ番号方式とする
 - 検索・絞り込みの確定は、結果領域だけ再取得して成功後にURLを更新する。`cursor`は、条件を変えたときに取り除く
 - SC-06の並び替えは、`sort`（`published_at`または`x_pv_count`）と`order`（`asc`または`desc`）をURLに持つ。並び替えを変えたときは、`cursor`を取り除く。`query`があるときは、`sort`と`order`を取り除く
 - SC-04、SC-06、SC-08の日付はUI上の`YYYY-MM-DD`としてURLに持つ。API Requestでは`Asia/Tokyo`の開始日00:00と終了日翌日00:00をUTCのISO 8601へ変換する。DBとAPIの日時はUTCとし、画面の日時表示は`Intl.DateTimeFormat`へ`timeZone: "Asia/Tokyo"`を指定する
@@ -2137,7 +2225,7 @@ Server dataを表示するすべての画面は、次の状態を扱う。
 | 空 | 下の表の文言と、次に取れる操作 |
 | 成功 | 通常の表示 |
 | 回復できるエラー | `500 EMBEDDING_FAILED`、`500 INTERNAL_ERROR`。「もう一度試す」を出す。検索では、条件を保持したまま再実行できる |
-| 回復できないエラー | `404`は「見つかりません」と一覧への導線、`401`はSC-01への移動 |
+| 回復できないエラー | `404`は「見つかりません」と一覧への導線、`401`は6.2に従い再ログインを案内する |
 
 | 画面 | 空の状態 |
 | --- | --- |
@@ -2201,7 +2289,7 @@ SC-02の会話一覧（`/chat`、および`/chat/new`と`/chat/{session_id}`の�
 - 先頭の20件は、Server Componentが取得して描画する。一覧の末尾へスクロールしたら、`next_cursor`で次の20件を、Clientから取得して末尾へ追加する（Clientの再取得。規約11.3の例外。スクロールのたびにURLを更新してサーバーで再描画すると、表示が途切れるため）。`next_cursor`が`null`になったら、読み込みを止める
 - `cursor`はURLに持たない。再読み込みやブラウザの戻る操作では、先頭の20件から表示し直す
 - 読み込み中は、一覧の末尾に読み込み中の表示を出し、`aria-live="polite"`で通知する。同じ`cursor`の取得を二重に開始しない
-- 追加の読み込みに失敗した場合は、すでに表示した会話を残し、末尾に「もう一度読み込む」を出す。`401`はSC-01へ移動する（6.2）
+- 追加の読み込みに失敗した場合は、すでに表示した会話を残し、末尾に「もう一度読み込む」を出す。`401`では6.2に従い再ログインを案内する
 - スクロールだけに頼らず、末尾に「さらに読み込む」ボタンを置き、キーボードだけでも続きを読み込めるようにする（規約19章）
 - 表示している間に、会話が更新されて順序が変わる場合がある（最終更新の順のため）。追加で読み込んだ会話が、すでに表示している会話と重複した場合は、`session_id`で除いて、表示済みの行を残す。一覧の再取得は、新しい会話の作成、メッセージ送信、Turnの完了のたびに、先頭の20件を取り直して置き換える（追加で読み込んだ分は、いったん閉じる）
 
@@ -2623,9 +2711,9 @@ SC-04・SC-06・SC-08・SC-09の一覧・集計画面で共通に使うPage枠�
 - `filters`と結果は固定せずDocumentと一緒にScrollする。見出しにはSurfaceと下Border、条件にはSurfaceと下Border、結果にはPaper背景を使う
 - Focus先がStickyな見出しやApp Headerの裏へ隠れないようScroll marginを確保する。狭い画面で見出し・説明・操作が折り返しても入力欄と結果に重ならない
 
-### 6.15 認証後App Shell
+### 6.15 マーケター向け認証後App Shell
 
-SC-02、SC-04からSC-09で共有する画面外枠である。SC-01とLPには使用しない。Desktopは固定左Sidebar、MobileはSticky HeaderとDrawerMenuでGlobal navigationを提供する。
+SC-02、SC-04からSC-09で共有する画面外枠である。管理ユーザーも本人のマーケター向け機能を使う場合はこのShellを使用する。SC-01、SC-10、SC-11、SC-12とLPには使用しない。Desktopは固定左Sidebar、MobileはSticky HeaderとDrawerMenuでGlobal navigationを提供する。SC-10・SC-11には別の管理用レイアウトを用いる。
 
 **Design plan**
 
@@ -2661,6 +2749,7 @@ SC-02、SC-04からSC-09で共有する画面外枠である。SC-01とLPには�
 - `tablet`以上では、Inline startに白いSidebarを常設する。`--app-sidebar-width`は`11rem`とし、Block sizeは`100dvb`、Block startにSticky配置する。Logo、Navigation、Accountは全認証済み画面で同じ見た目とする
 - Sidebarは上からLogo、Main navigation、可変の空白、ログイン中のメールアドレス、ログアウトの順とする。Navigation領域だけを必要に応じてScroll可能にし、Accountとログアウトは下端に残す
 - Main navigationは`<nav aria-label="メインメニュー">`とLinkのListで構成する。順序は、チャット、施策、投稿、計測結果、記憶とする
+- 管理ユーザーにだけ「管理画面へ」ボタンを別枠で表示する。Navigationの5項目には混ぜず、下寄せでAccount・ログアウトの直前に置く。管理権限の表示判定は`GET /auth/me`に基づくが、管理API側でも権限を検証する
 - 現在地のLinkには`aria-current="page"`を設定し、淡いGreen Surface、Inline startのBorder、Text weightで示す。Hoverとの違いを色だけに依存させない
 - Mainは`min-inline-size: 0`、`min-block-size: 100dvb`とする。通常画面のContentは`--layout-max-width`までとし、`tablet`で`--space-5`、`desktop`で`--space-6`のPage paddingを設ける。SC-02ではPage paddingと最大幅を解除し、3列をViewport全体へ広げる
 - Page全体をDocument scrollさせ、SidebarはViewportに残す。SC-02のWorkspaceだけは、下記の専用Scrollを使う
@@ -2685,6 +2774,7 @@ SC-02、SC-04からSC-09で共有する画面外枠である。SC-01とLPには�
 - HeaderはInline startからMenu Button、Logoの順とする。Menu Buttonは`--control-min-height`以上の操作領域を持ち、DrawerMenuの`id`を`aria-controls`、開閉状態を`aria-expanded`で示す
 - MainのInline paddingは`--space-4`、Block paddingは画面の内容に応じて`--space-5`を基本とする。Notification ToastはHeaderの背後からHeader直下へ表示する
 - DrawerMenuの内容と操作は6.14.5に従う。Drawerを閉じた後はMenu ButtonへFocusを戻す
+- 管理ユーザー向けの「管理画面へ」もDrawer内の下側へ、通常ナビとは区切って配置する
 
 **Drawer展開時**
 
@@ -2779,7 +2869,7 @@ shared/components/
 ```
 
 - Rootの`app/layout.tsx`はHTML、Metadata、Global styleだけを担当する。`app/(authenticated)/layout.tsx`がServer Componentとして`GET /auth/me`を実行し、利用者情報を認証後Shellへ渡す
-- `GET /auth/me`が`401`の場合は、元のURLを保持して`/login`へRedirectする。Route Groupの`(authenticated)`はURLへ現れない
+- `GET /auth/me`が`401`の場合は、`frontend/app/(authenticated)/layout.tsx`がServer Componentとしてフロントエンド管理の`hiromeru_login_portal` Cookieを読み、adminなら`/admin/login`、marketerまたはヒントなしなら`/login`へ元のURLを保持してRedirectする。ログイン成功時は画面遷移の前にヒントCookieを更新し、明示的なログアウト時に削除する。ヒントは権限判定には使わない。Route Groupの`(authenticated)`はURLへ現れない
 - `AppShell`は、利用者のメールアドレス、現在地、DrawerとLogoutの表示状態、childrenをPropsで受け取る純粋UIとする。APIとrouterを直接呼び出さない
 - 現在地の判定、Drawerの開閉、Logout Eventの接続は小さいClient境界へ置く。Logout Requestは`auth`FeatureのcontrollerとAPI Clientが実行する
 - `NotificationToastProvider`は認証後Layoutに1つだけ配置する。PageやFeatureごとにProviderまたはLive regionを追加しない
@@ -2793,6 +2883,10 @@ shared/components/
 - SC-02のDesktopで会話一覧と会話履歴が独立してScrollし、Message composerが画面外へ失われない
 - Notification Toastが上部中央から表示され、DesktopではSidebarの有無に位置を左右されず、MobileではHeaderの操作を覆わない
 - Reduced MotionではDrawerとNotification Toastの移動を無効にしても、開閉と通知状態を理解できる
+
+### 6.16 管理用レイアウト
+
+SC-10とSC-11にはマーケター向けApp Shellと別の管理用レイアウトを使う。ログイン前のSC-10では認証済みナビを表示しない。SC-11での管理ナビ項目は「ユーザー管理」のみで、ログイン後の入口もSC-11とする。アカウントメニューの「チャット・施策へ」から既存の`/chat`へ移動できる。認証Cookieは共通で再ログインを要求しない。SC-11の自社ユーザー操作は管理APIがadminsの権限と会社境界を検証する。
 
 ## 7. 参照用のAPI
 
@@ -2822,7 +2916,7 @@ shared/components/
 | 画面・機能 | 理由 |
 | --- | --- |
 | コスト、実行履歴、セキュリティイベントの一覧画面 | 専用の画面は必須ではない。完全な履歴は、DBとログで確認する（`API_DESIGN.md`の5.1）。将来の拡張とする。セキュリティイベントは、チャットの通知で伝える（SC-02） |
-| ユーザー登録、パスワード再設定、ユーザー管理 | マーケターは事前登録する（`API_DESIGN.md`の2.9） |
+| 招待と無関係のパスワード再設定、二段階認証、superadminの管理画面 | Issue #58の対象外。招待からのパスワード設定はSC-12、自社ユーザー管理はSC-11で扱う |
 | 施策の削除・アーカイブ、投稿の編集・削除・アーカイブの操作 | 未Archive施策の編集はSC-05で行える。Archive済み施策はBadge付きの参照専用で表示する。Archive状態を変更する操作と削除はMVPの対象外で、公開済みの投稿は変更も削除もできない（`REQUIREMENTS.md`のスコープ外） |
 | 未公開の投稿案の一覧 | 未公開案は、履歴とフォームにだけ存在する |
 | 投稿の予約、スケジュール投稿 | 対象外。投稿は、明示的な承認操作でだけ実行する |
@@ -2841,7 +2935,11 @@ shared/components/
 | 3.2 公開済み投稿コンテンツの管理、6 UTM生成 | SC-06、SC-07 |
 | 3.3 マーケティング指標の保存、7 施策評価、5 GA4連携 | SC-07、SC-08 |
 | 8 記憶管理 | SC-09、SC-02（記憶の保存を依頼） |
-| NFR-SEC-007 認証とセッションを保護する | SC-01、6.2 |
+| NFR-SEC-007 認証とセッションを保護する | SC-01、SC-10～SC-12、6.2 |
+| `USECASE.md` UC-03 会社・責任者登録とログイン | SC-10（登録は初期設定スクリプトで行い画面なし） |
+| `USECASE.md` UC-04 自社ユーザー招待・登録 | SC-11（招待用モーダル）、SC-12（パスワード設定） |
+| `USECASE.md` UC-05 自社ユーザー一覧・編集・再送 | SC-11（操作用モーダルと確認用モーダル） |
+| `USECASE.md` UC-06 停止・再開 | SC-11（操作用モーダルと確認用モーダル）、SC-12（再開後のパスワード設定） |
 | NFR-REL-008 承認APIを冪等にする、NFR-REL-009 中断されたAgent Turnを復旧する | SC-02、6.3 |
 | Frontend規約 4章 ディレクトリ構成、11章 サーバー通信 | 3.1、6.15 |
 | Frontend規約 9.4 URL state | 6.7 |

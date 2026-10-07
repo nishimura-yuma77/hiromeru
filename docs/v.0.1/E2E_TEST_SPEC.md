@@ -10,12 +10,12 @@
 
 ### 2.1 対象
 
-- `SCREEN_DESIGN.md`のSC-01、SC-02、SC-04からSC-09
-- ログインから施策作成、X投稿公開、計測、長期記憶の利用までのユーザーフロー
+- `SCREEN_DESIGN.md`のSC-01、SC-02、SC-04からSC-12
+- 会社・責任者の初期登録と管理ユーザーのログイン、招待から登録・ユーザー管理、および施策作成、X投稿公開、計測、長期記憶の利用までのユーザーフロー
 - BrowserからNext.js、FastAPI、PostgreSQLまでの接続
 - Agent Turn、承認API、参照API、Cronによる状態変化
-- 認証Cookie、CSRF、会社・マーケターのデータ境界
-- X、GA4、LLM、EmbeddingのFakeを含む外部連携境界
+- 認証Cookieと認証世代、CSRF、管理権限、会社・本人の会話履歴のデータ境界
+- X、GA4、LLM、Embedding、SESのFakeを含む外部連携境界
 
 ### 2.2 対象外
 
@@ -25,6 +25,7 @@
 - 負荷、長時間稼働、侵入、脆弱性診断
 - Vercel WAFによるログイン回数制限そのものの動作
 - 実際のX、GA4、OrcaRouterへの接続
+- 実際のAWS SESへの送信と配達確認（E2Eでは送信受付結果をSES Fakeで制御する）
 - `SCREEN_DESIGN.md`で`/chat`への遷移が定義されている`/`と、現行実装のLanding Page
 
 ## 3. 参照文書
@@ -32,7 +33,7 @@
 | 文書 | 本書で参照する内容 |
 | --- | --- |
 | `REQUIREMENTS.md` | MVPの基本フロー、非機能要件 |
-| `USECASE.md` | 施策作成・更新、X投稿作成・公開のユーザー起点フロー |
+| `USECASE.md` | 会社・責任者登録、自社ユーザー招待・管理、施策作成・更新、X投稿作成・公開のユーザー起点フロー |
 | `SCREEN_DESIGN.md` | 画面、URL、表示、画面遷移、ユーザー操作 |
 | `API_DESIGN.md` | API、Request、Response、認証、CSRF、冪等性、エラー |
 | `AGENT_DESIGN.md` | Agent、Tool、Turn、進捗、中断復旧 |
@@ -47,10 +48,12 @@
 
 - ユーザー操作はBrowserから行い、画面が呼び出す実際のAPIを使用する
 - Frontend、Backend、PostgreSQLは実際のアプリケーションを使用する
-- X、GA4、LLM、Embedding、Web検索・取得は決定論的なFakeへ差し替える
+- X、GA4、LLM、Embedding、Web検索・取得、SESは決定論的なFakeへ差し替える。招待メールはSES Fakeが生成したリンクをテスト環境で取得してBrowserから開く
 - テストから業務APIを直接呼び出して主操作を省略しない
 - API直接呼び出しとDB直接操作は、事前条件の準備、外部障害の注入、事後結果の確認だけに使用する
+- 管理画面に入力欄のない他社IDや禁止対象の拒否は、Browserの認証Cookie・CSRF Tokenを使ってAPIへRequestし、画面操作後の認可の事後確認として検証してよい
 - 各ケースは独立して実行でき、別ケースの実行結果へ依存しない
+- 複数ユーザーを同じケースで操作する場合、ユーザーごとに独立したBrowser Contextを用い、CookieとQuery Cacheを共有しない
 - 時刻、UUID、Fakeの応答は固定し、同じ入力に対して同じ結果を再現する
 
 ### 4.2 確認レベル
@@ -67,7 +70,7 @@
 
 - 正常系は、利用者が目的を達成する一連のフローとしてテストする
 - 手書き修正とAgentへの再相談は、異なるユーザー操作としてそれぞれ確認する
-- 異常系は、認証切れ、通信切断、冪等性、更新競合、Tenant境界、X投稿結果不明に限定する
+- 異常系は、認証切れ、通信切断、冪等性、更新競合、Tenant・本人の会話境界、X投稿結果不明に加え、招待リンクの失効、管理権限、利用停止・再開、SES送信失敗・結果不明を対象とする
 - 同じ確認を画面別またはAPI別に重複させない
 
 ## 5. テスト環境
@@ -85,6 +88,7 @@
 | LLM・Agent | Tool Callと最終回答を固定できるFake |
 | Embedding | 入力に対応する固定Vectorを返すFake |
 | Web検索・取得 | 固定結果を返し、外部Networkへ接続しないFake |
+| SES | 受付成功とMessageId、明確なスロットリング・失敗、5xx・408・応答なし・処理中断を制御できるFake。送信回数と招待リンクを検証可能にする |
 
 実行時に本物の外部Credentialを設定しない。E2E環境から許可していない外部Hostへの通信を遮断する。
 
@@ -97,8 +101,12 @@
 | `MARKETER_A` | `COMPANY_A` | 基本操作を行う利用者 |
 | `MARKETER_A2` | `COMPANY_A` | 同一会社の業務データ共有と、他マーケターのSession非公開確認 |
 | `MARKETER_B` | `COMPANY_B` | Tenant境界の確認 |
+| `ADMIN_A` | `COMPANY_A` | 初期設定で作成する責任者。管理ユーザーのログイン、招待、停止禁止の確認 |
+| `ADMIN_A2` | `COMPANY_A` | 責任者ではない管理ユーザー。本人・責任者への停止禁止と同一会社内の境界確認 |
+| `ADMIN_B` | `COMPANY_B` | 他社ユーザーに対する管理操作の境界確認 |
+| `INVITEE_A` | `COMPANY_A` | 管理画面から招待する対象。ケースごとに新しい識別子を用意する |
 
-テスト用パスワードはE2E環境のSecretまたはFixtureから注入し、本書、Source、Logへ平文で保存しない。
+テスト用パスワードは12～128文字・半角英大文字／小文字／数字／記号を各1文字以上含む値をE2E環境のSecretまたはFixtureから注入し、本書、Source、Logへ平文で保存しない。`MARKETER_A`など既存ケースの利用者は、対応する会社・責任者の初期登録後、招待登録が完了した状態をFixtureで準備してよい。
 
 ### 6.2 固定入力
 
@@ -147,6 +155,10 @@
 | E2E-013 | 正常系 | 施策の情報不足を質問カードで確認してから提案する | 必須 |
 | E2E-014 | 正常系 | 親Agentが子Agentを呼ばずに確認事項を尋ねる | 必須 |
 | E2E-015 | 正常系 | 投稿案の情報不足を質問カードで確認する | 必須 |
+| E2E-016 | 正常系 | 初期登録した責任者が管理画面とマーケター向け画面へログインする | 必須 |
+| E2E-017 | 正常系 | マーケターユーザーを招待し、本人が登録・ログインする | 必須 |
+| E2E-018 | 正常系 | 管理ユーザーを招待し、本人が登録・管理画面を開く | 必須 |
+| E2E-019 | 正常系 | 自社ユーザーの一覧・ページ移動・表示名編集を行う | 必須 |
 | E2E-E01 | 異常系 | 認証切れ後に再ログインして元画面へ戻る | 必須 |
 | E2E-E02 | 異常系 | Agent通信切断後に既存Turnを復元する | 必須 |
 | E2E-E03 | 異常系 | 承認と公開を再送しても重複実行しない | 必須 |
@@ -154,6 +166,12 @@
 | E2E-E05 | 異常系 | 存在しないデータと別会社データを同じ表示にする | 必須 |
 | E2E-E06 | 異常系 | X投稿結果不明時に自動再投稿しない | 必須 |
 | E2E-E07 | 異常系 | 質問への回答Turnが失敗しても修正して再回答できる | 必須 |
+| E2E-E08 | 異常系 | 利用停止・再開で旧ログインとリンクを失効させる | 必須 |
+| E2E-E09 | 異常系 | 招待リンクの期限切れ・再送・一度きりの使用を確認する | 必須 |
+| E2E-E10 | 異常系 | 管理権限・他社ユーザー・他人の会話履歴の境界を確認する | 必須 |
+| E2E-E11 | 異常系 | SESの明確な失敗とスロットリング再試行を区別する | 必須 |
+| E2E-E12 | 異常系 | SESの結果不明で自動再送せず、管理者が手動再送する | 必須 |
+| E2E-E13 | 異常系 | 管理ユーザーの認証切れ後に管理者ログインへ戻る | 必須 |
 
 ## 8. 正常系テストケース
 
@@ -162,7 +180,7 @@
 **事前条件**
 
 - `MARKETER_A`が未ログインである
-- `MARKETER_A`が事前登録済みである
+- `MARKETER_A`が招待登録を完了している
 
 | Step | 操作者 | 操作 | 確認項目 | 関連画面 | 関連API |
 | ---: | --- | --- | --- | --- | --- |
@@ -488,6 +506,82 @@
 - 質問Turnは`completed`で`clarification_request`を持ち、`propose_x_post`は実行されない
 - 回答Turnで再度`run_content_creator`を実行してから投稿案を表示し、Xへの公開は承認ボタンまで実行しない
 
+### E2E-016 初期登録した責任者が管理画面とマーケター向け画面へログインする
+
+**事前条件**
+
+- 初期設定スクリプトへ大文字を含むメールアドレスを指定し、`COMPANY_A`と`ADMIN_A`を同一トランザクションに登録している。DBのEmailは前後空白を除去・小文字化した値で、`ADMIN_A`はactive、adminsと本人のmarketersを持つ
+- `ADMIN_A`は未ログインである
+
+| Step | 操作者 | 操作 | 確認項目 | 関連画面 | 関連API |
+| ---: | --- | --- | --- | --- | --- |
+| 1 | `ADMIN_A` | 初期設定時のメールアドレスを小文字にして`/admin/login`からログインする | 管理者ログインが成功し、`/admin/users`へ移動する。`GET /auth/me`の`is_admin`はtrueである | SC-10、SC-11 | `GET /api/v1/auth/me`、`POST /api/v1/admin/auth/login` |
+| 2 | `ADMIN_A` | 「チャット・施策へ」を選ぶ | 再ログインせず`/chat`を開き、本人の会話だけを表示する。「管理画面へ」ボタンが通常のナビとは別に表示される | SC-11、SC-02 | `GET /api/v1/auth/me`、`GET /api/v1/agent-sessions` |
+| 3 | `ADMIN_A` | 「管理画面へ」を選ぶ | 同じCookieのまま`/admin/users`へ戻れる | SC-02、SC-11 | `GET /api/v1/admin/users?page=1` |
+| 4 | `ADMIN_A` | ログアウトしてから`/login`でマーケター用ログインを試す | 共通Cookieと入口ヒントCookieが削除される。同じ本人でも管理ユーザーはマーケター用ログインAPIで認証されず、ユーザー種別を特定できない認証エラーになる | SC-01、SC-11 | `POST /api/v1/auth/logout`、`POST /api/v1/auth/login` |
+| 5 | 開発者 | メールアドレスの大小文字と前後空白を変え、別会社名を指定して初期設定スクリプトを再実行する | 正規化後のメール重複で拒否され、別会社・責任者は作成されない | 画面なし | 初期設定スクリプト |
+
+**最終確認**
+
+- 会社に責任者が1人だけ存在し、会社・責任者ユーザー・admins・marketersが揃っている。初期登録では招待メールを送っていない
+- 初期登録した責任者のメールアドレスは招待APIと同じ正規化済みで全社一意である。大小文字・前後空白だけ異なる再登録では会社も含めてロールバックされる
+- 2種類の画面で共通Cookieが使われ、会話履歴の所有者は`ADMIN_A`本人の`marketer_id`である
+- ログイン用と入口ヒント用のCookieが別物であり、後者は権限判定に使われない
+
+### E2E-017 マーケターユーザーを招待し、本人が登録・ログインする
+
+**事前条件**
+
+- `ADMIN_A`がログイン済みで、`INVITEE_A`のメールアドレスは未使用である
+- SES Fakeは招待メールを受け付け、リンクをテスト環境から取得できる
+
+| Step | 操作者 | 操作 | 確認項目 | 関連画面 | 関連API |
+| ---: | --- | --- | --- | --- | --- |
+| 1 | `ADMIN_A` | ユーザー一覧からマーケターユーザーを招待する | `201`が返り、種別・表示名・メールアドレスを持つ`invited`ユーザーが一覧へ表示される。SESの受付状態はacceptedである | SC-11 | `POST /api/v1/admin/users`、`GET /api/v1/admin/users?page=1` |
+| 2 | `INVITEE_A` | SES Fakeのメールのリンクを開き、パスワード送信前に画面を再読み込みする | tokenクエリが残り、フォームを再表示できる。初期表示・再読み込みでリンク検証APIは呼ばれない | SC-12 | なし |
+| 3 | `INVITEE_A` | 新しいパスワードを設定する | `POST`で本人の登録が完了し、ログイン画面へ履歴を置き換えて移動する。使用済みリンクは再使用できない | SC-12、SC-01 | `POST /api/v1/invitation-acceptances` |
+| 4 | `INVITEE_A` | `/login`でログインする | マーケター向け画面を使え、管理画面へ移動するボタンはない | SC-01、SC-02 | `POST /api/v1/auth/login`、`GET /api/v1/auth/me` |
+
+**最終確認**
+
+- `INVITEE_A`のusersはactiveで、所属会社のmarketersを1件持ち、adminsは持たない。`COMPANY_A`には複数のmarketersが所属できる
+- 招待行と送信操作はSES呼び出し前に存在し、リンクの有効期限は発行時刻から1時間である。パスワードハッシュとトークンの平文はAPI Responseにない
+
+### E2E-018 管理ユーザーを招待し、本人が登録・管理画面を開く
+
+**事前条件**
+
+- `ADMIN_A`がログイン済みで、管理ユーザーに招待する`INVITEE_A`のメールアドレスは未使用である
+- SES Fakeは招待メールを受け付ける
+
+| Step | 操作者 | 操作 | 確認項目 | 関連画面 | 関連API |
+| ---: | --- | --- | --- | --- | --- |
+| 1 | `ADMIN_A` | 種別を管理ユーザーとして招待する | 招待中の対象が一覧に表示され、管理ユーザー種別と表示名を確認できる | SC-11 | `POST /api/v1/admin/users`、`GET /api/v1/admin/users?page=1` |
+| 2 | `INVITEE_A` | 招待リンクでパスワードを設定し、案内された`/admin/login`からログインする | 登録結果の種別はadminで、管理ユーザーログインが成功して`/admin/users`へ移動する | SC-12、SC-10、SC-11 | `POST /api/v1/invitation-acceptances`、`POST /api/v1/admin/auth/login` |
+| 3 | `INVITEE_A` | マーケター向け画面へ移動する | 再ログインせず本人のマーケター向け機能を利用できる | SC-11、SC-02 | `GET /api/v1/auth/me`、`GET /api/v1/agent-sessions` |
+
+**最終確認**
+
+- 対象のusers・admins・marketersは同じ会社に属し、責任者フラグはfalseである
+- 招待登録APIは認証Cookieを発行せず、パスワード設定後に管理者ログインAPIでCookieが発行される
+
+### E2E-019 自社ユーザーの一覧・ページ移動・表示名編集を行う
+
+**事前条件**
+
+- `ADMIN_A`がログイン済みで、`COMPANY_A`に25人以上のユーザーがいる。招待中・利用中・停止中を含める
+
+| Step | 操作者 | 操作 | 確認項目 | 関連画面 | 関連API |
+| ---: | --- | --- | --- | --- | --- |
+| 1 | `ADMIN_A` | `/admin/users?page=1`を開く | 登録日時の新しい順で先頭20人と総件数・総ページ数を表示する。責任者・利用状態・直近のメール送信状態を確認できる | SC-11 | `GET /api/v1/admin/users?page=1` |
+| 2 | `ADMIN_A` | ページネーションで次・前・最後・先頭を操作する | URLのpageと表示内容が同期し、現在ページと前後2ページを含む操作範囲が表示される | SC-11 | `GET /api/v1/admin/users?page=2`、`GET /api/v1/admin/users?page=1` |
+| 3 | `ADMIN_A` | 自社ユーザーの操作モーダルで表示名を編集する | `200`で新しい表示名を反映し、メールアドレス・ユーザー種別・利用状態は変わらない | SC-11 | `PATCH /api/v1/admin/users/{user_id}` |
+
+**最終確認**
+
+- 各ページが20件以内で、同じ作成日時の行はユーザーIDで順序が固定される
+- 範囲外のpageは`400 INVALID_ARGUMENT`を受け、画面は`/admin/users?page=1`へ戻る
+
 ## 9. 異常系テストケース
 
 ### E2E-E01 認証切れ後に再ログインして元画面へ戻る
@@ -634,6 +728,118 @@
 - 完了後に同じ質問Turnへ再回答すると`409 CLARIFICATION_ALREADY_ANSWERED`となり、新しいTurnは作られない
 - 隔離済みの回答Itemを持つ`completed` Turnのケースは別Fixtureで確認する。`clarification_request.answered`は`false`で、同じ質問Turnへ修正した回答を新しいTurnとして送れる。隔離済みItemの内容は表示とAgent Contextの回答に使用しない
 
+### E2E-E08 利用停止・再開で旧ログインとリンクを失効させる
+
+**事前条件**
+
+- `ADMIN_A`と`ADMIN_A2`でログイン済みで、同じ会社の`MARKETER_A`はactiveでログイン済み。別の`INVITEE_A`はinvitedで未使用リンクを持つ
+
+| Step | 操作者 | 操作 | 確認項目 | 関連画面 | 関連API |
+| ---: | --- | --- | --- | --- | --- |
+| 1 | `ADMIN_A` | `MARKETER_A`の操作モーダルから停止し、重ねた確認モーダルで確定する | ユーザーがsuspendedとなり、パスワードハッシュが消去され、認証世代が更新される | SC-11 | `POST /api/v1/admin/users/{user_id}/suspensions` |
+| 2 | `MARKETER_A` | 停止前のCookieで画面を再読み込みする | `401 UNAUTHENTICATED`となり、本人の業務画面を表示しない | SC-01、SC-02 | `GET /api/v1/auth/me` |
+| 3 | `ADMIN_A` | 停止済みの`MARKETER_A`を利用再開し、送信を確認する | invitedに戻るが、旧パスワードではログインできない。新しいリンクと送信操作が作られる | SC-11 | `POST /api/v1/admin/users/{user_id}/reactivations` |
+| 4 | `ADMIN_A` | Browserから同じ利用再開Requestを再送する | `200`で現在の状態を返し、SES Fakeの呼び出し回数・招待行・認証世代は変わらない | SC-11 | `POST /api/v1/admin/users/{user_id}/reactivations` |
+| 5 | `MARKETER_A` | 新しいリンクからパスワードを設定してログインする | activeになり、以前のCookieは再開後も無効。既存の本人の会話履歴は保持される | SC-12、SC-01、SC-02 | `POST /api/v1/invitation-acceptances`、`POST /api/v1/auth/login` |
+| 6 | `ADMIN_A` | 招待中の`INVITEE_A`を停止してから、旧リンクでパスワード設定を試す | 同じ`400 INVITATION_LINK_INVALID`で拒否され、登録できない | SC-11、SC-12 | `POST /api/v1/admin/users/{user_id}/suspensions`、`POST /api/v1/invitation-acceptances` |
+| 7 | `ADMIN_A2` | 自分自身と責任者`ADMIN_A`への停止を試す | UIでは停止を選べない。APIへ直接Requestしても`409 USER_SUSPENSION_FORBIDDEN`となり、状態は変わらない | SC-11 | `POST /api/v1/admin/users/{user_id}/suspensions` |
+
+**最終確認**
+
+- 招待中と登録済みのどちらも停止できるが、停止・再開前のCookieとリンクは復活しない
+- 管理ユーザー本人と責任者は画面で停止できず、APIからの試行も`409 USER_SUSPENSION_FORBIDDEN`で拒否される
+
+### E2E-E09 招待リンクの期限切れ・再送・一度きりの使用を確認する
+
+**事前条件**
+
+- `ADMIN_A`がログイン済み。`INVITEE_A`はinvitedで、発行時刻を固定したリンクを持つ
+- Clockを発行から1時間以上進められる
+
+| Step | 操作者 | 操作 | 確認項目 | 関連画面 | 関連API |
+| ---: | --- | --- | --- | --- | --- |
+| 1 | `INVITEE_A` | 期限切れリンクでパスワード設定を試す | `400 INVITATION_LINK_INVALID`となり、利用可能なアカウントにならない | SC-12 | `POST /api/v1/invitation-acceptances` |
+| 2 | `ADMIN_A` | 招待中の対象を開き、再送を確認・確定する | 古いリンクを無効化して新しいリンクをSESへ送り、送信受付結果を一覧に表示する | SC-11 | `POST /api/v1/admin/users/{user_id}/invitations` |
+| 3 | `INVITEE_A` | 新しいリンクからパスワードを設定し、同じリンクをもう一度使用する | 最初は登録でき、2回目はStep 1と同じエラー。登録後は再送操作を使用できない | SC-12、SC-11 | `POST /api/v1/invitation-acceptances` |
+| 4 | `ADMIN_A` | 利用中となった`INVITEE_A`への招待メール再送をBrowserから試す | `409 USER_STATE_CONFLICT`となり、新しいメールとリンクを作らない | SC-11 | `POST /api/v1/admin/users/{user_id}/invitations` |
+
+**最終確認**
+
+- リンクの期限は発行時刻から1時間であり、再送のたびに古いリンクは無効になる。古いリンクは送信結果にかかわらず復活しない
+- トークンはハッシュだけ保存され、パスワード保存・リンク使用済み化・active化は同一トランザクションで行われる
+
+### E2E-E10 管理権限・他社ユーザー・他人の会話履歴の境界を確認する
+
+**事前条件**
+
+- `MARKETER_A`、`ADMIN_A`、`ADMIN_B`のログイン情報をFixtureで用意する
+- `ADMIN_A2`と、`MARKETER_A`の親Sessionを`COMPANY_A`に用意する
+
+| Step | 操作者 | 操作 | 確認項目 | 関連画面 | 関連API |
+| ---: | --- | --- | --- | --- | --- |
+| 1 | `MARKETER_A` | 管理画面のURLを開き、管理APIへアクセスする | ユーザー情報を表示しない。管理APIは`403 ADMIN_FORBIDDEN`を返す | SC-11 | `GET /api/v1/admin/users?page=1` |
+| 2 | `ADMIN_A` | 有効な表示名Bodyを使い、`COMPANY_B`のユーザーIDと存在しないIDへの操作を確認する | どちらも`404 ADMIN_USER_NOT_FOUND`で同じ応答となり、他社の状態を表示・変更しない | SC-11 | `PATCH /api/v1/admin/users/{user_id}` |
+| 3 | `ADMIN_A` | 同じ会社の他人の会話URLを開く | 本人が所有しないSessionは`404 AGENT_SESSION_NOT_FOUND`となり、管理ユーザーでも閲覧できない | SC-02 | `GET /api/v1/agent-sessions/{session_id}` |
+| 4 | `ADMIN_A` | 既存の自社・他社ユーザーのメールアドレスについて大小文字・前後空白を変えて招待を試す | 正規化後はいずれも`409 USER_INVITATION_CONFLICT`と同じ説明で拒否され、登録先の会社を推測できない | SC-11 | `POST /api/v1/admin/users` |
+
+**最終確認**
+
+- 他社のデータと本人以外の会話履歴を取得・変更できない。メールアドレス重複による招待競合は自社・他社を区別せず`409 USER_INVITATION_CONFLICT`となる
+- 管理画面の表示制御だけでなくAPIでも管理権限・会社境界を検証している
+
+### E2E-E11 SESの明確な失敗とスロットリング再試行を区別する
+
+**事前条件**
+
+- `ADMIN_A`がログイン済み。SES Fakeはスロットリング応答を2回返した後に受付成功するモードと、明確な失敗を返すモードへ切り替えられる
+
+| Step | 操作者 | 操作 | 確認項目 | 関連画面 | 関連API |
+| ---: | --- | --- | --- | --- | --- |
+| 1 | `ADMIN_A` | 1人目を招待する | 同じリンクで初回を含め最大3回呼び出し、最後に`201`と受付成功を表示する | SC-11 | `POST /api/v1/admin/users` |
+| 2 | `ADMIN_A` | 2人目を招待してSES Fakeから明確な失敗を受け取る | `502 INVITATION_SEND_FAILED`を表示し、ユーザーを招待中のまま一覧に残す | SC-11 | `POST /api/v1/admin/users`、`GET /api/v1/admin/users?page=1` |
+| 3 | `ADMIN_A` | SES Fakeを受付成功に切り替え、失敗した対象の招待メールを手動再送する | 古いリンクを無効化し、新しいリンクと送信操作が作られる。再送は管理ユーザーの明示操作でだけ行われる | SC-11 | `POST /api/v1/admin/users/{user_id}/invitations` |
+
+**最終確認**
+
+- SES Fakeの送信回数と`emails.attempt_count`が一致する。自動リトライでは同じリンクを使い、待機は指数バックオフとジッターの方針に従う
+- 失敗したメールでも`users`・`emails`・`invitations`は送信前に作成済みで、手動再送までは旧リンクが有効である
+
+### E2E-E12 SESの結果不明で自動再送せず、管理者が手動再送する
+
+**事前条件**
+
+- `ADMIN_A`がログイン済み。SES Fakeは5xx、408、応答なし、処理中断を各ケースで再現できる
+- 上記の結果不明の原因ごとに、独立したFixture・Browser ContextでStepを繰り返す
+
+| Step | 操作者 | 操作 | 確認項目 | 関連画面 | 関連API |
+| ---: | --- | --- | --- | --- | --- |
+| 1 | `ADMIN_A` | 招待を実行し、SES Fakeで結果不明を発生させる | `504 INVITATION_SEND_OUTCOME_UNKNOWN`または処理中断として「送信結果を確認できませんでした」を表示し、自動再送しない | SC-11 | `POST /api/v1/admin/users` |
+| 2 | `ADMIN_A` | 一覧を開き直す | 招待中ユーザーとリンクが残り、送信結果不明を送信失敗と区別する。中断して`pending`のままでも時間経過で自動遷移しない | SC-11 | `GET /api/v1/admin/users?page=1` |
+| 3 | `ADMIN_A` | 手動再送を確定する | 古いリンクを無効化し、新しいリンクを含むメールを送信する | SC-11 | `POST /api/v1/admin/users/{user_id}/invitations` |
+
+**最終確認**
+
+- 結果不明になった元の送信操作へのSES Fake呼び出しは1回だけで、SDK側の自動リトライも行わない
+- 結果不明のリンクは手動再送まで有効であり、手動再送後は古い送信の受付結果が遅れて判明しても再び有効にならない
+
+### E2E-E13 管理ユーザーの認証切れ後に管理者ログインへ戻る
+
+**事前条件**
+
+- `ADMIN_A`が`/admin/login`からログインしてマーケター向け画面を開いている
+- 認証Cookieを期限切れにできる。入口ヒントCookieは残す
+
+| Step | 操作者 | 操作 | 確認項目 | 関連画面 | 関連API |
+| ---: | --- | --- | --- | --- | --- |
+| 1 | テスト環境 | 認証Cookieだけを期限切れにする | `hiromeru_login_portal=admin`は残り、認証には使用されない | SC-02 | なし |
+| 2 | `ADMIN_A` | マーケター向け画面を再読み込みする | 管理者ログイン画面へ移動し、元のURLが安全な`next`として保持される | SC-02、SC-10 | `GET /api/v1/auth/me` |
+| 3 | `ADMIN_A` | 再ログイン後に明示的にログアウトする | 本人の画面へ戻れる。ログアウトで認証Cookie・CSRF Token・入口ヒントCookieが削除される | SC-10、SC-02 | `POST /api/v1/admin/auth/login`、`POST /api/v1/auth/logout` |
+
+**最終確認**
+
+- 入口ヒントCookieがない場合は`/login`を既定にする。両ログイン画面には互いへの移動リンクがある
+- 入口ヒントCookieの値を書き換えても、管理APIの認可は変わらない
+
 ## 10. 手動動作確認
 
 自動E2Eと同じ業務結果を再確認するのではなく、視覚、操作感、支援技術、実行環境に依存する項目を確認する。
@@ -642,18 +848,18 @@
 
 | ID | 操作 | 確認項目 | 対象画面 |
 | --- | --- | --- | --- |
-| MAN-001 | Desktop、Tablet、320px幅で主要フローを表示する | 内容の欠落、重なり、意図しない横Scrollがない | SC-01、SC-02、SC-04からSC-09 |
+| MAN-001 | Desktop、Tablet、320px幅で主要フローを表示する | 内容の欠落、重なり、意図しない横Scrollがない | SC-01、SC-02、SC-04からSC-12 |
 | MAN-002 | Browserを200%へZoomする | 入力、主要操作、Error、Navigationへ到達できる | 全画面 |
 | MAN-003 | Mouseを使わずTab、Shift+Tab、Enter、Space、Escapeで操作する | Focus順、Focus表示、Dialog、Form送信、Navigationが適切である | 全画面 |
 | MAN-004 | Loading、Empty、Error、Not Foundを順に表示する | 状態の意味と次の操作が視覚的かつ文言で分かる | 全画面 |
-| MAN-005 | 長い会話、施策、投稿、Error文を表示する | 省略規則が一貫し、必要な全文へ到達でき、Layoutが崩れない | SC-01、SC-02、SC-04からSC-09 |
+| MAN-005 | 長い会話、施策、投稿、Error文を表示する | 省略規則が一貫し、必要な全文へ到達でき、Layoutが崩れない | SC-01、SC-02、SC-04からSC-12 |
 | MAN-006 | `prefers-reduced-motion: reduce`で操作する | 不要なAnimationが抑制され、状態変化は認識できる | 全画面 |
 
 ### 10.2 FormとAgent操作
 
 | ID | 操作 | 確認項目 | 対象画面 |
 | --- | --- | --- | --- |
-| MAN-007 | 必須入力を空にして送信する | Errorが入力と関連付けられ、最初のErrorへFocusが移る | SC-01、SC-02、SC-05 |
+| MAN-007 | 必須入力を空にして送信する | Errorが入力と関連付けられ、最初のErrorへFocusが移る | SC-01、SC-02、SC-05、SC-10からSC-12 |
 | MAN-008 | Passwordの表示・非表示を切り替える | 値、選択範囲、Focusを維持する | SC-01 |
 | MAN-009 | Agentへメッセージを送信する | 進捗の開始・完了、現在の処理、送信不可状態を判別できる | SC-02 |
 | MAN-010 | 手動修正、再相談、最終承認を順に行う | 3操作を誤認せず、承認前に最終値を確認できる | SC-02 |
@@ -678,6 +884,8 @@
 | MAN-019 | E2E実行中の構造化Logを確認する | `request_id`、`session_id`、`turn_id`で処理を追跡できる | Backend Log |
 | MAN-020 | 認証・Agent・CronのLogを検索する | Password、Cookie、Token、API Key、会話本文、投稿本文、GA4 Filter値が出力されていない | Backend Log |
 | MAN-021 | E2E環境の外部通信を確認する | 許可したFake以外の外部Hostへ通信していない | Network Log |
+| MAN-022 | 招待・ユーザー操作モーダルから確認モーダルを重ねて開閉する | 最上位だけ操作でき、キャンセル時は起点の操作へFocusが戻る。送信中と結果不明を色だけで区別しない | SC-11 |
+| MAN-023 | 招待リンクと認証状態をBrowser Network・Logで確認する | 招待画面ではパスワード設定完了までtokenクエリを保持し、登録APIではBodyだけに含める。画面応答は`Referrer-Policy: no-referrer`と`Cache-Control: no-store`を持ち、後続RequestのRefererへトークンを付けない。初回アクセスのクエリをアクセスログでマスクし、トークン・パスワード・Cookieをアプリケーションログへ残さない。登録完了後は履歴を置き換えてトークン付き画面を復元しない | SC-10からSC-12、Browser Network、Backend Log |
 
 ## 11. 合否基準
 
@@ -685,7 +893,7 @@
 
 - 全Stepの操作を実行でき、確認項目をすべて満たすこと
 - 最終確認のUI、API、永続化、外部作用がすべて一致すること
-- 想定外のBrowser Console Error、未処理例外、5xxがないこと
+- 想定外のBrowser Console Error、未処理例外、5xxがないこと。SESの明確な失敗`502`、送信結果不明`504`など、異常系ケースで期待される応答は除く
 - ケース終了後に未完了のTurn、Lease、処理中の冪等性レコードが残らないこと。ただし、結果不明を確認するE2E-E06は除く
 
 ### 11.2 リリース判定
@@ -696,6 +904,6 @@
 
 ## 12. 実装状況
 
-本書はv0.1の完成形を対象とする。現時点の実装ではLanding PageとHealth API以外の主要画面・業務API・E2E Runnerが未実装であるため、各ケースは対象機能とテスト基盤の実装後に実行可能となる。
+本書はv0.1の完成形を対象とする。実行対象の機能とE2E Runnerがそろったケースから検証する。実装状況はケース単位で管理する。
 
 E2E Runner、起動Command、Fixtureの配置、Artifactの保存先は、テスト基盤の採用時に本節へ追記する。
