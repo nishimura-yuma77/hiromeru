@@ -1,7 +1,7 @@
 # API設計書
 
 ## 1. 目的
-本書は、UI（`SCREEN_DESIGN.md`）とBackendの間のアプリケーションAPIを定義する。認証、Agentとの会話、ユーザーがUIで最終確定した施策内容と投稿内容の反映、公開済みデータと計測結果の参照、施策の直接編集、記憶の忘却を扱う。
+本書は、UI（`SCREEN_DESIGN.md`）とBackendの間のアプリケーションAPIを定義する。認証と自社ユーザーの招待・管理、Agentとの会話、ユーザーがUIで最終確定した施策内容と投稿内容の反映、公開済みデータと計測結果の参照、施策の直接編集、記憶の忘却を扱う。
 
 Agentは`propose_campaign`と`propose_x_post`で編集可能な内容を提案する。UIは提案内容をフォームの初期値として表示し、ユーザーは内容を直接編集できる。施策の登録・更新とXへの投稿は、承認ボタン押下時のフォーム値をRequest Bodyへ設定して本APIから実行する。施策は、ユーザーが施策詳細画面（SC-05）のフォームで直接編集することもできる。この編集と、画面（SC-09）からの記憶の削除は、Agent履歴に関わらないAPI（4.2、7.1）で行う。
 
@@ -17,6 +17,7 @@ Agentは`propose_campaign`と`propose_x_post`で編集可能な内容を提案�
 | 8 | 編集・承認フロー | SC-02 |
 | 9 | 非対象 | |
 | 10 | エラーコード一覧 | 全画面 |
+| 11 | 管理ユーザーの認証・自社ユーザー管理・招待登録（Issue #58） | SC-10～SC-12 |
 
 ### 1.2 関連文書
 - 画面から見たAPIの使い方: `SCREEN_DESIGN.md`、`docs/frontend/CODING_STANDARDS.md`（16章 API通信、17章 フォームと最終承認、18章 Errorと画面状態）
@@ -28,9 +29,9 @@ Agentは`propose_campaign`と`propose_x_post`で編集可能な内容を提案�
 
 | No | メソッド | パス | API論理名 | 処理概要 | 利用画面 | 詳細 |
 | ---: | --- | --- | --- | --- | --- | --- |
-| 1 | `POST` | `/api/v1/auth/login` | ログイン | メールアドレスとパスワードを検証し、署名付きの認証Cookieと`csrf_token` Cookieを発行する | SC-01 | 2.9 |
+| 1 | `POST` | `/api/v1/auth/login` | マーケターユーザーのログイン | 管理ユーザー以外のマーケターユーザーを認証し、共通の認証Cookieと`csrf_token` Cookieを発行する | SC-01 | 2.9 |
 | 2 | `POST` | `/api/v1/auth/logout` | ログアウト | 認証Cookieと`csrf_token` Cookieを削除する | 全画面（グローバルナビ） | 2.9 |
-| 3 | `GET` | `/api/v1/auth/me` | ログイン中のマーケター取得 | 認証Cookieから、ログイン中のマーケターの情報（`marketer_id`、`email`）を返す。画面の再読み込み後も、ログイン状態とログイン中のメールアドレスを取得するために使う | 全画面（グローバルナビ）、SC-01（ログイン済みの判定） | 2.9 |
+| 3 | `GET` | `/api/v1/auth/me` | ログイン中のユーザー取得 | 共通Cookieから本人のユーザーID・マーケターID・メールアドレス・管理権限の有無を返す | 全認証済み画面、SC-01・SC-10 | 2.9 |
 | 4 | `POST` | `/api/v1/auth/csrf` | CSRF Token再発行 | 有効な認証Cookieと許可Originを検証し、`csrf_token` CookieとTokenを再発行する | 全画面（CSRF Error復旧） | 2.9 |
 | 5 | `GET` | `/api/health` | ヘルスチェック | プロセスの死活を確認する（DBへ接続しない） | なし（運用） | 2.11 |
 | 6 | `GET` | `/api/health/db` | DB接続確認 | DBへの接続を確認する | なし（運用） | 2.11 |
@@ -51,24 +52,32 @@ Agentは`propose_campaign`と`propose_x_post`で編集可能な内容を提案�
 | 21 | `GET` | `/api/v1/memories/{memory_id}/campaigns` | 記憶の関連施策取得 | 記憶に関連する施策をCursorでページングして返す | SC-09 | 6.8 |
 | 22 | `GET` | `/api/v1/memories/{memory_id}/posts` | 記憶の関連投稿取得 | 記憶に関連する公開済み投稿をCursorでページングして返す | SC-09 | 6.9 |
 | 23 | `DELETE` | `/api/v1/memories/{memory_id}` | 記憶削除 | 長期記憶の内容とEmbeddingを削除する。Sessionに関わらず、Agent履歴と`Idempotency-Key`は使用しない | SC-09 | 7.1 |
+| 24 | `POST` | `/api/v1/admin/auth/login` | 管理ユーザーのログイン | usersで認証し、adminsの所属を確認できた場合だけ共通Cookieを発行する | SC-10 | 11.1 |
+| 25 | `PATCH` | `/api/v1/admin/users/{user_id}` | 表示名・ユーザー種別編集 | 自社ユーザーの表示名と、対象条件を満たすユーザーの種別を部分更新する | SC-11 | 11.2 |
+| 26 | `POST` | `/api/v1/admin/users/{user_id}/suspensions` | 利用停止 | 自社ユーザーのログインと未使用招待リンクを失効させる | SC-11 | 11.2 |
+| 27 | `POST` | `/api/v1/admin/users/{user_id}/reactivations` | 利用再開 | invitedへ戻し、新しい送信操作と招待行を登録してから送信する | SC-11 | 11.2 |
+| 28 | `POST` | `/api/v1/admin/users/{user_id}/invitations` | 招待メール再送 | invitedユーザーの古いリンクを無効化し、新しい招待行と送信操作を登録してから送信する | SC-11 | 11.2 |
+| 29 | `POST` | `/api/v1/invitation-acceptances` | 招待からのパスワード設定 | 未ログインで本文の招待トークンを検証し、本人の登録を完了する | SC-12 | 11.3 |
+| 30 | `GET` | `/api/v1/admin/users` | 自社ユーザー一覧 | 自社ユーザーを登録日時の新しい順に20件ずつページ番号で返す | SC-11 | 11.2 |
+| 31 | `POST` | `/api/v1/admin/users` | 自社ユーザーの新規招待 | 種別・表示名・メールアドレスから招待中ユーザーと招待行を作成してからSESへ送信する | SC-11 | 11.2 |
 
 ## 2. 共通仕様
 
 ### 2.1 API境界
 - Base pathは`/api/v1`とする
 - Request Bodyと通常のResponseのContent-Typeは`application/json`とする。Request Bodyを持たないGET・DELETE、`text/event-stream`を返すSSE（5.3）、および共通Response形式を使わない運用向けEndpoint（2.11）は例外とする
-- APIは署名付きCookieで認証したマーケターを使用し（2.8）、`company_id`と`marketer_id`をRequest Bodyから受け取らない
+- APIは署名付きCookieで認証したusersから本人のmarketersを取得する（2.8）。マーケター向け機能では本人の`marketer_id`を業務主体に使用し、管理APIではadminsの存在と会社所属を検証する。`company_id`と`marketer_id`をRequest Bodyから受け取らない
 - Agent履歴を更新する状態変更APIは`/agent-sessions/{session_id}`配下とし、履歴の保存先をPathで明示する。ユーザーが画面で直接行う施策の編集（4.2）と記憶の削除（7.1）は、Agentの提案・承認を経ないため、Agent履歴に関わらず、`/agent-sessions`配下に置かない
 - 施策upsert API（4.1）とX投稿API（3章）は`Idempotency-Key` Headerを必須とする。会話API（5章）、参照API（6章）、施策編集API（4.2）、記憶削除API（7.1）は使用しない
 - 参照API（6章）は読み取り専用のGETであり、Agent履歴へ保存しない。認証済みマーケターの会社のデータだけを返す
-- 状態変更API（POST・PUT・PATCH・DELETE）にはCSRF対策を適用する（2.8）
-- Frontendは、Browserからは同一Originの`/api/*`を呼び出し、Next.jsのServer Componentからは、Browserの認証Cookieを転送して同じAPIを呼び出す（`docs/frontend/CODING_STANDARDS.md`の16章）。Server専用のAPIと、別の権限を持つ経路は設けない
-- API呼び出し自体を、Request Bodyに含まれる内容の最終承認として扱う
+- 状態変更API（POST・PUT・PATCH・DELETE）にはCSRF対策を適用する。ログイン、ログアウト、CSRF Token再発行および未ログインの招待登録では、2.8の例外を適用する
+- Frontendは、Browserからは同一Originの`/api/*`を呼び出し、Next.jsのServer Componentからは、Browserの認証Cookieを転送して同じAPIを呼び出す（`docs/frontend/CODING_STANDARDS.md`の16章）。Server Component専用の権限迂回経路は設けず、管理APIも本人のadminsで認可する
+- 施策登録・X公開の承認APIでは、API呼び出し自体をRequest Bodyに含まれる内容の最終承認として扱う
 - 承認APIの処理（3章・4.1）、施策編集API（4.2）、記憶削除API（7.1）ではLLM、Agent Tool、OrcaRouter Agent Firewallを使用しない。Agent Turnを実行するのは、会話API（5章）のメッセージ送信APIだけである
 - X APIやEmbedding APIの認証情報はサーバー側だけで管理する
 
 ### 2.2 入力検証
-APIはAgent履歴を入力元として参照せず、Request Bodyの最終フォーム値を正本として使用する。履歴保存先を安全に確定するため、最初に以下を検証する。
+施策登録・X公開の承認APIはAgent履歴を入力元として参照せず、Request Bodyの最終フォーム値を正本として使用する。履歴保存先を安全に確定するため、最初に以下を検証する。
 
 - Pathの`session_id`が正の整数である
 - Sessionが認証済みマーケターに属する
@@ -86,7 +95,7 @@ APIはAgent履歴を入力元として参照せず、Request Bodyの最終フォ
 
 存在しないSession、他のマーケターが所有するSession、子Sessionは、存在確認による情報漏えいを防ぐため、すべて`404 AGENT_SESSION_NOT_FOUND`として扱う。アーカイブ済みSessionでは完了済みの同一Requestの再返却だけを許可し、新しい処理は`404 AGENT_SESSION_NOT_FOUND`とする。会社IDは検証済み親Sessionのマーケターから決定する。
 
-Request内で参照する既存Campaign IDが存在しない場合と、別会社に属する場合も、存在確認による情報漏えいを防ぐため区別せず`404 CAMPAIGN_NOT_FOUND`として扱う。MVPにはロールの概念がないため、テナント境界違反に`403`は使用しない。
+Request内で参照する既存Campaign IDが存在しない場合と、別会社に属する場合も、存在確認による情報漏えいを防ぐため区別せず`404 CAMPAIGN_NOT_FOUND`として扱う。マーケター向け業務データへのアクセスは本人のmarketer_idまたは会社の所属で判定し、別会社・他人の会話には`403`を使わない。管理機能の権限は別途adminsで判定する（11章）。
 
 ### 2.3 冪等性
 UIは承認操作ごとにUUIDを生成し、`Idempotency-Key` Headerと監査内容のAction IDへ同じ値を設定する。二重クリック、通信切断後の再送、クライアント内部の再試行では同じキーを使用し、ユーザーが明示的に新しい承認操作を行った場合だけ新しいキーを生成する。
@@ -204,60 +213,60 @@ APIはSchema検証、業務条件検証、外部API、DB処理の確定した成
 - `message`は利用者向けのマスク済み文言とし、Field直下またはForm Error summaryに表示できる内容とする
 - JSONを解析できない、Request全体のサイズが上限を超えたなど、Fieldへ安全に対応付けられない`INVALID_ARGUMENT`は`field_errors = []`とする
 
-Agent履歴へ保存しない認証・Session・JSON解析・冪等性Headerエラーと、`TURN_IN_PROGRESS`では`agent_turn_id = null`とする。Agent履歴に関わらない施策編集API（4.2）と記憶削除API（7.1）は、すべてのエラーで`agent_turn_id = null`とする。
+Agent履歴へ保存しない認証・Session・JSON解析・冪等性Headerエラーと、`TURN_IN_PROGRESS`では`agent_turn_id = null`とする。Agent履歴に関わらない施策編集API（4.2）、記憶削除API（7.1）、管理・招待API（11章）は、すべてのエラーで`agent_turn_id = null`とする。
 
 ### 2.7 HTTP Status
 | Status | 用途 |
 | --- | --- |
-| `200 OK` | 既存施策の上書き成功、記憶の忘却の成功、取得API（GET）の成功、またはSSEによるTurnの実行開始（5.3。Turnの結果は`turn_finished`で示す） |
-| `201 Created` | 施策の新規作成、X投稿成功、Sessionの作成、またはAgent Turnの完了 |
-| `400 Bad Request` | JSON、型、必須項目、Idempotency-Keyが不正 |
+| `200 OK` | 既存施策の上書き成功、記憶の忘却の成功、取得API（GET）の成功、自社ユーザーの表示名・種別編集・利用停止・利用再開の成功、またはSSEによるTurnの実行開始（5.3。Turnの結果は`turn_finished`で示す） |
+| `201 Created` | 施策の新規作成、X投稿成功、Sessionの作成、Agent Turnの完了、招待ユーザーの作成または招待メールの手動再送の成功 |
+| `400 Bad Request` | JSON、型、必須項目、Idempotency-Keyが不正、または招待リンクが存在しない・期限切れ・使用済み・無効化済み |
 | `401 Unauthorized` | 未認証、または認証Cookieの期限切れ・署名不正 |
-| `403 Forbidden` | CSRF検証に失敗した。テナント境界違反には使用しない |
-| `404 Not Found` | Session・Campaign・Post・記憶などの対象が存在しない、または別のマーケター・別会社に属する |
-| `409 Conflict` | 同じ冪等性キーの処理中、異なるRequestへのキー再利用、施策上書きの競合、Archive済み施策への変更、未解決X投稿との競合、または同じSessionでAgent Turnを実行中 |
+| `403 Forbidden` | CSRF検証の失敗、または管理APIを呼ぶ認証済みユーザーに管理権限がない。異なるエラーコードで区別し、別会社の業務データの存在を明かす用途には使用しない |
+| `404 Not Found` | Session・Campaign・Post・記憶・管理対象ユーザーなどが存在しない、または別のマーケター・別会社に属する |
+| `409 Conflict` | 同じ冪等性キーの処理中、異なるRequestへのキー再利用、施策上書きの競合、Archive済み施策への変更、未解決X投稿との競合、同じSessionでAgent Turnを実行中、または招待時のメールアドレス重複など想定済みの業務競合。重複理由や他社の情報は返さない |
 | `422 Unprocessable Entity` | 施策内容やX投稿内容の業務検証に失敗、またはAgent Turnがステップ・コストの上限に達した、入力がBlockされた |
 | `429 Too Many Requests` | ログインの試行回数がWAFのレート制限を超えた（2.9）。アプリケーションは返さない |
-| `502 Bad Gateway` | X APIが明確な失敗を返した |
-| `504 Gateway Timeout` | X APIの実行結果を確定できない、またはAgent Turnが経過時間の上限に達した |
-| `500 Internal Server Error` | 内部処理またはDB保存に失敗した |
+| `502 Bad Gateway` | X APIまたはSESの明確な失敗 |
+| `504 Gateway Timeout` | X APIまたはSESの実行結果を確定できない、またはAgent Turnが経過時間の上限に達した |
+| `500 Internal Server Error` | 想定外の内部処理またはDB保存に失敗した。内部の例外・SQL・構成情報は返さない |
 | `503 Service Unavailable` | 運用向けエンドポイントのDB接続確認に失敗した（2.11） |
 
 ### 2.8 認証とCSRF
-認証はサーバー側に状態を持たない署名付きCookieで行う。
+認証は署名付きCookieで行う。CookieにSession表を対応させないが、利用停止・再開・種別変更による旧ログインの即時失効のため、認証付きRequestごとにusersの利用状態と認証世代をDBで照合する。管理ユーザー・マーケターユーザーは同じCookieを使用し、前者はadmins、両者のマーケター向け操作は本人のmarketersで認可する。
 
 #### 認証Cookie
 - 属性は`HttpOnly`、`Secure`、`SameSite=Lax`とする
-- 値には`marketer_id`、ログイン日時、有効期限を含め、環境変数`AUTH_COOKIE_SECRET`の署名鍵で署名する。本番とPreviewで別の十分に長いランダム値を使用する
+- 値には`user_id`、`auth_generation`、ログイン日時、有効期限を含め、環境変数`AUTH_COOKIE_SECRET`の署名鍵で署名する。本番とPreviewで別の十分に長いランダム値を使用する。`marketer_id`と会社IDはCookieを正本にせず、認証済みユーザーの所属から決定する
 - 有効期限は、アイドル8時間と絶対上限7日とする
   - 認証済みRequestを処理するたびに、Cookieを発行し直してアイドル期限を8時間先へ延長する
   - 絶対上限はログイン日時から7日とし、延長しない
 - 署名不正、またはいずれかの期限を超過したCookieは`401 UNAUTHENTICATED`とし、Cookieを削除する
 - Next.jsのServer Componentから呼び出したAPIの`Set-Cookie`は、Browserへ返せないため、この経路ではアイドル期限は延長されない。延長されるのは、Browserからの呼び出し（状態変更API、Turnのポーリングなど）だけである。参照だけの操作が8時間続くと`401 UNAUTHENTICATED`となり、UIはログインへ移動する（MVPの既知の制約。Next.jsのMiddlewareで再発行する案は未確定）
-- サーバー側にSession表を持たないため、Cookieを個別に失効させる機能はない。ログアウトはブラウザのCookie削除だけで、盗まれたCookieは期限まで有効である（MVPの既知の制約）
+- 認証付きRequestではDBの`users.status = active`かつCookieの`auth_generation`がDBの値と一致することを毎回確認する。利用停止・再開と、実際にユーザー種別が変わるときに世代を更新し、変更前のCookieは使えない。種別変更後は新種別のログイン画面から再ログインする。停止時にはパスワードハッシュも消去する。ログアウトはBrowserのCookie削除とする
 
 #### CSRF対策
 状態変更API（POST・PUT・PATCH・DELETE）には、次の2つをどちらも適用する。
 
 1. `Origin` Header（なければ`Referer`）が許可リストのオリジンと一致する。許可リストは環境ごとに組み立てる。本番は環境変数`ALLOWED_ORIGINS`（カスタムドメイン）と本番ドメイン、プレビューはそのデプロイ自身のURLだけとし、ワイルドカードは使わない（`docs/backend/CODING_STANDARDS.md`の17.1）。UIとAPIは同じVercelプロジェクトから同一オリジンで公開する
-2. 署名付きダブルサブミットトークンを検証する。ログイン成功時に発行する`csrf_token` Cookie（`HttpOnly`なし、`Secure`、`SameSite=Lax`）の値と、`X-CSRF-Token` Headerの値が一致し、かつトークンの署名が有効で`marketer_id`に束縛されている
+2. 署名付きダブルサブミットトークンを検証する。ログイン成功時に発行する`csrf_token` Cookie（`HttpOnly`なし、`Secure`、`SameSite=Lax`）の値と、`X-CSRF-Token` Headerの値が一致し、かつトークンの署名が有効で認証済みの`user_id`に束縛されている
 
-ログインAPIは`csrf_token` Cookieをまだ持たないため、1だけを適用する。ログアウトAPIは未ログインでも同じ結果を返すため、同様に1だけを適用する（強制ログアウトの影響は小さいと判断）。CSRF Token再発行APIは、Tokenを失った状態から復旧するため、有効な認証Cookieと1だけを検証し、現在の`csrf_token` Cookieおよび`X-CSRF-Token`は要求しない。
+両ログインAPIと未ログインの招待登録APIは`csrf_token` Cookieをまだ持たないため、1だけを適用する。招待登録APIでは招待トークンをRequest Bodyで検証する。ログアウトAPIは未ログインでも同じ結果を返すため、同様に1だけを適用する（強制ログアウトの影響は小さいと判断）。CSRF Token再発行APIは、Tokenを失った状態から復旧するため、有効な認証Cookieと1だけを検証し、現在の`csrf_token` Cookieおよび`X-CSRF-Token`は要求しない。
 
 #### 認証・CSRFのエラー
 | HTTP Status | Code | 条件 | 再試行 |
 | --- | --- | --- | :---: |
-| `401` | `UNAUTHENTICATED` | 認証Cookieがない、署名不正、または期限切れ。UIはログイン画面へ遷移する | × |
+| `401` | `UNAUTHENTICATED` | 認証Cookieがない、署名不正、期限切れ、ユーザーがactiveでない、または認証世代が一致しない。UIは利用画面に対応するログイン画面へ遷移する | × |
 | `403` | `CSRF_VALIDATION_FAILED` | Origin不一致、または`X-CSRF-Token`が不正 | ○（Token再発行後に1回だけ） |
 
 - 認証、CSRFの順に検証し、失敗した場合はAgent履歴へ保存せずResponseだけを返す（`agent_turn_id = null`）
 - 認証・CSRFに失敗したRequestでは、Session所有権の判定と冪等性の処理を行わない
-- UIは`CSRF_VALIDATION_FAILED`を受けた場合、CSRF Token再発行APIを1回だけ呼び、新しいTokenで元Requestを1回だけ再送する。承認APIでは同じ`Idempotency-Key`を使う。元RequestはCSRF検証で業務処理前に拒否されているため、この再送で副作用は重複しない。Token再発行失敗、再送時の`401 UNAUTHENTICATED`、または2回目の`CSRF_VALIDATION_FAILED`では自動再試行を止めて再ログインへ移動し、それ以外の再送Responseは各Errorの通常処理に従う
+- 認証付きの状態変更APIで`CSRF_VALIDATION_FAILED`を受けた場合、UIはCSRF Token再発行APIを1回だけ呼び、新しいTokenで元Requestを1回だけ再送する。承認APIでは同じ`Idempotency-Key`を使う。元RequestはCSRF検証で業務処理前に拒否されているため、この再送で副作用は重複しない。Token再発行失敗、再送時の`401 UNAUTHENTICATED`、または2回目の`CSRF_VALIDATION_FAILED`では自動再試行を止めて再ログインへ移動し、それ以外の再送Responseは各Errorの通常処理に従う。未ログインの招待登録APIには認証Cookieに結びつくCSRF Tokenがないため、Origin検証に失敗した場合はToken再発行を行わない
 
 ### 2.9 認証API
-ユーザー登録APIは設けない。マーケターは初期データ投入スクリプトで事前登録する。認証API（ログイン、ログアウト、ログイン中のマーケター取得、CSRF Token再発行）は`/agent-sessions`配下ではなく、Agent履歴へ保存しない。
+会社と最初の責任者は初期設定スクリプトで登録する。以後のユーザーは管理画面から招待し、未ログインの本人が招待リンクからパスワードを設定する（11章）。認証API（両ログイン、ログアウト、ログイン中のユーザー取得、CSRF Token再発行）と招待APIはAgent履歴へ保存しない。
 
-#### ログイン
+#### マーケターユーザーのログイン
 `POST /api/v1/auth/login`
 
 ```json
@@ -286,43 +295,34 @@ Agent履歴へ保存しない認証・Session・JSON解析・冪等性Headerエ�
 | `400` | `INVALID_ARGUMENT` | JSON、型、必須項目が不正 | × |
 | `401` | `INVALID_CREDENTIALS` | メールアドレスまたはパスワードが正しくない | × |
 
-- メールアドレスが存在しない場合、パスワードが一致しない場合、ユーザーにマーケタープロファイルがない場合は、`INVALID_CREDENTIALS`と同じメッセージ・同じ形式で返す。応答から登録の有無を判別できないようにする
+- メールアドレスが存在しない場合、パスワードが一致しない場合、activeでない場合、ユーザーにマーケタープロファイルがない場合、または管理ユーザーの場合は、`INVALID_CREDENTIALS`と同じメッセージ・同じ形式で返す。応答から登録の有無やユーザー種別を判別できないようにする。管理ユーザーは11.1の専用APIを使う
 - パスワードはargon2でハッシュ化した値と照合する。メールアドレスが存在しない場合も同等の照合処理を行い、応答時間から登録の有無を判別できないようにする
 - パスワードとCookieの値はログに出さない
-- ログイン試行回数の制限は、Vercel WAFのレート制限で行う。`POST /api/v1/auth/login`への同一IPからの回数に上限を設定する（例: 10分あたり10回。値は運用で調整する）。超過したRequestはWAFが`429 Too Many Requests`で拒否するため、アプリケーションのエラーコードは使わず、UIは「しばらくしてから再試行してください」と表示する
+- ログイン試行回数の制限は、Vercel WAFのレート制限で行う。マーケターユーザーの`POST /api/v1/auth/login`と管理ユーザーの`POST /api/v1/admin/auth/login`をともに対象とし、同一IPからの回数に上限を設定する（例: 10分あたり10回。値は運用で調整する）。超過したRequestはWAFが`429 Too Many Requests`で拒否するため、アプリケーションのエラーコードは使わず、UIは「しばらくしてから再試行してください」と表示する
 - 上記の制限は、IP単位のカウンターであり（Hobbyではルールが1プロジェクトに1つだけで、カウンターはリージョン単位）、分散したIPからの試行や、特定のメールアドレスを狙った試行は制限できない。アプリケーション側でメールアドレス単位の失敗回数は数えない。MVPの既知の制約とする
 
-#### ログイン中のマーケター取得
+#### ログイン中のユーザー取得
 `GET /api/v1/auth/me`
 
-認証Cookieで認証したマーケターの情報を返す。認証Cookieは`HttpOnly`のため、Frontendは値を読めない。画面の再読み込みや、Server Componentの描画では、ログインAPIのResponseを使えないため、このAPIでログイン状態とログイン中のメールアドレスを取得する（グローバルナビの表示、ログイン画面での判定）。
+認証Cookieで認証したユーザーの情報を返す。認証Cookieは`HttpOnly`のため、Frontendは値を読めない。画面の再読み込みや、Server Componentの描画では、ログインAPIのResponseを使えないため、このAPIで本人のユーザーID・マーケターID・メールアドレス・管理権限の有無を取得する。マーケター用画面で管理ユーザーにだけ「管理画面へ」を表示するためにも使用する。管理機能の実行権限は表示だけに頼らずサーバー側で確認する。
 
 成功時は`200 OK`を返す。
 
-```json
-{
-  "success": true,
-  "data": {
-    "marketer_id": 3,
-    "email": "marketer@example.com"
-  },
-  "error": null
-}
-```
+返す情報は`user_id`、本人の`marketer_id`、`email`、管理権限の有無を表す真偽値`is_admin`とする。`is_admin`は本人のadminsがある場合だけtrueとし、表示の分岐に使う。管理APIの権限は各Requestで別途検証する。
 
 | HTTP Status | Code | 条件 | 再試行 |
 | --- | --- | --- | :---: |
-| `401` | `UNAUTHENTICATED` | 認証Cookieがない、署名不正、または期限切れ | × |
+| `401` | `UNAUTHENTICATED` | 認証Cookieがない、署名不正、期限切れ、利用停止中・招待中、または認証世代が一致しない | × |
 
 - 読み取り専用のGETのため、CSRF対策は適用しない（2.8）。認証だけを検証し、Agent履歴へ保存しない
-- `marketer_id`は認証Cookieの値、`email`はDBのユーザー情報から返す。パスワードのハッシュや`company_id`は返さない
+- `user_id`をCookieから検証した後、`marketer_id`と管理権限の有無はDBの本人の所属から決定する。パスワードのハッシュや`company_id`は返さない
 - Browserから呼び出した場合は、他の認証済みRequestと同じく、認証Cookieを発行し直してアイドル期限を延長する（2.8）。`csrf_token`は返さない。ログイン時に発行した`csrf_token` Cookieの値を使う
-- マーケターのDBの行が存在しない場合（削除済み）も、`401 UNAUTHENTICATED`とし、Cookieを削除する
+- 認証対象のユーザーまたは本人のmarketersの行が存在しない場合も、`401 UNAUTHENTICATED`とし、Cookieを削除する
 
 #### CSRF Token再発行
 `POST /api/v1/auth/csrf`
 
-有効な認証Cookieと許可Originを検証し、現在のマーケターに束縛した新しい`csrf_token` Cookieを設定する。Request Bodyは持たない。現在のCSRF Tokenを失った場合または`CSRF_VALIDATION_FAILED`から復旧する場合にだけ使用する。
+有効な認証Cookieと許可Originを検証し、現在のユーザーに束縛した新しい`csrf_token` Cookieを設定する。Request Bodyは持たない。現在のCSRF Tokenを失った場合または`CSRF_VALIDATION_FAILED`から復旧する場合にだけ使用する。
 
 Response: `200 OK`
 
@@ -336,7 +336,7 @@ Response: `200 OK`
 }
 ```
 
-- 認証Cookieがない、署名不正、または期限切れの場合は`401 UNAUTHENTICATED`とし、Cookieを削除する
+- 認証Cookieがない、署名不正、期限切れ、利用停止中・招待中、または認証世代が一致しない場合は`401 UNAUTHENTICATED`とし、Cookieを削除する
 - `Origin` Header（なければ`Referer`）が許可リストと一致しない場合は`403 CSRF_VALIDATION_FAILED`とする。現在のCSRF CookieとHeaderは検証しない
 - 成功時は古い`csrf_token` Cookieを新しい値で置き換える。TokenはResponse BodyとCookieへ同じ値を設定する
 - Cacheを禁止し、Token、Cookieおよび認証情報をログへ出力しない
@@ -346,6 +346,8 @@ Response: `200 OK`
 `POST /api/v1/auth/logout`
 
 認証Cookieと`csrf_token` Cookieを削除し（`Max-Age=0`）、`200 OK`を返す。未ログインの場合も同じ結果とする。
+
+明示的なログアウト操作では、フロントエンドが入口ヒントCookie `hiromeru_login_portal`も削除する。本APIが削除するのは認証Cookieと`csrf_token` Cookieであり、入口ヒントCookieの削除はフロントエンドが担当する。入口ヒントCookieの仕様は`SCREEN_DESIGN.md` 6.2「再ログイン先の選択」を参照する。
 
 ```json
 {
@@ -1902,8 +1904,9 @@ sequenceDiagram
 - 公開済み投稿本文の更新と削除
 - セキュリティイベントの一覧・検索API（チャット内の通知は、Turnの`security_notices`で返す。5.1）
 - 施策の削除
-- ユーザー登録API（マーケターは初期データ投入スクリプトで事前登録する）
-- 認証Cookieのサーバー側での個別失効
+- 管理ユーザーを含むユーザーの削除、登録メールアドレスの変更、責任者アカウントの変更
+- 招待と無関係なパスワード再設定、二段階認証、superadminの実装
+- CookieごとのSession表を作成すること（利用停止・再開による世代更新で旧Cookieを失効させる）
 - Response後にTurnを実行し続ける非同期実行（SSEは、Turnを実行しているRequestを開いたままにする方式であり、対象とする。5.3）
 - アシスタントの回答の本文を、文字単位で送るストリーミング
 - SSEの進捗Eventの保存と、`Last-Event-ID`による再接続・再送
@@ -1928,16 +1931,16 @@ APIが返すエラーコードの一覧である。`docs/backend/CODING_STANDARD
 ### 共通（認証、入力、冪等性、内部）
 | Code | HTTP Status | 再試行 | 使用する章 |
 | --- | --- | :---: | --- |
-| `INVALID_ARGUMENT` | `400` | × | 2.9、3.1、4.1、4.2、5.3、5.4、5.5、5.6、6.1、6.8、6.9、7.1 |
+| `INVALID_ARGUMENT` | `400` | × | 2.9、3.1、4.1、4.2、5.3、5.4、5.5、5.6、6.1、6.8、6.9、7.1、11章（入力検証） |
 | `INVALID_IDEMPOTENCY_KEY` | `400` | × | 3.1、4.1 |
 | `UNAUTHENTICATED` | `401` | × | 2.8。認証を必要とするすべてのAPI |
-| `INVALID_CREDENTIALS` | `401` | × | 2.9 |
-| `CSRF_VALIDATION_FAILED` | `403` | ○（Token再発行後に1回だけ） | 2.8。状態変更API |
+| `INVALID_CREDENTIALS` | `401` | × | 2.9、11.1 |
+| `CSRF_VALIDATION_FAILED` | `403` | ○（認証付きAPIでToken再発行後に1回だけ） | 2.8。状態変更API（招待登録はOrigin検証のみ） |
 | `AGENT_SESSION_NOT_FOUND` | `404` | × | 3.1、4.1、5.3、5.4、5.6 |
 | `IDEMPOTENCY_REQUEST_IN_PROGRESS` | `409` | ○（同じキーで再送） | 3.1、4.1 |
 | `IDEMPOTENCY_KEY_REUSED` | `409` | × | 3.1、4.1 |
 | `EMBEDDING_FAILED` | `500` | ○ | 3.1、4.1、4.2、6.1 |
-| `INTERNAL_ERROR` | `500` | ○ | 6.1。想定外の内部エラー（コードが定まらない場合） |
+| `INTERNAL_ERROR` | `500` | ○ | 6.1、11.2。想定外の内部エラー（コードが定まらない場合）。自社ユーザー管理では一覧で保存結果を確認してから再操作する |
 
 ### Agent会話（5章）
 | Code | HTTP Status | 再試行 | 使用する章 |
@@ -1973,6 +1976,19 @@ APIが返すエラーコードの一覧である。`docs/backend/CODING_STANDARD
 | `MEMORY_NOT_FOUND` | `404` | × | 6.8、6.9、7.1 |
 | `MEMORY_DELETE_FAILED` | `500` | ○ | 7.1 |
 
+### 自社ユーザー管理・招待（11章）
+| Code | HTTP Status | 再試行 | 使用する章 |
+| --- | --- | :---: | --- |
+| `ADMIN_FORBIDDEN` | `403` | × | 11.2。管理権限なし（CSRF失敗とは区別） |
+| `ADMIN_USER_NOT_FOUND` | `404` | × | 11.2。対象なし・他社所属を区別しない |
+| `USER_INVITATION_CONFLICT` | `409` | × | 11.2。メールアドレス重複などの招待競合 |
+| `USER_SUSPENSION_FORBIDDEN` | `409` | × | 11.2。本人・責任者の利用停止は禁止 |
+| `USER_ROLE_CHANGE_FORBIDDEN` | `409` | × | 11.2。本人・責任者の種別変更は禁止 |
+| `USER_STATE_CONFLICT` | `409` | × | 11.2。利用中ユーザーの再開、招待中以外への再送、利用中以外への種別変更などの状態競合 |
+| `INVITATION_LINK_INVALID` | `400` | × | 11.3。存在しない・期限切れ・使用済み・無効化済みを区別しない |
+| `INVITATION_SEND_FAILED` | `502` | × | 11.2。明確なSES送信失敗。手動再送は別操作 |
+| `INVITATION_SEND_OUTCOME_UNKNOWN` | `504` | × | 11.2。SES受付結果が不明。自動再送しない |
+
 ### アプリケーションのコードを持たない応答
 | 応答 | 発生元 | 扱い |
 | --- | --- | --- |
@@ -1981,3 +1997,177 @@ APIが返すエラーコードの一覧である。`docs/backend/CODING_STANDARD
 | `503`（`{"detail": ...}`） | `GET /api/health/db` | 2.11。共通のエラー形式ではない |
 
 - Agent Toolのエラーコード（`MEMORY_DELETE_NOT_APPROVED`、`TOOL_CALL_BLOCKED`など）は、HTTPの応答ではなくTool Resultとして扱うため、本表に含めない（`AGENT_DESIGN.md`）
+
+## 11. 管理ユーザー・招待API（Issue #58）
+
+### 確定事項
+
+#### 11.1 管理ユーザーのログイン
+
+`POST /api/v1/admin/auth/login`を`/admin/login`から呼び出す。メールアドレスとパスワードでusersを認証し、activeかつ本人のadminsがあることを確認できた場合だけ、2.8と同じ署名付き認証Cookieと`csrf_token` Cookieを発行する。マーケターユーザー、招待中・停止中、メールアドレス不明、パスワード不一致は、ユーザー種別や登録の有無を判別できない`401 INVALID_CREDENTIALS`として扱う。管理ユーザーはこのCookieで管理機能と本人のマーケター向け機能の両方を使用できる。ログアウトとCSRF Token再発行は2.9を共用する。ログインの試行回数制限は2.9と同じくWAFを使用する。
+
+| 場所 | 項目 | 型 | 必須 | 説明 |
+| --- | --- | --- | :---: | --- |
+| Body | `email` | string | ○ | ログイン用メールアドレス。前後の空白を除き、小文字に正規化して照合する |
+| Body | `password` | string | ○ | 現在のパスワード。新規設定時の12～128文字・文字種条件では検証しない |
+
+成功時は`200 OK`とし、`data`に次の項目を返す。認証Cookieと`csrf_token` Cookieも発行する。
+
+| 項目 | 型 | 必須 | 説明 |
+| --- | --- | :---: | --- |
+| `user_id` | integer | ○ | 認証したusersのID |
+| `marketer_id` | integer | ○ | 本人のマーケター向け操作の主体 |
+| `email` | string | ○ | ログイン中のメールアドレス |
+| `is_admin` | boolean | ○ | 管理ユーザーのログイン成功時は`true` |
+| `csrf_token` | string | ○ | 以降の認証付き状態変更に使う署名付きToken |
+
+入力不正は`400 INVALID_ARGUMENT`、認証失敗は前述の`401 INVALID_CREDENTIALS`、Origin不一致は`403 CSRF_VALIDATION_FAILED`とする。WAFの試行回数制限による`429`はアプリケーションのエラーコードを持たない。失敗時はCookieを発行しない。
+
+#### 11.2 自社ユーザー管理
+
+以下のAPIは認証済み管理ユーザーだけが呼び出せる。対象の会社は本人のadminsから決め、`company_id`をRequest Bodyから受け取らない。管理機能で他社のユーザーを参照・変更しない。認証付きの状態変更には2.8のOriginとCSRF Tokenの検証を適用する。Agent履歴には保存しない。
+
+##### 自社ユーザーの返却形式
+
+`GET /api/v1/admin/users`の`data.users`の各要素、および表示名・種別編集、停止・再開の`data.user`には同じ項目を使用する。パスワードハッシュ、招待トークン、`company_id`は返さない。
+
+| 項目 | 型 | 必須 | 説明 |
+| --- | --- | :---: | --- |
+| `user_id` | integer | ○ | usersのID。正の整数 |
+| `name` | string | ○ | marketersの表示名 |
+| `email` | string | ○ | ログイン用メールアドレス |
+| `user_type` | `"admin"` または `"marketer"` | ○ | adminsがある場合は`admin` |
+| `status` | `"invited"`、`"active"`、`"suspended"` | ○ | usersの利用状態 |
+| `is_responsible` | boolean | ○ | 会社の責任者かどうか。マーケターユーザーでは`false` |
+| `email_status` | `"pending"`、`"accepted"`、`"failed"`、`"outcome_unknown"`、または`null` | ○ | 直近の送信操作の状態。メール送信を行わない初期設定の責任者では`null` |
+
+| メソッド・パス | 処理・条件 |
+| --- | --- |
+| `GET /api/v1/admin/users` | 自社ユーザーを登録日時の新しい順で取得する。同じ登録日時の行はユーザーIDで順序を固定する。1ページ20件のページ番号方式とする |
+| `POST /api/v1/admin/users` | ユーザー種別・表示名・メールアドレスを受け取り、招待中ユーザー・送信操作・招待行を同じトランザクションで保存してからSESへ送る。受付成功の場合は`201 Created`でユーザーID、invited状態、送信受付状態を返す |
+| `PATCH /api/v1/admin/users/{user_id}` | 表示名とユーザー種別を部分更新する。表示名は招待中・利用中・停止中で編集可能。実際の種別変更は同じ会社の別のactiveユーザー（責任者を除く）だけに許可する |
+| `POST /api/v1/admin/users/{user_id}/suspensions` | 招待中・登録済みユーザーを停止する。本人と責任者は停止できない。人数による「最後の管理ユーザー」制限は設けない。パスワードハッシュ消去、認証世代更新、未使用リンク無効化を同一トランザクションで行う。すでにsuspendedなら変更しない |
+| `POST /api/v1/admin/users/{user_id}/reactivations` | 停止中のユーザーをinvitedにし、認証世代を更新して新しい送信操作・招待行を同一トランザクションで作る。登録済み・招待中のどちらから停止したユーザーにも使える。パスワード設定までログイン不可。すでにinvitedなら変更もメール送信もしない。activeからの再開は拒否する |
+| `POST /api/v1/admin/users/{user_id}/invitations` | invitedユーザーだけが対象。古い未使用リンクを無効化し、新しい送信操作・招待行を同一トランザクションで作って手動再送する。active・suspendedには再送しない |
+
+`GET /api/v1/admin/users?page=1`では、招待中を含む自社ユーザーを登録日時の新しい順で20件ずつ返す。同じ日時の行もユーザーIDで順序を固定する。Queryの`page`は1始まりの整数で、省略時は1とする。0以下・整数以外・最終ページを超える値は`400 INVALID_ARGUMENT`、ユーザーが0件の場合の`page=1`は正常な空一覧とする。総件数・総ページ数・現在ページも返す。招待トークンとパスワードハッシュは返さない。
+
+Response: `200 OK`。以下はデータ形式の例であり、表示名はmarketersの`name`を返す。`email_status`は直近の送信操作の状態とし、メールを送っていない初期設定の責任者では`null`とする。
+
+```json
+{
+  "success": true,
+  "data": {
+    "users": [
+      {
+        "user_id": 2,
+        "name": "表示名",
+        "email": "user@example.com",
+        "user_type": "admin",
+        "status": "invited",
+        "is_responsible": false,
+        "email_status": "accepted"
+      }
+    ],
+    "page": 1,
+    "page_size": 20,
+    "total_count": 1,
+    "total_pages": 1
+  },
+  "error": null
+}
+```
+
+`GET /api/v1/admin/users`のQueryは次のとおり。認証Cookie以外にRequest Bodyは持たない。
+
+| 場所 | 項目 | 型 | 必須 | 説明 |
+| --- | --- | --- | :---: | --- |
+| Query | `page` | integer |  | 1始まりのページ番号。省略時は1。1ページは20件固定で、`limit`と`cursor`は使用しない |
+
+`data.users`は上記の自社ユーザー配列、`page`・`page_size`・`total_count`・`total_pages`はいずれもintegerで必須とする。`page_size`は20固定。ユーザー0件でも`page=1`は`200 OK`で空配列を返す。0以下、整数以外、最終ページを超える`page`は`400 INVALID_ARGUMENT`とする。
+
+##### 新規招待 `POST /api/v1/admin/users`
+
+| 場所 | 項目 | 型 | 必須 | 説明 |
+| --- | --- | --- | :---: | --- |
+| Body | `user_type` | `"admin"` または `"marketer"` | ○ | 作成するユーザー種別。管理ユーザーにはadminsとmarketersを作る |
+| Body | `name` | string | ○ | 表示名。前後の空白を除いて1～255文字 |
+| Body | `email` | string | ○ | 前後の空白を除き形式を検証する。255文字以内で小文字に正規化して全社一意を確認する |
+
+SES受付成功時は`201 Created`とし、`data`に必須の`user_id: integer`、`status: "invited"`、`email_status: "accepted"`を返す。会社IDや招待トークンは返さない。
+
+Bodyの必須項目欠落・空文字列は`400 INVALID_ARGUMENT`とし、対象の`field_errors`には`REQUIRED`を設定する。`name`または`email`が255文字を超える場合は`TOO_LONG`、`email`の形式や`user_type`が不正な場合は`INVALID_FORMAT`を設定する。メールアドレスの登録済み判定は入力検証の後に行い、自社・他社のどちらで使用中かは区別せず`409 USER_INVITATION_CONFLICT`を返す。
+
+##### 表示名・ユーザー種別編集 `PATCH /api/v1/admin/users/{user_id}`
+
+| 場所 | 項目 | 型 | 必須 | 説明 |
+| --- | --- | --- | :---: | --- |
+| Path | `user_id` | integer | ○ | 自社ユーザーの正のID |
+| Body | `name` | string |  | 前後の空白を除いて1～255文字。招待中・利用中・停止中の対象で編集できる |
+| Body | `user_type` | `"admin"` または `"marketer"` |  | 管理ユーザーへの昇格またはマーケターユーザーへの降格。実際の種別変更は別のactiveユーザー（責任者を除く）に限る |
+
+Bodyには`name`または`user_type`の少なくとも一方を指定する。両方を指定した場合は両方の条件を検証し、表示名と種別を同一トランザクションで更新する。管理ユーザーへの変更では`admins`を追加し、マーケターユーザーへの変更では`admins`を削除する。本人の`marketers`と会話履歴、パスワード、`invitations`、`emails`は維持する。実際に種別が変わる場合だけ`users.auth_generation`を同じトランザクションで更新して旧Cookieを失効させる。種別が現在と同じ場合は種別変更の制限を適用せず、認証世代も更新しない。メールは送信しない。
+
+成功時は`200 OK`で`data.user`に更新後の自社ユーザーを返す。内容と型は「自社ユーザーの返却形式」に従う。値が変わらないRequestも`200`で現在の状態を返し、認証世代は更新しない。
+
+両Body項目の欠落は`400 INVALID_ARGUMENT`とする。指定した`name`が空文字列なら`400 INVALID_ARGUMENT`と`field_errors.name`の`REQUIRED`、255文字超なら`TOO_LONG`、不正な`user_type`なら`field_errors.user_type`の`INVALID_FORMAT`とする。種別が変わる場合に対象がinvited・suspendedなら`409 USER_STATE_CONFLICT`、操作中の管理ユーザー本人または責任者なら`409 USER_ROLE_CHANGE_FORBIDDEN`とし、同時に指定した表示名も更新しない。
+
+##### 利用停止・利用再開・招待メール再送
+
+以下の3つの`POST`はすべてPathの`user_id`（正のinteger）を必須とし、Request Bodyは持たない。認証Cookie、許可Origin、`X-CSRF-Token` Headerを検証する。
+
+| API | 対象・状態遷移 | 成功時のStatusと`data` |
+| --- | --- | --- |
+| `POST /api/v1/admin/users/{user_id}/suspensions` | invitedまたはactiveをsuspendedへ変更する。すでにsuspendedなら変更しない | `200 OK`、`user`（自社ユーザーの返却形式、statusはsuspended） |
+| `POST /api/v1/admin/users/{user_id}/reactivations` | suspendedをinvitedにし、新リンクの送信を試みる。すでにinvitedなら状態変更・メール送信を行わない。activeでは拒否する | SES受付成功またはすでにinvitedなら`200 OK`、`user`（statusはinvited。重複時は現在のemail_statusをそのまま返す） |
+| `POST /api/v1/admin/users/{user_id}/invitations` | invitedだけに送信し、古いリンクを無効化して新しいリンクを発行する | SES受付成功時に`201 Created`、`email_status: "accepted"`（string、必須） |
+
+`user`は`data.user`、再送の`email_status`は`data.email_status`として返す。すでに停止・再開済みの操作を重複受信しても、新しい招待メールを送らない。意図的な再送は専用の`POST /invitations`で行う。
+
+新規招待ではusersとmarketers（管理ユーザーならadminsも）、emailsおよびinvitationsをSES送信前の同一トランザクションで登録する。メールアドレスは全社で一意とし、既存メールアドレスでの招待は会社の違いをレスポンスで区別しない`409 USER_INVITATION_CONFLICT`とする。
+
+認証済みでも管理権限がないユーザーには`403 ADMIN_FORBIDDEN`を返し、CSRF検証エラーと区別する。管理権限はあるが指定された`user_id`が存在しない・別会社に属する場合は同じ`404 ADMIN_USER_NOT_FOUND`を返す。自分自身・責任者の停止は`409 USER_SUSPENSION_FORBIDDEN`とし、会社の境界をレスポンスで明かさない。
+
+停止済みユーザーへの停止、および招待中ユーザーへの再開は`200 OK`で現在の状態を返す。一方、利用中ユーザーへの再開、利用中・停止中ユーザーへの招待メール再送は`409 USER_STATE_CONFLICT`とし、業務処理と送信を行わない。
+
+招待・再開・再送時には、招待トークンを発行し、users・所属（既存ユーザーでは状態変更）・emails・invitationsをSES送信前に同じトランザクションで保存する。リンクは発行から1時間有効。同じ送信操作内の明確なスロットリング応答だけ、同じリンクを使い指数バックオフとジッターで最大2回自動再試行する。SDK側の自動再試行は無効にする。成功応答のMessageIdはSESの受付IDであり配達完了を意味しない。
+
+明確な送信失敗は`502 INVITATION_SEND_FAILED`、5xx・408・応答なしなどMessageIdを受け取れず結果を確定できない場合は`504 INVITATION_SEND_OUTCOME_UNKNOWN`を返し、自動再送しない。送信失敗・結果不明でも発行済みリンクは手動再送・利用停止・期限切れまで有効とする。処理中断でpendingが残った場合は、時間経過でstatusを変更せず、一覧では既存の「送信結果を確認できませんでした」として手動再送を案内する。ユーザー・招待行・送信操作は残し、同じ処理依頼をエラーだけを理由に自動で再実行しない。手動再送は古い未使用リンクを無効化して新しい行を作る。
+
+想定済みの競合は`409`を返すが、他社の情報や内部の重複理由は返さない。想定外のDB・バックエンド障害は`500`とし、例外・SQL・内部構成は返さない。
+
+管理APIの共通エラーは次のとおり。認証・CSRF以外の入力エラーもAgent履歴には保存せず、`error.agent_turn_id = null`とする。
+
+| HTTP Status | Code | 対象と条件 |
+| --- | --- | --- |
+| `400` | `INVALID_ARGUMENT` | Bodyの型・必須項目・形式、Pathのuser_id、Queryのpageが不正、またはpageが最終ページを超える |
+| `401` | `UNAUTHENTICATED` | 未認証、期限切れ、利用停止・認証世代の不一致 |
+| `403` | `CSRF_VALIDATION_FAILED` | 認証付き状態変更でOriginまたはCSRF Tokenが不正 |
+| `403` | `ADMIN_FORBIDDEN` | 管理権限がない |
+| `404` | `ADMIN_USER_NOT_FOUND` | Pathで指定したユーザーが存在しない、または別会社に属する |
+| `409` | `USER_INVITATION_CONFLICT` | 新規招待のメールアドレスがすでに使われている。所属会社は明かさない |
+| `409` | `USER_SUSPENSION_FORBIDDEN` | 自分自身または責任者の停止を試みた |
+| `409` | `USER_ROLE_CHANGE_FORBIDDEN` | 自分自身または責任者の種別変更を試みた |
+| `409` | `USER_STATE_CONFLICT` | 利用中のユーザーの再開、招待中以外のユーザーへの再送、招待中・停止中のユーザーの種別変更 |
+| `502` | `INVITATION_SEND_FAILED` | 招待・再開・再送時にSESが明確な失敗を返した。ユーザー・リンクは残る |
+| `504` | `INVITATION_SEND_OUTCOME_UNKNOWN` | SES受付結果を確認できない。ユーザー・リンクは残り、自動再送しない |
+| `500` | `INTERNAL_ERROR` | 想定外の内部・DB保存エラー。処理結果を決めつけず一覧を再取得する |
+
+`500 INTERNAL_ERROR`を含む、結果の分からない自社ユーザー管理の状態変更は自動で同じRequestを再送しない。一覧を取得して保存済み状態を確認した後、必要なら利用者の操作で再実行する。
+
+#### 11.3 招待リンクからのパスワード設定
+
+`POST /api/v1/invitation-acceptances`を`/invitations/accept?token=...`から呼び出す。未ログインで、招待トークンと新しいパスワードをRequest Bodyで受け取り、許可Originを検証する。認証済みユーザーに束縛したCSRF Tokenは要求しない。画面を開いた時点のリンク確認APIは作らず、パスワード送信時にトークンのハッシュ・発行から1時間の期限・使用済み・無効化済みの状態を検証する。パスワードの保存、activeへの変更、リンクの使用済み化は同じトランザクションで行う。
+
+| 場所 | 項目 | 型 | 必須 | 説明 |
+| --- | --- | --- | :---: | --- |
+| Body | `token` | string | ○ | URLから受け取った招待トークン。APIのPathやQueryには載せない |
+| Body | `password` | string | ○ | 本人が新しく設定するパスワード。12～128文字で、下記の文字種条件を満たす |
+
+成功時は`200 OK`で`data.user_type`（`"admin"`または`"marketer"`、必須）を返す。認証Cookieは発行せず、UIは種別に応じたログイン画面への導線を表示する。
+
+新しいパスワードは12～128文字とし、空白を除く半角英数字・記号だけを許可する。英大文字・英小文字・数字・記号をそれぞれ1文字以上含める。この条件は初期設定スクリプトで指定する責任者のパスワードにも適用する。
+
+存在しない・期限切れ・使用済み・無効化済みのトークンは同じ`400 INVITATION_LINK_INVALID`と同じ文言で返し、理由を区別しない。「この招待リンクは利用できません。管理者に再送を依頼してください」と表示できる結果を返す。空でない`token`がBodyに存在することは必須で、項目の欠落は`400 INVALID_ARGUMENT`と`field_errors`の`REQUIRED`とする。登録完了後は管理ユーザーなら`/admin/login`、マーケターユーザーなら`/login`を画面に案内する。APIのURL・ログ・レスポンスにはトークンを含めず、APIへはBodyで送る。招待画面の`?token=...`はパスワード設定が完了するまで保持し、初期表示で削除しない。招待画面の応答には`Referrer-Policy: no-referrer`と`Cache-Control: no-store`を設定し、ページURLのクエリをアクセスログへ記録しない。登録成功後はログイン画面への遷移で履歴を置き換え、トークン付きURLを残さない。
+
+パスワードの必須・形式・長さの違反は`400 INVALID_ARGUMENT`とし、2.6の`field_errors`で`field = "password"`を返す。未入力には`REQUIRED`、128文字超には`TOO_LONG`、12文字未満または文字種条件違反には`INVALID_FORMAT`を使う。リンクが無効なら、パスワードの内容にかかわらず`INVITATION_LINK_INVALID`の同じ応答とする。許可Origin不一致は`403 CSRF_VALIDATION_FAILED`とし、未ログインのためCSRF Token再発行は行わない。

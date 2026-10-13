@@ -6,9 +6,18 @@ Project hiromeru {
     PostgreSQL拡張:
     - vector: 長期記憶、施策、投稿の検索用埋め込みベクトル
 
+    確定事項
+
     DBMLでは完全に表現できないアプリケーション不変条件:
     - 提案Tool Resultは変更せず、UIフォームの中間編集は保存しない。Agentへの再相談内容とAPIが受け取った最終フォーム値をエージェント履歴へ追記する。
-    - 会社は業務データを所有し、マーケターはそのデータを操作する主体となる。
+    - 会社は業務データを所有し、マーケターはそのデータを操作する主体となる。管理ユーザーにも本人のマーケタープロファイルを作成し、マーケター向け操作と本人の会話履歴にはそのmarketer_idを使う。
+    - 認証はusersで行い、管理権限はadminsの存在で判定する。認証Cookieにはuser_idとauth_generationを署名して保持し、認証付きRequestごとにDBのstatusとauth_generationを検証する。会社とmarketer_idは認証済みユーザーの所属から決定する。
+    - 初期設定スクリプトは会社名・責任者の表示名・メールアドレス・パスワードを受け取り、責任者のメールアドレスは前後の空白除去と小文字化を行ってから全社一意を判定・保存する。招待とログインも同じ正規化を使う。会社・責任者ユーザー・責任者のmarketersとadminsは同一トランザクションに登録し、メール重複時は会社を含めて登録しない。責任者のパスワードはargon2のハッシュとして保存し、users.statusをactiveにして作成直後からログインできるようにする。招待リンクは使わない。DBのデータは初期化して再投入し、既存会社・既存マーケターの移行は行わない。責任者は会社ごとに1人とし、責任者の削除・利用停止・責任者フラグ解除を禁止する。会社も削除しない。最低1人の責任者は登録手順と操作禁止で維持し、部分ユニーク索引だけでは保証しない。
+    - 初期設定スクリプトで指定する責任者のパスワードと招待リンクから設定するパスワードは、12～128文字で空白を除く半角英数字・記号だけを許可し、英大文字・英小文字・数字・記号をそれぞれ1文字以上含める。平文を保存しないため、この入力条件はハッシュ化前にスクリプトまたはAPIで検証する。
+    - 招待時にusersとmarketersを作成し、管理ユーザーならadminsも作成する。パスワード設定前はログインできない。停止時はパスワードハッシュを消去し、認証世代を更新して既存Cookieと招待リンクを即時失効させる。再開時も認証世代を更新し、古いログインを復活させず新しいリンクによるパスワード設定までログインさせない。
+    - 同じ会社の別のactiveユーザーに限り、管理ユーザーへの種別変更ではadminsを追加し、マーケターユーザーへの変更ではadminsを削除する。操作中の管理ユーザー本人と責任者は変更できない。marketersとその会話履歴、usersのパスワード、invitations、emailsは維持する。実際に種別が変わるときだけusers.auth_generationを同じトランザクションで更新し、旧Cookieを失効させる。表示名も同時に更新できる。
+    - 初回招待・手動再送・利用再開では、招待トークンを発行し、users・所属（既存ユーザーでは状態変更）・emails・invitationsをSES送信前のトランザクションで保存する。手動再送時には古い未使用リンクを無効化してから新しい行を作る。リンクは発行から1時間有効で、使用済み・無効化済み・期限切れを拒否する。同じ送信操作内の自動再試行には同じリンクを使用する。
+    - SESの成功応答は送信受付を示し配達完了は示さない。明確なスロットリング応答だけ最大2回、指数バックオフとジッターで自動再試行する。5xx、408、応答なし、処理中断は結果不明として自動再試行しない。送信前と送信開始後は区別せず、処理中断でpendingのまま残った送信操作も自動再送しない。時間経過でpendingをoutcome_unknownへ変更せず、一覧では既存の結果不明表示を使う。SDK側の自動再試行も無効にする。送信失敗・結果不明でもユーザーと招待行を残す。リンクは手動再送・利用停止・1時間の期限切れまで有効とする。
     - 施策に紐づく投稿は同じ会社に所属しなければならない。
     - 業務データを操作するマーケターは、そのデータを所有する会社に所属しなければならない。
     - 記憶と、それに紐づく施策または投稿は同じ会社に所属しなければならない。
@@ -19,7 +28,7 @@ Project hiromeru {
     - 投稿計測、エージェントターン、エージェントアイテム、ツール実行、LLM呼び出しなどの子レコードは、必須の親レコードから会社所有権を継承する。
     - Xへ公開できるのは、認証済みUIの承認・公開ボタンから最終フォーム値をX投稿APIへ送信し、認証、会社所有権、入力Schemaを検証できた投稿だけとする。
     - 施策案と未公開投稿案は人間が承認するまでエージェント履歴に保持し、承認後の施策登録・更新とX投稿はLLMを介さずアプリケーションAPIで実行する。
-    - 承認APIのPathで指定できるのは、認証済みマーケターが所有する未アーカイブの親エージェントセッションだけとする。最終RequestとAPI結果は、そのセッションに作成した新しいターンへ保存する。
+    - 承認APIのPathで指定できるのは、認証済みユーザー本人のマーケターが所有する未アーカイブの親エージェントセッションだけとする。最終RequestとAPI結果は、そのセッションに作成した新しいターンへ保存する。
     - 施策upsert APIとX投稿APIは、マーケター、操作種別、Idempotency-Keyの組み合わせで最初のRequestだけを実行する。同じキーによる再送では業務データとエージェント履歴を重複作成しない。
     - 施策または投稿の業務データ保存、API Result、API実行Turnの完了、冪等性レコードの成功確定は同じトランザクションで行う。X投稿結果を確定できない場合は同じキーで再投稿しない。X投稿成功後は、業務データの保存より先にX投稿結果をexternal_resultへ保存し、その後のDB保存が失敗しても同じキーの再送でDB保存だけを再実行する。
     - 公開済み投稿と完了済み監査記録は通常のCRUD操作で削除してはならない。
@@ -40,7 +49,7 @@ Project hiromeru {
     - JSONB内容スキーマとツール固有の入出力スキーマは、保存前にアプリケーションで検証する。
     - 記憶を忘却する場合は、その内容と埋め込みベクトルを完全に削除する。
     - すべてのtimestamptzはUTCとして保存し、APIもUTCで返す。Frontendの表示と日付Filterの暦日境界はAsia/Tokyoを使用する。
-    - Noteに記載したCHECK制約はSQL migrationで追加する。
+    - DBMLのchecksに定義した制約はDBのCHECK制約として追加する。DBMLに未記載でNoteだけに記載したCHECK制約もSQL migrationで追加する。
   '''
 }
 
@@ -135,10 +144,25 @@ Enum security_enforcement {
   blocked
 }
 
+Enum user_status {
+  invited
+  active
+  suspended
+}
+
+Enum email_status {
+  pending
+  accepted
+  failed
+  outcome_unknown
+}
+
 Table users {
   id bigint [pk, increment, note: '【ユーザーID】']
-  email varchar(255) [not null, note: '【メールアドレス】']
-  password varchar(255) [not null, note: '【パスワード】argon2でハッシュ化した値。平文は保存しない。']
+  email varchar(255) [not null, note: '【メールアドレス】登録時に前後の空白を除き小文字化してから保存する。']
+  password varchar(255) [note: '【パスワードハッシュ】argon2でハッシュ化した値。invited・suspendedではNULL。平文は保存しない。']
+  status user_status [not null, default: 'invited', note: '【利用状態】招待中、利用中、利用停止中。送信結果とは独立する。']
+  auth_generation bigint [not null, default: 0, note: '【認証世代】Cookieに署名して保持し、停止・再開・実際のユーザー種別変更時に更新する。0以上。']
   created_at timestamptz [not null, default: `now()`, note: '【作成日時】']
   updated_at timestamptz [not null, default: `now()`, note: '【更新日時】']
 
@@ -146,7 +170,12 @@ Table users {
     email [unique]
   }
 
-  Note: '認証主体だけを管理する。業務操作はマーケターが行う。'
+  checks {
+    `(status = 'active' AND password IS NOT NULL) OR (status IN ('invited', 'suspended') AND password IS NULL)` [name: 'users_status_password_check']
+    `auth_generation >= 0` [name: 'users_auth_generation_check']
+  }
+
+  Note: '認証主体。メールアドレスは初期設定スクリプト・招待API・ログインで同じ正規化を用い、全社で一意にする。招待ユーザーはinvitedからパスワード設定でactive、停止でsuspended、再開でinvitedへ遷移する。初期設定スクリプトで作る責任者は、指定されたパスワードをハッシュ化して保存し、作成時からactiveにする。停止時はpasswordを消去し、停止・再開・実際の種別変更でauth_generationを更新する。'
 }
 
 Table companies {
@@ -161,16 +190,90 @@ Table companies {
 Table marketers {
   id bigint [pk, increment, note: '【マーケターID】']
   user_id bigint [not null, unique, note: '【ユーザーID】']
-  name varchar(255) [not null, note: '【個人名】']
-  company_id bigint [not null, unique, note: '【会社ID】']
+  name varchar(255) [not null, note: '【表示名】管理ユーザーも本人のマーケタープロファイルで保持する。']
+  company_id bigint [not null, note: '【会社ID】']
   created_at timestamptz [not null, default: `now()`, note: '【作成日時】']
   updated_at timestamptz [not null, default: `now()`, note: '【更新日時】']
 
-  Note: '現行機能における業務操作主体。MVPでは各ユーザーと各会社に紐づくマーケタープロファイルは最大1件とする。'
+  indexes {
+    (user_id, company_id) [unique]
+    company_id
+  }
+
+  Note: 'マーケター向け機能の操作と会話履歴の主体。1人のユーザーに1件、1社には複数人所属できる。管理ユーザーもmarketersを持ち、adminsの複合外部キーで所属会社を一致させる。'
 }
 
 Ref: marketers.user_id > users.id [delete: restrict]
 Ref: marketers.company_id > companies.id [delete: restrict]
+
+Table admins {
+  id bigint [pk, increment, note: '【管理ユーザーID】']
+  user_id bigint [not null, unique, note: '【ユーザーID】管理権限を持つ本人。']
+  company_id bigint [not null, note: '【所属会社ID】marketersと一致させる。']
+  is_responsible boolean [not null, default: false, note: '【責任者フラグ】会社ごとに1人。変更・削除・利用停止は禁止する。']
+  created_at timestamptz [not null, default: `now()`, note: '【作成日時】']
+  updated_at timestamptz [not null, default: `now()`, note: '【更新日時】']
+
+  indexes {
+    company_id
+  }
+
+  Note: '自社ユーザーの管理権限。user_idとcompany_idの組でmarketersを参照し、管理ユーザーにも本人のマーケタープロファイルを必須とする。利用中の別ユーザーの昇格時に追加し、責任者以外の利用中の別ユーザーの降格時に削除する。is_responsible=trueの行を会社ごとに最大1件とする部分ユニーク索引をSQL migrationで追加する。責任者の最低1人は会社・責任者の同時登録と、責任者の削除・停止・フラグ解除の禁止で維持する。'
+}
+
+Ref: admins.user_id > users.id [delete: restrict]
+Ref: admins.company_id > companies.id [delete: restrict]
+Ref: admins.(user_id, company_id) > marketers.(user_id, company_id) [delete: restrict]
+
+Table emails {
+  id bigint [pk, increment, note: '【メール送信操作ID】']
+  user_id bigint [not null, note: '【宛先ユーザーID】']
+  status email_status [not null, default: 'pending', note: '【送信状態】acceptedはSES受付成功であり配達完了ではない。outcome_unknownは受付結果を確定できない状態。']
+  attempt_count integer [not null, default: 0, note: '【送信試行回数】初回送信と同じ操作内の自動再試行を数える。最大3回。']
+  ses_message_id varchar(255) [note: '【SESメッセージID】SES受付成功時だけ記録する。配達完了は示さない。']
+  last_error_code varchar(100) [note: '【直近エラーコード】アプリケーションで分類した固定コード。SESの生のエラー文は保存しない。']
+  created_at timestamptz [not null, default: `now()`, note: '【作成日時】']
+  updated_at timestamptz [not null, default: `now()`, note: '【更新日時】']
+
+  indexes {
+    (id, user_id) [unique]
+    (user_id, created_at)
+  }
+
+  checks {
+    `attempt_count BETWEEN 0 AND 3` [name: 'emails_attempt_count_check']
+    `(status = 'pending' AND ses_message_id IS NULL AND last_error_code IS NULL) OR (status = 'accepted' AND ses_message_id IS NOT NULL AND last_error_code IS NULL) OR (status IN ('failed', 'outcome_unknown') AND ses_message_id IS NULL AND last_error_code IS NOT NULL)` [name: 'emails_status_result_check']
+  }
+
+  Note: '1行が1回の送信操作。初回招待・手動再送・利用再開では、SES送信前に対象ユーザー・本行・対応するinvitations行を同じトランザクションで保存する。明確なスロットリング応答だけ同じリンクで最大2回、指数バックオフとジッターで自動再試行する。5xx・408・応答なしでは結果不明として自動再試行せず、処理中断でpendingのまま残った行は一覧で結果不明として表示し、時間経過による自動遷移は行わない。送信失敗・結果不明でも招待中のユーザーとリンクは残る。acceptedになった場合は以前のスロットリングエラーをlast_error_codeに残さない。'
+}
+
+Ref: emails.user_id > users.id [delete: restrict]
+
+Table invitations {
+  id bigint [pk, increment, note: '【招待ID】']
+  user_id bigint [not null, note: '【招待対象ユーザーID】']
+  email_id bigint [not null, unique, note: '【メール送信操作ID】この招待リンクを送る操作。']
+  token_hash varchar(255) [not null, unique, note: '【招待トークンハッシュ】安全に生成したリンクのトークンをハッシュ化した値。平文は保存しない。']
+  expires_at timestamptz [not null, note: '【有効期限】トークン発行日時から1時間。自動再試行では延長しない。']
+  used_at timestamptz [note: '【使用日時】パスワード設定と同じトランザクションで確定する。']
+  invalidated_at timestamptz [note: '【無効化日時】利用停止または手動再送時に設定する。']
+  created_at timestamptz [not null, note: '【トークン発行日時】SES送信前の招待行登録時に設定する。']
+
+  indexes {
+    (user_id, created_at)
+  }
+
+  checks {
+    `used_at IS NULL OR invalidated_at IS NULL` [name: 'invitations_used_or_invalidated_check']
+    `expires_at = created_at + interval '1 hour'` [name: 'invitations_expiry_check']
+  }
+
+  Note: 'SES送信前にemailsと同じトランザクションで登録する。SESが送信失敗・結果不明でも本行は有効のままとし、手動再送・利用停止・期限切れで無効にする。1人のユーザーに未使用・未無効化の招待リンクは最大1件とする部分ユニーク索引をSQL migrationで追加する。期限切れのリンクも新しいリンクを作る前に明示的に無効化する。使用時は期限・使用済み・無効化済み・usersの状態を確認し、条件付き更新で二重使用を防ぎ、パスワード設定と同じトランザクションでused_atを記録する。'
+}
+
+Ref: invitations.user_id > users.id [delete: restrict]
+Ref: invitations.(email_id, user_id) > emails.(id, user_id) [delete: restrict]
 
 Table campaigns {
   id bigint [pk, increment, note: '【施策ID】']
