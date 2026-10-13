@@ -347,6 +347,8 @@ Response: `200 OK`
 
 認証Cookieと`csrf_token` Cookieを削除し（`Max-Age=0`）、`200 OK`を返す。未ログインの場合も同じ結果とする。
 
+明示的なログアウト操作では、フロントエンドが入口ヒントCookie `hiromeru_login_portal`も削除する。本APIが削除するのは認証Cookieと`csrf_token` Cookieであり、入口ヒントCookieの削除はフロントエンドが担当する。入口ヒントCookieの仕様は`SCREEN_DESIGN.md` 6.2「再ログイン先の選択」を参照する。
+
 ```json
 {
   "success": true,
