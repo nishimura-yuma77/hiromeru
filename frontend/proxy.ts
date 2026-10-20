@@ -13,5 +13,6 @@ export const config = {
     "/posts/:path*",
     "/metrics/:path*",
     "/memories/:path*",
+    "/admin/users/:path*",
   ],
 };

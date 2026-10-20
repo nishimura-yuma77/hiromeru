@@ -6,6 +6,7 @@ import {
   normalizeFetchError,
   parseApiResponse,
 } from "@/shared/api/ApiError";
+import { LOGIN_PORTAL_COOKIE, loginPathForPortal } from "@/shared/lib/loginPortal";
 import { safeRedirectPath } from "@/shared/lib/safeRedirectPath";
 
 type BrowserApiRequestOptions<T> = {
@@ -49,18 +50,23 @@ function parseCsrfData(input: unknown): string {
 }
 
 export function redirectToLogin(error: ApiError, force = false): void {
-  if (
-    (!force && error.code !== "UNAUTHENTICATED") ||
-    typeof window === "undefined" ||
-    window.location.pathname === "/login"
-  ) {
+  if ((!force && error.code !== "UNAUTHENTICATED") || typeof window === "undefined") {
+    return;
+  }
+  const { pathname } = window.location;
+  if (pathname === "/login" || pathname === "/admin/login" || pathname.startsWith("/invitations")) {
     return;
   }
 
+  // 管理画面はヒントにかかわらずSC-10、マーケター向け画面は入口ヒントで選ぶ。
+  const loginPath = pathname.startsWith("/admin")
+    ? "/admin/login"
+    : loginPathForPortal(readCookie(LOGIN_PORTAL_COOKIE));
   const currentPath = safeRedirectPath(
-    `${window.location.pathname}${window.location.search}${window.location.hash}`,
+    `${pathname}${window.location.search}${window.location.hash}`,
+    loginPath === "/admin/login" ? "/admin/users" : undefined,
   );
-  const loginUrl = new URL("/login", window.location.origin);
+  const loginUrl = new URL(loginPath, window.location.origin);
   loginUrl.search = new URLSearchParams({ next: currentPath }).toString();
   window.location.assign(loginUrl);
 }

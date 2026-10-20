@@ -110,6 +110,40 @@
   }
 }
 
+// 管理ユーザーにだけ表示する、ナビとは別の目立つ色の導線（SCREEN_DESIGN 6.1）。
+.adminLink {
+  align-items: center;
+  background: var(--color-accent);
+  border-radius: var(--radius-sm);
+  color: var(--color-brand-strong);
+  display: flex;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  justify-content: center;
+  margin-block-end: var(--space-3);
+  min-block-size: var(--control-min-height);
+  padding-inline: var(--space-3);
+  text-decoration: none;
+  transition:
+    background-color var(--duration-fast) var(--easing-standard),
+    color var(--duration-fast) var(--easing-standard);
+
+  &:hover {
+    background: var(--color-brand-primary);
+    color: var(--color-text-on-brand);
+  }
+
+  &:active {
+    background: var(--color-brand-strong);
+    color: var(--color-text-on-brand);
+  }
+
+  &:focus-visible {
+    outline: var(--focus-ring-width) solid var(--color-focus-ring);
+    outline-offset: var(--focus-ring-offset);
+  }
+}
+
 .account {
   border-block-start: var(--border-width-thin) solid var(--color-border);
   padding-block-start: var(--space-4);

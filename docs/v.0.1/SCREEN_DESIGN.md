@@ -60,7 +60,11 @@
 | SC-08 | `app/(authenticated)/metrics/` | `metrics` | Server Component | 期間の絞り込みと施策別結果のPagination（URLを更新する） |
 | SC-09 | `app/(authenticated)/memories/` | `memories` | Server Component | 検索、施策による絞り込み、関連先の追加読込、記憶の削除、Response不明時の同じDELETEによる結果確定 |
 
-SC-10～SC-12の具体的な`app/`配下の配置とFeature名は、各画面の実装構成を決める際に確認する。
+| SC-10 | `app/admin/login/` | `auth`（SC-01と同じログイン画面を管理用の入口として使う） | Server Component（`GET /auth/me`。`is_admin = true`ならSC-11へ移動） | ログイン、入口ヒントCookieの設定 |
+| SC-11 | `app/admin/(console)/users/`（`app/admin/(console)/layout.tsx`が管理用レイアウト） | `users`（管理用レイアウトは`shell`の`AdminShell`） | Server Component（`GET /admin/users?page=`） | ページ移動（URLを更新する）、招待・表示名と種別の編集・停止・再開・再送のモーダル |
+| SC-12 | `app/invitations/accept/` | `invitations` | なし（初期表示ではリンクを検証しない） | パスワード設定 |
+
+SC-10とSC-01は`auth`Featureの同じログイン画面を、入口（`marketer`・`admin`）ごとの見出しと相互リンクで使い分ける。管理用レイアウトと`auth`Featureのログアウトは`app/admin/(console)/`で組み立てる（Feature間の直接参照を避けるため）。
 
 - 初回アクセスとURLの直接読み込みではServer Componentが業務データを取得し、`HydrationBoundary`でFeature別のTanStack Queryへ渡す。認証済みの一覧（SC-04、SC-06、SC-08、SC-09）での検索・絞り込み・並び替え・ページ送りは、Client側の`useCampaignListQuery`・`usePostListQuery`・`useMetricsReportQuery`・`useMemoryListQuery`が結果領域だけ更新する。Query Keyは正規化した条件とCursorを含み、RequestのAbort・キャッシュ・Error再試行をTanStack Queryが担当する
 - URLはNext.js対応のHistory APIと`useSearchParams`で同期する。明示的な条件変更は`fetchQuery`成功後だけURLを確定し、戻る・進むはQuery Keyの切替で対応する。認証後のQueryClientはログイン・ログアウト時に消去し、他の利用者へキャッシュを持ち越さない

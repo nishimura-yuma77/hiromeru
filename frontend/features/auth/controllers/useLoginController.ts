@@ -11,8 +11,10 @@ import {
   validatePassword,
 } from "@/features/auth/state/loginState";
 import { ApiError } from "@/shared/api/ApiError";
+import { rememberLoginPortal, type LoginPortal } from "@/shared/lib/loginPortal";
 
 type UseLoginControllerOptions = {
+  portal: LoginPortal;
   nextPath: string;
   initialFormError: string | null;
 };
@@ -36,7 +38,7 @@ function loginErrorMessage(error: ApiError): { message: string; shouldReload: bo
   return { message: "ログインできませんでした。時間をおいて、もう一度お試しください", shouldReload: false };
 }
 
-export function useLoginController({ nextPath, initialFormError }: UseLoginControllerOptions) {
+export function useLoginController({ portal, nextPath, initialFormError }: UseLoginControllerOptions) {
   const router = useRouter();
   const [state, dispatch] = useReducer(loginReducer, initialFormError, createInitialLoginState);
   const loginMutation = useLoginMutation();
@@ -61,7 +63,9 @@ export function useLoginController({ nextPath, initialFormError }: UseLoginContr
     }
 
     try {
-      await loginMutation.mutateAsync({ email, password: state.password });
+      await loginMutation.mutateAsync({ email, password: state.password, portal });
+      // 画面遷移の前に、認証切れ時の再ログイン先を記録する。
+      rememberLoginPortal(portal);
       router.replace(nextPath);
       router.refresh();
     } catch (error) {

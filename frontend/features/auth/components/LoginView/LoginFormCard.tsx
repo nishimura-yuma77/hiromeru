@@ -1,10 +1,15 @@
 import type { FormEvent, RefObject } from "react";
+import Link from "next/link";
+
 import { Button } from "@/shared/components/Button/Button";
 import { Input } from "@/shared/components/Input/Input";
 
 import styles from "./LoginView.module.scss";
 
 export type LoginFormCardProps = {
+  heading: string;
+  alternateLink: { href: string; label: string };
+  notice: string | null;
   email: string;
   password: string;
   emailError: string | null;
@@ -24,6 +29,9 @@ export type LoginFormCardProps = {
 };
 
 export function LoginFormCard({
+  heading,
+  alternateLink,
+  notice,
   email,
   password,
   emailError,
@@ -44,8 +52,9 @@ export function LoginFormCard({
   return (
     <div className={styles.formColumn}>
       <div className={styles.card}>
-        <h1>ログイン</h1>
+        <h1>{heading}</h1>
         <p className={styles.cardIntro}>アカウント情報を入力してください</p>
+        {notice ? <p className={styles.notice} role="status">{notice}</p> : null}
         <form noValidate onSubmit={onSubmit}>
           <div className={styles.field}>
             <label htmlFor="email">メールアドレス</label>
@@ -106,6 +115,7 @@ export function LoginFormCard({
         </form>
       </div>
       <p className={styles.helpText}>パスワードを忘れた場合は管理者にお問い合わせください</p>
+      <p className={styles.helpText}><Link className={styles.portalLink} href={alternateLink.href}>{alternateLink.label}</Link></p>
     </div>
   );
 }

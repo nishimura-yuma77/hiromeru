@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import { redirect } from "next/navigation";
 
 import { LoginContainer } from "@/features/auth/containers/LoginContainer";
-import { getCurrentMarketer } from "@/features/auth/server/getCurrentMarketer";
+import { getCurrentUser } from "@/features/auth/server/getCurrentUser";
 import { ApiError } from "@/shared/api/ApiError";
 import { safeRedirectPath } from "@/shared/lib/safeRedirectPath";
 
@@ -11,17 +11,17 @@ export const metadata: Metadata = {
 };
 
 type LoginPageProps = {
-  searchParams: Promise<{ next?: string | string[] }>;
+  searchParams: Promise<{ next?: string | string[]; registered?: string | string[] }>;
 };
 
 export default async function LoginPage({ searchParams }: LoginPageProps) {
-  const { next } = await searchParams;
+  const { next, registered } = await searchParams;
   const nextPath = safeRedirectPath(next);
   let initialFormError: string | null = null;
   let isLoggedIn = false;
 
   try {
-    await getCurrentMarketer();
+    await getCurrentUser();
     isLoggedIn = true;
   } catch (error) {
     if (error instanceof ApiError && error.code === "UNAUTHENTICATED") {
@@ -35,5 +35,12 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
     redirect(nextPath);
   }
 
-  return <LoginContainer nextPath={nextPath} initialFormError={initialFormError} />;
+  return (
+    <LoginContainer
+      portal="marketer"
+      nextPath={nextPath}
+      initialFormError={initialFormError}
+      notice={registered ? "登録が完了しました。設定したパスワードでログインしてください" : null}
+    />
+  );
 }
