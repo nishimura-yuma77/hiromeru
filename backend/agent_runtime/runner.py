@@ -65,7 +65,7 @@ class AgentRunInput:
 
     session_id: int
     turn_id: int
-    marketer_id: int
+    user_id: int
     company_id: int
     message: str
     context: AgentContext
@@ -160,7 +160,7 @@ class ChildRunInput:
     turn_id: int
     parent_session_id: int
     parent_turn_id: int
-    marketer_id: int
+    user_id: int
     company_id: int
     request: dict[str, JsonValue]
     context: AgentContext

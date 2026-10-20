@@ -615,7 +615,7 @@ async def test_external_result不正_DB再開を確定せず元Turnとprocessing
         row = (
             await session.execute(
                 select(ApiIdempotencyRequest).where(
-                    ApiIdempotencyRequest.marketer_id == account.marketer_id,
+                    ApiIdempotencyRequest.user_id == account.user_id,
                     ApiIdempotencyRequest.operation == ApiOperation.PUBLISH_X_POST,
                     ApiIdempotencyRequest.idempotency_key == uuid.UUID(key),
                 )

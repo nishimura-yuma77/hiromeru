@@ -16,12 +16,13 @@ from models.agent import (
 from models.base import Base
 from models.campaign import Campaign, CampaignEmbedding
 from models.idempotency import ApiIdempotencyRequest
-from models.identity import Company, Marketer, User
+from models.identity import Admin, Company, Email, Invitation, User
 from models.memory import AgentMemory, MemoryCampaign, MemoryPost
 from models.post import Post, PostEmbedding, PostMetric, PostTrackingLink
 from models.snapshot import ApiListSnapshot, ApiListSnapshotItem
 
 __all__ = [
+    "Admin",
     "AgentContextCheckpoint",
     "AgentContextCheckpointItem",
     "AgentItem",
@@ -35,8 +36,9 @@ __all__ = [
     "Campaign",
     "CampaignEmbedding",
     "Company",
+    "Email",
+    "Invitation",
     "LlmCall",
-    "Marketer",
     "MemoryCampaign",
     "MemoryPost",
     "Post",

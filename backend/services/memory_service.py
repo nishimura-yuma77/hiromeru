@@ -175,7 +175,7 @@ class MemoryService:
         """
         fields = {
             "company_id": auth.company_id,
-            "marketer_id": auth.marketer_id,
+            "user_id": auth.user_id,
             "memory_id": memory_id,
         }
         try:

@@ -58,7 +58,7 @@ class TurnService:
         """
         # 2. Sessionの所有権。アーカイブ済みには新しいTurnを開始できない。
         async with self._ctx.session_factory() as session:
-            current = await SessionRepository(session).get_parent(auth.marketer_id, session_id)
+            current = await SessionRepository(session).get_parent(auth.user_id, session_id)
         if current is None or current.archived_at is not None:
             raise AppError("AGENT_SESSION_NOT_FOUND")
         # 3. Request Bodyの検証。不正な場合はTurnを作成しない。
@@ -68,7 +68,7 @@ class TurnService:
         # 4. Session行をロックし、復旧 → 実行中の確認 → Turn作成を1つの短いTransactionで行う。
         async with self._ctx.session_factory() as session, session.begin():
             sessions, turns = SessionRepository(session), TurnRepository(session)
-            locked = await sessions.get_parent(auth.marketer_id, session_id, lock=True)
+            locked = await sessions.get_parent(auth.user_id, session_id, lock=True)
             if locked is None or locked.archived_at is not None:
                 raise AppError("AGENT_SESSION_NOT_FOUND")
             threshold = now - timedelta(seconds=self._ctx.settings.stale_turn_seconds)
@@ -191,13 +191,13 @@ class TurnService:
                 run_input = AgentRunInput(
                     session_id=prepared.session_id,
                     turn_id=prepared.turn_id,
-                    marketer_id=prepared.auth.marketer_id,
+                    user_id=prepared.auth.user_id,
                     company_id=prepared.auth.company_id,
                     message=prepared.message,
                     context=context,
                     tools=ToolExecutor(
                         self._ctx,
-                        marketer_id=prepared.auth.marketer_id,
+                        user_id=prepared.auth.user_id,
                         company_id=prepared.auth.company_id,
                         session_id=prepared.session_id,
                         turn_id=prepared.turn_id,

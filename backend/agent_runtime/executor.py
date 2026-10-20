@@ -79,7 +79,7 @@ class ToolExecutor:
         self,
         ctx: ServiceContext,
         *,
-        marketer_id: int,
+        user_id: int,
         company_id: int,
         session_id: int,
         turn_id: int,
@@ -90,7 +90,7 @@ class ToolExecutor:
     ) -> None:
         """認証済みTenantと現在TurnへExecutorを束縛する。"""
         self._ctx = ctx
-        self._marketer_id = marketer_id
+        self._user_id = user_id
         self._company_id = company_id
         self._session_id = session_id
         self._turn_id = turn_id
@@ -368,7 +368,7 @@ class ToolExecutor:
     async def _trusted_context(self) -> TrustedToolContext | None:
         async with self._ctx.session_factory() as session:
             record = await ToolExecutionRepository(session).runtime_record(
-                marketer_id=self._marketer_id,
+                user_id=self._user_id,
                 company_id=self._company_id,
                 session_id=self._session_id,
                 turn_id=self._turn_id,
@@ -377,7 +377,7 @@ class ToolExecutor:
             return None
         return TrustedToolContext(
             company_id=self._company_id,
-            marketer_id=self._marketer_id,
+            user_id=self._user_id,
             session_id=self._session_id,
             parent_session_id=record.parent_session_id,
             turn_id=self._turn_id,

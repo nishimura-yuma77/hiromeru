@@ -160,7 +160,7 @@ class MetricsService:
             projections = [_campaign_projection(item) for item in campaigns]
             await snapshots.create(
                 snapshot_id=snapshot_id,
-                marketer_id=auth.marketer_id,
+                user_id=auth.user_id,
                 resource=_RESOURCE,
                 filter_hash=filter_hash,
                 items=projections,
@@ -192,7 +192,7 @@ class MetricsService:
         async with self._ctx.session_factory() as session:
             snapshot_page = await SnapshotRepository(session).read_page(
                 snapshot_id=cursor.snapshot_id,
-                marketer_id=auth.marketer_id,
+                user_id=auth.user_id,
                 resource=_RESOURCE,
                 filter_hash=filter_hash,
                 now=self._ctx.clock.now(),

@@ -130,7 +130,7 @@ class CampaignApprovalService:
             repository = CampaignRepository(session)
             if request.id is None:
                 campaign = await repository.insert(
-                    ctx.auth.company_id, ctx.auth.marketer_id, content, now
+                    ctx.auth.company_id, ctx.auth.user_id, content, now
                 )
                 campaign_id, http_status = campaign.id, 201
                 data: dict[str, Any] = {

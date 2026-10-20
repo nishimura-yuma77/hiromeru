@@ -51,13 +51,13 @@ async def _turn(
     selected_session = session_id or await account.create_session()
     async with ctx.session_factory() as session, session.begin():
         locked = await SessionRepository(session).get_parent(
-            account.marketer_id, selected_session, lock=True
+            account.user_id, selected_session, lock=True
         )
         assert locked is not None
         turn = await TurnRepository(session).create_turn(selected_session, ctx.clock.now())
     return ToolExecutor(
         ctx,
-        marketer_id=account.marketer_id,
+        user_id=account.user_id,
         company_id=account.company_id,
         session_id=selected_session,
         turn_id=turn.id,

@@ -83,9 +83,7 @@ async def _executor(
 ) -> tuple[ToolExecutor, int, RecordingHandler]:
     session_id = await account.create_session()
     async with ctx.session_factory() as session, session.begin():
-        locked = await SessionRepository(session).get_parent(
-            account.marketer_id, session_id, lock=True
-        )
+        locked = await SessionRepository(session).get_parent(account.user_id, session_id, lock=True)
         assert locked is not None
         turn = await TurnRepository(session).create_turn(session_id, ctx.clock.now())
     selected = handler or RecordingHandler()
@@ -103,7 +101,7 @@ async def _executor(
     return (
         ToolExecutor(
             ctx,
-            marketer_id=account.marketer_id,
+            user_id=account.user_id,
             company_id=account.company_id,
             session_id=session_id,
             turn_id=turn.id,

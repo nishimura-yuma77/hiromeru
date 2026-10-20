@@ -3,7 +3,7 @@
 from datetime import datetime
 
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import BigInteger, ForeignKey, Index, String, Text
+from sqlalchemy import BigInteger, ForeignKey, ForeignKeyConstraint, Index, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from domain.constants import EMBEDDING_DIMENSIONS
@@ -14,11 +14,19 @@ class Campaign(Base):
     """マーケティング施策。"""
 
     __tablename__ = "campaigns"
-    __table_args__ = (Index("ix_campaigns_company_created", "company_id", "created_at"),)
+    __table_args__ = (
+        Index("ix_campaigns_company_created", "company_id", "created_at"),
+        # 作成者が施策と同じ会社に所属することをDBで保証する。
+        ForeignKeyConstraint(
+            ["created_by_user_id", "company_id"],
+            ["users.id", "users.company_id"],
+            name="fk_campaigns_creator_company",
+        ),
+    )
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
     company_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("companies.id"))
-    created_by_marketer_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("marketers.id"))
+    created_by_user_id: Mapped[int] = mapped_column(BigInteger)
     title: Mapped[str] = mapped_column(String(255))
     target_profile: Mapped[str] = mapped_column(Text)
     background: Mapped[str] = mapped_column(Text)

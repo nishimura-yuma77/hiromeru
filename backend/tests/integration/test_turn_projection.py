@@ -20,7 +20,7 @@ async def _request(account: Account, key: str) -> ApiIdempotencyRequest:
         return (
             await session.execute(
                 select(ApiIdempotencyRequest).where(
-                    ApiIdempotencyRequest.marketer_id == account.marketer_id,
+                    ApiIdempotencyRequest.user_id == account.user_id,
                     ApiIdempotencyRequest.operation == ApiOperation.PUBLISH_X_POST,
                     ApiIdempotencyRequest.idempotency_key == uuid.UUID(key),
                 )

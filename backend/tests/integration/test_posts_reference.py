@@ -331,7 +331,7 @@ async def test_SnapshotCleanup_先頭Pageで期限切れを100件まで削除し
         session.add_all(
             ApiListSnapshot(
                 id=snapshot_id,
-                marketer_id=account.marketer_id,
+                user_id=account.user_id,
                 resource="posts",
                 filter_hash="a" * 64,
                 created_at=clock.now() - timedelta(hours=2),
@@ -388,7 +388,7 @@ async def test_意味検索_queryに近い投稿がsimilarity付きで先頭に�
         before = await session.scalar(
             select(func.count())
             .select_from(ApiListSnapshot)
-            .where(ApiListSnapshot.marketer_id == account.marketer_id)
+            .where(ApiListSnapshot.user_id == account.user_id)
         )
     response = await account.client.get(
         f"/api/v1/posts?query={quote(build_post_search_text('検索されたい投稿'))}"
@@ -397,7 +397,7 @@ async def test_意味検索_queryに近い投稿がsimilarity付きで先頭に�
         after = await session.scalar(
             select(func.count())
             .select_from(ApiListSnapshot)
-            .where(ApiListSnapshot.marketer_id == account.marketer_id)
+            .where(ApiListSnapshot.user_id == account.user_id)
         )
 
     data = response.json()["data"]

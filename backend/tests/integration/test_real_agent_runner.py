@@ -144,7 +144,7 @@ async def test_子Agentは自分のモデルと構造化出力設定を使う(
     now = ctx.clock.now()
     async with ctx.session_factory() as session, session.begin():
         child = AgentSession(
-            marketer_id=account.marketer_id,
+            user_id=account.user_id,
             parent_session_id=parent_id,
             agent=AgentType.CAMPAIGN_PLANNER,
             created_at=now,
@@ -182,13 +182,13 @@ async def test_子Agentは自分のモデルと構造化出力設定を使う(
             turn_id=turn.id,
             parent_session_id=parent_id,
             parent_turn_id=turn.id,
-            marketer_id=account.marketer_id,
+            user_id=account.user_id,
             company_id=account.company_id,
             request={"request": "エンジニア採用の案を作って"},
             context=context,
             tools=ToolExecutor(
                 ctx,
-                marketer_id=account.marketer_id,
+                user_id=account.user_id,
                 company_id=account.company_id,
                 session_id=child.id,
                 turn_id=turn.id,
@@ -310,9 +310,7 @@ async def test_実Runnerは過去Turnのuntrusted_itemを隔離して再実行�
 ) -> None:
     session_id = await account.create_session()
     async with ctx.session_factory() as session, session.begin():
-        assert await SessionRepository(session).get_parent(
-            account.marketer_id, session_id, lock=True
-        )
+        assert await SessionRepository(session).get_parent(account.user_id, session_id, lock=True)
         previous = await TurnRepository(session).create_turn(session_id, ctx.clock.now())
         await TurnRepository(session).append_item(
             previous.id,

@@ -50,7 +50,7 @@ class SnapshotRepository:
         self,
         *,
         snapshot_id: uuid.UUID,
-        marketer_id: int,
+        user_id: int,
         resource: str,
         filter_hash: str,
         items: list[dict[str, Any]],
@@ -61,7 +61,7 @@ class SnapshotRepository:
         self._session.add(
             ApiListSnapshot(
                 id=snapshot_id,
-                marketer_id=marketer_id,
+                user_id=user_id,
                 resource=resource,
                 filter_hash=filter_hash,
                 summary=summary,
@@ -79,7 +79,7 @@ class SnapshotRepository:
         self,
         *,
         snapshot_id: uuid.UUID,
-        marketer_id: int,
+        user_id: int,
         resource: str,
         filter_hash: str,
         now: datetime,
@@ -90,7 +90,7 @@ class SnapshotRepository:
         snapshot = await self._session.scalar(
             select(ApiListSnapshot).where(
                 ApiListSnapshot.id == snapshot_id,
-                ApiListSnapshot.marketer_id == marketer_id,
+                ApiListSnapshot.user_id == user_id,
                 ApiListSnapshot.resource == resource,
                 ApiListSnapshot.filter_hash == filter_hash,
                 ApiListSnapshot.expires_at > now,

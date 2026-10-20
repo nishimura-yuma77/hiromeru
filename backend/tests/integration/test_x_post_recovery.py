@@ -25,12 +25,12 @@ from tests.support.client import Account, post_body
 from tests.support.fakes import FakeXApi, FixedClock
 
 
-async def _request(marketer_id: int, key: str) -> ApiIdempotencyRequest:
+async def _request(user_id: int, key: str) -> ApiIdempotencyRequest:
     async with SessionLocal() as session:
         return (
             await session.execute(
                 select(ApiIdempotencyRequest).where(
-                    ApiIdempotencyRequest.marketer_id == marketer_id,
+                    ApiIdempotencyRequest.user_id == user_id,
                     ApiIdempotencyRequest.operation == ApiOperation.PUBLISH_X_POST,
                     ApiIdempotencyRequest.idempotency_key == uuid.UUID(key),
                 )
@@ -46,7 +46,7 @@ async def _make_unknown(account: Account, x_api: FakeXApi) -> tuple[int, int, st
     x_api.outcome = "unknown"
     response = await account.publish_post(session_id, body, key)
     assert response.status_code == 504
-    row = await _request(account.marketer_id, key)
+    row = await _request(account.user_id, key)
     return row.id, campaign_id, key, body
 
 
@@ -57,7 +57,7 @@ async def test_結果不明を公開済みへ解決_Post関連と監査TurnとRe
     clock: FixedClock,
 ) -> None:
     request_id, campaign_id, key, body = await _make_unknown(account, x_api)
-    before = await _request(account.marketer_id, key)
+    before = await _request(account.user_id, key)
     original_turn_id = before.agent_turn_id
     async with SessionLocal() as session:
         original_items = list(
@@ -122,7 +122,7 @@ async def test_結果不明を未公開へ解決_Postなしで監査Turnと確�
     account: Account, x_api: FakeXApi, ctx: ServiceContext
 ) -> None:
     request_id, _campaign_id, key, body = await _make_unknown(account, x_api)
-    row = await _request(account.marketer_id, key)
+    row = await _request(account.user_id, key)
 
     result = await XPostRecoveryService(ctx).resolve_not_posted(request_id)
     replay = await account.publish_post(row.session_id, body, key)
@@ -152,7 +152,7 @@ async def test_履歴でMaskされた元RequestはHash一致の標準入力相�
     body = post_body(campaign_id, body="連絡先は operator@example.com です")
     x_api.outcome = "unknown"
     await account.publish_post(session_id, body, key)
-    row = await _request(account.marketer_id, key)
+    row = await _request(account.user_id, key)
     service = XPostRecoveryService(ctx)
 
     with pytest.raises(XPostRecoveryError, match="stdin"):
@@ -187,7 +187,7 @@ async def test_結果不明の同時照合_CASで一方だけが成功する(
 
     assert sum(not isinstance(result, Exception) for result in results) == 1
     assert sum(isinstance(result, XPostRecoveryError) for result in results) == 1
-    row = await _request(account.marketer_id, _key)
+    row = await _request(account.user_id, _key)
     async with SessionLocal() as session:
         audit_count = await session.scalar(
             select(func.count())
@@ -218,7 +218,7 @@ async def test_期限切れ保存待ちを運用復旧_Xを再呼出しせず通
     monkeypatch.setattr(PostRepository, "insert_published", failing)
     failed = await account.publish_post(session_id, post_body(campaign_id), key)
     monkeypatch.setattr(PostRepository, "insert_published", original)
-    row = await _request(account.marketer_id, key)
+    row = await _request(account.user_id, key)
     candidates = await XPostRecoveryService(ctx).list_candidates(company_id=account.company_id)
 
     result = await XPostRecoveryService(ctx).resume_persistence(row.id)
@@ -245,7 +245,7 @@ async def test_不正external_resultの運用復旧_本文を漏らさずprocess
 
     monkeypatch.setattr(PostRepository, "insert_published", failing)
     await account.publish_post(session_id, post_body(campaign_id), key)
-    row = await _request(account.marketer_id, key)
+    row = await _request(account.user_id, key)
     async with SessionLocal() as session, session.begin():
         await session.execute(
             update(ApiIdempotencyRequest)
@@ -256,7 +256,7 @@ async def test_不正external_resultの運用復旧_本文を漏らさずprocess
     with pytest.raises(XPostRecoveryError, match="remains retryable"):
         await XPostRecoveryService(ctx).resume_persistence(row.id)
 
-    current = await _request(account.marketer_id, key)
+    current = await _request(account.user_id, key)
     assert current.status == ApiIdempotencyStatus.PROCESSING
     assert current.response_body is None
     assert len(x_api.calls) == 1
@@ -280,7 +280,7 @@ async def test_公開済み解決のDB失敗_業務Dataと監査Turnと状態を
             request_id, x_post_id=f"confirmed-{uuid.uuid4().hex}", published_at=clock.now()
         )
 
-    row = await _request(account.marketer_id, key)
+    row = await _request(account.user_id, key)
     async with SessionLocal() as session:
         post_count = await session.scalar(
             select(func.count())

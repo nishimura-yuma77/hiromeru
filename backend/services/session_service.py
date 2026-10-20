@@ -40,7 +40,7 @@ class SessionService:
         try:
             async with self._ctx.session_factory() as session, session.begin():
                 created = await SessionRepository(session).create(
-                    auth.marketer_id, self._ctx.clock.now()
+                    auth.user_id, self._ctx.clock.now()
                 )
                 return to_session_view(created)
         except SQLAlchemyError as error:
@@ -55,7 +55,7 @@ class SessionService:
             after = (require_datetime(values, "updated_at"), require_int(values, "id"))
         async with self._ctx.session_factory() as session:
             rows = await SessionRepository(session).list_parents(
-                auth.marketer_id, limit=limit + 1, after=after
+                auth.user_id, limit=limit + 1, after=after
             )
         shown = rows[:limit]
         next_cursor = None
@@ -111,7 +111,7 @@ class SessionService:
 
     async def _require_session(self, auth: AuthContext, session_id: int) -> AgentSession:
         async with self._ctx.session_factory() as session:
-            found = await SessionRepository(session).get_parent(auth.marketer_id, session_id)
+            found = await SessionRepository(session).get_parent(auth.user_id, session_id)
         if found is None:
             raise AppError("AGENT_SESSION_NOT_FOUND")
         return found

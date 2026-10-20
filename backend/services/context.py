@@ -20,12 +20,16 @@ from core.config import Settings
 
 @dataclass(frozen=True)
 class AuthContext:
-    """認証済みマーケターのContext。`company_id` はDBから決め、Requestから受け取らない。"""
+    """認証済みユーザーのContext。`company_id` はDBから決め、Requestから受け取らない。
 
-    marketer_id: int
-    company_id: int
+    管理ユーザーもマーケター向け機能は本人の `user_id` で操作する。`is_admin` は
+    本人のadminsの有無で、管理APIの認可に使う。
+    """
+
     user_id: int
+    company_id: int
     email: str
+    is_admin: bool = False
 
 
 @dataclass(frozen=True)

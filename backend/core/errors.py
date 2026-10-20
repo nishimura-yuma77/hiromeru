@@ -56,6 +56,16 @@ ERROR_SPECS: Final[dict[str, tuple[int, bool]]] = {
     "X_POST_SAVE_FAILED": (500, True),
     "MEMORY_NOT_FOUND": (404, False),
     "MEMORY_DELETE_FAILED": (500, True),
+    # 自社ユーザー管理・招待（11章）
+    "ADMIN_FORBIDDEN": (403, False),
+    "ADMIN_USER_NOT_FOUND": (404, False),
+    "USER_INVITATION_CONFLICT": (409, False),
+    "USER_SUSPENSION_FORBIDDEN": (409, False),
+    "USER_ROLE_CHANGE_FORBIDDEN": (409, False),
+    "USER_STATE_CONFLICT": (409, False),
+    "INVITATION_LINK_INVALID": (400, False),
+    "INVITATION_SEND_FAILED": (502, False),
+    "INVITATION_SEND_OUTCOME_UNKNOWN": (504, False),
 }
 
 # 利用者向けの既定メッセージ。内部情報を含めない。
@@ -96,6 +106,15 @@ DEFAULT_MESSAGES: Final[dict[str, str]] = {
     "X_POST_SAVE_FAILED": "Xへは投稿済みですが、保存に失敗しました。同じキーで再送してください。",
     "MEMORY_NOT_FOUND": "記憶が見つかりません。",
     "MEMORY_DELETE_FAILED": "記憶を削除できませんでした。",
+    "ADMIN_FORBIDDEN": "この操作を行う権限がありません。",
+    "ADMIN_USER_NOT_FOUND": "ユーザーが見つかりません。",
+    "USER_INVITATION_CONFLICT": "このメールアドレスでは招待できません。",
+    "USER_SUSPENSION_FORBIDDEN": "このユーザーは利用停止できません。",
+    "USER_ROLE_CHANGE_FORBIDDEN": "このユーザーの種別は変更できません。",
+    "USER_STATE_CONFLICT": "ユーザーの現在の状態では、この操作を行えません。",
+    "INVITATION_LINK_INVALID": "この招待リンクは利用できません。管理者に再送を依頼してください。",
+    "INVITATION_SEND_FAILED": "招待メールを送信できませんでした。",
+    "INVITATION_SEND_OUTCOME_UNKNOWN": "送信結果を確認できませんでした。",
 }
 
 

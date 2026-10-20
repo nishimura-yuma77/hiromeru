@@ -118,3 +118,20 @@ class SecurityEnforcement(StrEnum):
     OBSERVED = "observed"
     SANITIZED = "sanitized"
     BLOCKED = "blocked"
+
+
+class UserStatus(StrEnum):
+    """ユーザーの利用状態。メール送信結果とは独立する。"""
+
+    INVITED = "invited"
+    ACTIVE = "active"
+    SUSPENDED = "suspended"
+
+
+class EmailStatus(StrEnum):
+    """招待メール送信操作の状態。acceptedはSES受付成功であり配達完了ではない。"""
+
+    PENDING = "pending"
+    ACCEPTED = "accepted"
+    FAILED = "failed"
+    OUTCOME_UNKNOWN = "outcome_unknown"

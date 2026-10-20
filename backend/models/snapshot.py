@@ -16,17 +16,13 @@ class ApiListSnapshot(Base):
 
     __tablename__ = "api_list_snapshots"
     __table_args__ = (
-        Index(
-            "ix_api_list_snapshots_owner_resource_expiry", "marketer_id", "resource", "expires_at"
-        ),
+        Index("ix_api_list_snapshots_owner_resource_expiry", "user_id", "resource", "expires_at"),
         Index("ix_api_list_snapshots_expiry", "expires_at"),
         CheckConstraint("resource IN ('posts', 'metrics')", name="ck_api_list_snapshots_resource"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
-    marketer_id: Mapped[int] = mapped_column(
-        BigInteger, ForeignKey("marketers.id", ondelete="CASCADE")
-    )
+    user_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("users.id", ondelete="CASCADE"))
     resource: Mapped[str] = mapped_column(String(50))
     filter_hash: Mapped[str] = mapped_column(String(64))
     summary: Mapped[dict[str, Any] | None] = mapped_column(JSONB(none_as_null=True), default=None)

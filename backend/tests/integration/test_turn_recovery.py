@@ -50,9 +50,7 @@ async def test_global復旧は未訪問parent_childを取消しapprovalを除外
     parent_id = await account.create_session()
     now = clock.now()
     async with ctx.session_factory() as session, session.begin():
-        assert await SessionRepository(session).get_parent(
-            account.marketer_id, parent_id, lock=True
-        )
+        assert await SessionRepository(session).get_parent(account.user_id, parent_id, lock=True)
         parent_turn = await TurnRepository(session).create_turn(parent_id, now)
         await TurnRepository(session).append_item(
             parent_turn.id,
@@ -63,7 +61,7 @@ async def test_global復旧は未訪問parent_childを取消しapprovalを除外
             now=now,
         )
         child = AgentSession(
-            marketer_id=account.marketer_id,
+            user_id=account.user_id,
             parent_session_id=parent_id,
             agent=AgentType.CAMPAIGN_PLANNER,
             created_at=now,
@@ -89,7 +87,7 @@ async def test_global復旧は未訪問parent_childを取消しapprovalを除外
         session.add(execution)
         approval_turn = await TurnRepository(session).create_turn(parent_id, now)
         approval = ApiIdempotencyRequest(
-            marketer_id=account.marketer_id,
+            user_id=account.user_id,
             session_id=parent_id,
             agent_turn_id=approval_turn.id,
             operation=ApiOperation.UPSERT_CAMPAIGN,

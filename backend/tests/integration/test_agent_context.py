@@ -369,7 +369,7 @@ async def test_子Sessionでは閾値超過でもCheckpointを作らない(
     parent_id = await account.create_session()
     async with SessionLocal() as session, session.begin():
         child = AgentSession(
-            marketer_id=account.marketer_id,
+            user_id=account.user_id,
             parent_session_id=parent_id,
             agent=AgentType.CAMPAIGN_PLANNER,
             created_at=clock.now(),
@@ -408,7 +408,7 @@ async def test_Checkpoint_sourceは別tenant_session_child_noncompletedを拒否
         session_id, AgentTurnStatus.RUNNING, "running", clock.now()
     )
     other = AgentSession(
-        marketer_id=account.marketer_id,
+        user_id=account.user_id,
         parent_session_id=session_id,
         agent=AgentType.CONTENT_CREATOR,
         created_at=clock.now(),

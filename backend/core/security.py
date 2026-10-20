@@ -70,9 +70,10 @@ _CSRF_PURPOSE = "csrf"
 
 @dataclass(frozen=True)
 class SessionToken:
-    """認証Cookieの内容。"""
+    """認証Cookieの内容。`auth_generation` がDBと一致する場合だけ有効とする。"""
 
-    marketer_id: int
+    user_id: int
+    auth_generation: int
     issued_at: datetime
     idle_expires_at: datetime
 
@@ -83,7 +84,7 @@ class SessionToken:
 
 
 def issue_session_token(
-    secret: str, marketer_id: int, issued_at: datetime, now: datetime
+    secret: str, user_id: int, auth_generation: int, issued_at: datetime, now: datetime
 ) -> tuple[str, datetime]:
     """認証Cookieの値と、そのアイドル期限を返す。
 
@@ -94,7 +95,12 @@ def issue_session_token(
     token = sign_payload(
         secret,
         _SESSION_PURPOSE,
-        {"m": marketer_id, "iat": int(issued_at.timestamp()), "exp": int(idle.timestamp())},
+        {
+            "u": user_id,
+            "g": auth_generation,
+            "iat": int(issued_at.timestamp()),
+            "exp": int(idle.timestamp()),
+        },
     )
     return token, idle
 
@@ -104,11 +110,18 @@ def read_session_token(secret: str, token: str, now: datetime) -> SessionToken |
     payload = verify_payload(secret, _SESSION_PURPOSE, token)
     if payload is None:
         return None
-    marketer_id, issued, expires = payload.get("m"), payload.get("iat"), payload.get("exp")
-    if not (isinstance(marketer_id, int) and isinstance(issued, int) and isinstance(expires, int)):
+    values = (payload.get("u"), payload.get("g"), payload.get("iat"), payload.get("exp"))
+    user_id, generation, issued, expires = values
+    if not (
+        isinstance(user_id, int)
+        and isinstance(generation, int)
+        and isinstance(issued, int)
+        and isinstance(expires, int)
+    ):
         return None
     session = SessionToken(
-        marketer_id=marketer_id,
+        user_id=user_id,
+        auth_generation=generation,
         issued_at=datetime.fromtimestamp(issued, tz=now.tzinfo),
         idle_expires_at=datetime.fromtimestamp(expires, tz=now.tzinfo),
     )
@@ -117,14 +130,24 @@ def read_session_token(secret: str, token: str, now: datetime) -> SessionToken |
     return session
 
 
-def issue_csrf_token(secret: str, marketer_id: int) -> str:
-    """マーケターに束縛した署名付きCSRFトークンを発行する。"""
-    return sign_payload(secret, _CSRF_PURPOSE, {"m": marketer_id, "n": secrets.token_urlsafe(16)})
+def issue_csrf_token(secret: str, user_id: int) -> str:
+    """ユーザーに束縛した署名付きCSRFトークンを発行する。"""
+    return sign_payload(secret, _CSRF_PURPOSE, {"u": user_id, "n": secrets.token_urlsafe(16)})
 
 
-def csrf_token_matches(secret: str, marketer_id: int, cookie_value: str, header_value: str) -> bool:
-    """CookieとHeaderの値が一致し、署名が有効で、マーケターに束縛されているか検証する。"""
+def csrf_token_matches(secret: str, user_id: int, cookie_value: str, header_value: str) -> bool:
+    """CookieとHeaderの値が一致し、署名が有効で、ユーザーに束縛されているか検証する。"""
     if not cookie_value or not hmac.compare_digest(cookie_value, header_value):
         return False
     payload = verify_payload(secret, _CSRF_PURPOSE, cookie_value)
-    return payload is not None and payload.get("m") == marketer_id
+    return payload is not None and payload.get("u") == user_id
+
+
+def new_invitation_token() -> str:
+    """招待リンクのトークンを生成する。平文はメールにだけ載せ、DBにはハッシュを保存する。"""
+    return secrets.token_urlsafe(32)
+
+
+def hash_invitation_token(token: str) -> str:
+    """招待トークンのSHA-256を返す。高エントロピーのためソルトは使わない。"""
+    return hashlib.sha256(token.encode()).hexdigest()

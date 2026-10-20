@@ -55,12 +55,12 @@ class CampaignRepository:
         return (await self._session.execute(stmt)).scalar_one_or_none()
 
     async def insert(
-        self, company_id: int, marketer_id: int, content: CampaignContent, now: datetime
+        self, company_id: int, user_id: int, content: CampaignContent, now: datetime
     ) -> Campaign:
         """施策を新規作成する。"""
         campaign = Campaign(
             company_id=company_id,
-            created_by_marketer_id=marketer_id,
+            created_by_user_id=user_id,
             title=content.title,
             target_profile=content.target_profile,
             background=content.background,

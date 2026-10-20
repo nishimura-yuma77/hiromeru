@@ -67,33 +67,33 @@ def _seed_0001(database_url: str) -> None:
             INSERT INTO users (id, email, password)
             VALUES (101, 'seed@example.com', 'hash');
             INSERT INTO marketers (id, user_id, name, company_id)
-            VALUES (101, 101, 'seed marketer', 101);
+            VALUES (201, 101, 'seed marketer', 101);
             INSERT INTO agent_sessions (id, marketer_id, agent)
-            VALUES (101, 101, 'parent');
+            VALUES (101, 201, 'parent');
             INSERT INTO campaigns (
                 id, company_id, created_by_marketer_id, title,
                 target_profile, background, objective, plan
-            ) VALUES (101, 101, 101, 'title', 'target', 'background', 'objective', 'plan');
+            ) VALUES (101, 101, 201, 'title', 'target', 'background', 'objective', 'plan');
             INSERT INTO api_idempotency_requests (
                 id, marketer_id, session_id, operation, idempotency_key,
                 request_hash, status, execution_token, lease_expires_at
             ) VALUES
-                (101, 101, 101, 'publish_x_post',
+                (101, 201, 101, 'publish_x_post',
                  '00000000-0000-0000-0000-000000000101', repeat('a', 64),
                  'processing', '10000000-0000-0000-0000-000000000101', now()),
-                (102, 101, 101, 'publish_x_post',
+                (102, 201, 101, 'publish_x_post',
                  '00000000-0000-0000-0000-000000000102', repeat('b', 64),
                  'processing', '10000000-0000-0000-0000-000000000102', now()),
-                (103, 101, 101, 'publish_x_post',
+                (103, 201, 101, 'publish_x_post',
                  '00000000-0000-0000-0000-000000000103', repeat('c', 64),
                  'processing', '10000000-0000-0000-0000-000000000103', now());
             INSERT INTO posts (
                 id, company_id, created_by_marketer_id, campaign_id,
                 api_idempotency_request_id, body, x_post_id, published_at
             ) VALUES
-                (101, 101, 101, 101, 101, 'pending', 'x-101', now()),
-                (102, 101, 101, 101, 102, 'completed', 'x-102', now()),
-                (103, 101, 101, 101, 103, 'failed', 'x-103', now());
+                (101, 101, 201, 101, 101, 'pending', 'x-101', now()),
+                (102, 101, 201, 101, 102, 'completed', 'x-102', now()),
+                (103, 101, 201, 101, 103, 'failed', 'x-103', now());
             INSERT INTO post_metrics (
                 post_id, scheduled_at, status, x_pv_count,
                 landing_user_count, measured_at
@@ -129,7 +129,7 @@ def test_empty_database_upgrades_to_head(empty_database: str) -> None:
             "WHERE schemaname = 'public' AND tablename LIKE 'api_list_snapshot%'"
         ).fetchall()
 
-    assert revision == ("0003",)
+    assert revision == ("0004",)
     assert {row[0] for row in tables} == {"api_list_snapshots", "api_list_snapshot_items"}
 
 
@@ -146,6 +146,35 @@ def test_seeded_upgrade_preserves_metrics_and_backfills_attempts(seeded_database
         (102, "completed", 20, 4, True, 0, 0),
         (103, "failed", 8, None, False, 0, 0),
     ]
+
+
+def test_seeded_upgrade_moves_marketers_into_users(seeded_database: str) -> None:
+    with psycopg.connect(_psycopg_url(seeded_database)) as connection:
+        user = connection.execute(
+            "SELECT company_id, name, status::text, auth_generation FROM users WHERE id = 101"
+        ).fetchone()
+        owners = connection.execute(
+            "SELECT (SELECT user_id FROM agent_sessions WHERE id = 101),"
+            " (SELECT created_by_user_id FROM campaigns WHERE id = 101),"
+            " (SELECT array_agg(DISTINCT user_id) FROM api_idempotency_requests),"
+            " (SELECT array_agg(DISTINCT created_by_user_id) FROM posts)"
+        ).fetchone()
+        marketers = connection.execute("SELECT to_regclass('public.marketers')").fetchone()
+
+    assert user == (101, "seed marketer", "active", 0)
+    assert owners == (101, 101, [101], [101])
+    assert marketers == (None,)
+
+
+def test_creator_must_belong_to_the_company_of_business_data(seeded_database: str) -> None:
+    with psycopg.connect(_psycopg_url(seeded_database)) as connection:
+        connection.execute("INSERT INTO companies (id, name) VALUES (102, 'other')")
+        with pytest.raises(errors.ForeignKeyViolation):
+            connection.execute(
+                "INSERT INTO campaigns (id, company_id, created_by_user_id, title,"
+                " target_profile, background, objective, plan)"
+                " VALUES (102, 102, 101, 't', 't', 'b', 'o', 'p')"
+            )
 
 
 def test_catalog_has_expected_constraints_indexes_and_fk_actions(seeded_database: str) -> None:
@@ -182,8 +211,7 @@ def test_catalog_has_expected_constraints_indexes_and_fk_actions(seeded_database
         in indexes["ix_post_metrics_memory_retry"]
     )
     assert (
-        "(marketer_id, resource, expires_at)"
-        in indexes["ix_api_list_snapshots_owner_resource_expiry"]
+        "(user_id, resource, expires_at)" in indexes["ix_api_list_snapshots_owner_resource_expiry"]
     )
     assert "(expires_at)" in indexes["ix_api_list_snapshots_expiry"]
     assert "attempt_count >= 0" in constraints["ck_post_metrics_attempts_non_negative"][0]
@@ -194,7 +222,7 @@ def test_catalog_has_expected_constraints_indexes_and_fk_actions(seeded_database
     assert item_primary_key.startswith("PRIMARY KEY")
     assert "snapshot_id" in item_primary_key and "position" in item_primary_key
     assert constraints["post_metrics_post_id_fkey"][1] == "r"
-    assert constraints["api_list_snapshots_marketer_id_fkey"][1] == "c"
+    assert constraints["api_list_snapshots_user_id_fkey"][1] == "c"
     assert constraints["api_list_snapshot_items_snapshot_id_fkey"][1] == "c"
     assert {row[0] for row in counters} == {"attempt_count", "memory_attempt_count"}
     assert all(nullable == "NO" and default.startswith("0") for _, nullable, default in counters)
@@ -230,7 +258,7 @@ def test_snapshot_delete_cascades_items(seeded_database: str) -> None:
     with psycopg.connect(_psycopg_url(seeded_database)) as connection:
         connection.execute(
             "INSERT INTO api_list_snapshots "
-            "(id, marketer_id, resource, filter_hash, expires_at) "
+            "(id, user_id, resource, filter_hash, expires_at) "
             "VALUES (%s, 101, 'posts', %s, now() + interval '30 minutes')",
             (snapshot_id, "d" * 64),
         )
@@ -256,14 +284,14 @@ def test_snapshot_delete_cascades_items(seeded_database: str) -> None:
         ("UPDATE post_metrics SET memory_attempt_count = -1 WHERE post_id = 101", None),
         (
             "INSERT INTO api_list_snapshots "
-            "(id, marketer_id, resource, filter_hash, expires_at) "
+            "(id, user_id, resource, filter_hash, expires_at) "
             "VALUES (%s, 101, 'campaigns', %s, now())",
             (uuid.uuid4(), "e" * 64),
         ),
         (
             "WITH snapshot AS ("
             "INSERT INTO api_list_snapshots "
-            "(id, marketer_id, resource, filter_hash, expires_at) "
+            "(id, user_id, resource, filter_hash, expires_at) "
             "VALUES (%s, 101, 'posts', %s, now()) RETURNING id"
             ") INSERT INTO api_list_snapshot_items (snapshot_id, position, item) "
             "SELECT id, -1, '{}'::jsonb FROM snapshot",

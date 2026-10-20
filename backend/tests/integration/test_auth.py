@@ -1,8 +1,16 @@
-from httpx import AsyncClient
+import uuid
 
+import pytest
+from httpx import AsyncClient
+from sqlalchemy import update
+
+from domain.enums import UserStatus
+from models import User
+from repositories.database import SessionLocal
 from services.context import ServiceContext
 from tests.conftest import ORIGIN, PASSWORD, AccountFactory
 from tests.support.client import Account
+from tests.support.db import create_company, create_user
 from tests.support.fakes import FixedClock
 
 
@@ -17,7 +25,7 @@ async def test_ログイン成功_正しい認証情報のとき200とCookie2種
 
     assert response.status_code == 200
     data = response.json()["data"]
-    assert data["marketer_id"] == account.marketer_id
+    assert data["user_id"] == account.user_id
     assert data["email"] == account.email
     cookies = response.headers.get_list("set-cookie")
     assert any(c.startswith("hiromeru_session=") and "HttpOnly" in c for c in cookies)
@@ -70,8 +78,9 @@ async def test_me_ログイン済みのとき自分の情報を返しcsrf_token�
 
     assert response.status_code == 200
     assert response.json()["data"] == {
-        "marketer_id": account.marketer_id,
+        "user_id": account.user_id,
         "email": account.email,
+        "is_admin": False,
     }
 
 
@@ -283,3 +292,99 @@ async def test_認証済みContext_他社の施策IDを指定しても404(
 
     assert response.status_code == 404
     assert response.json()["error"]["code"] == "CAMPAIGN_NOT_FOUND"
+
+
+async def _login(client: AsyncClient, path: str, email: str) -> int:
+    response = await client.post(
+        path, json={"email": email, "password": PASSWORD}, headers={"Origin": ORIGIN}
+    )
+    return response.status_code
+
+
+async def test_ログイン入口_管理ユーザーはマーケター用の入口では同じ401(
+    anonymous: AsyncClient,
+) -> None:
+    email = f"{uuid.uuid4().hex}@example.com"
+    await create_user(await create_company(), email, PASSWORD, admin=True)
+
+    assert await _login(anonymous, "/api/v1/auth/login", email) == 401
+    assert await _login(anonymous, "/api/v1/admin/auth/login", email) == 200
+
+
+async def test_ログイン入口_マーケターユーザーは管理用の入口では同じ401(
+    anonymous: AsyncClient, account: Account
+) -> None:
+    response = await anonymous.post(
+        "/api/v1/admin/auth/login",
+        json={"email": account.email, "password": PASSWORD},
+        headers={"Origin": ORIGIN},
+    )
+
+    assert response.status_code == 401
+    assert response.json()["error"]["code"] == "INVALID_CREDENTIALS"
+
+
+async def test_管理ログイン_成功時はis_adminとCookie2種を返しmeもis_adminを返す(
+    app_admin_email: str, anonymous: AsyncClient
+) -> None:
+    response = await anonymous.post(
+        "/api/v1/admin/auth/login",
+        json={"email": app_admin_email, "password": PASSWORD},
+        headers={"Origin": ORIGIN},
+    )
+
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["is_admin"] is True and data["email"] == app_admin_email
+    assert set(data) == {"user_id", "email", "is_admin", "csrf_token"}
+    me = await anonymous.get("/api/v1/auth/me")
+    assert me.json()["data"]["is_admin"] is True
+
+
+@pytest.fixture
+async def app_admin_email() -> str:
+    email = f"{uuid.uuid4().hex}@example.com"
+    await create_user(await create_company(), email, PASSWORD, admin=True)
+    return email
+
+
+@pytest.mark.parametrize("status", [UserStatus.INVITED, UserStatus.SUSPENDED])
+async def test_ログイン_active以外のユーザーは同じ401(
+    anonymous: AsyncClient, status: UserStatus
+) -> None:
+    email = f"{uuid.uuid4().hex}@example.com"
+    await create_user(await create_company(), email, None, status=status)
+
+    response = await anonymous.post(
+        "/api/v1/auth/login",
+        json={"email": email, "password": PASSWORD},
+        headers={"Origin": ORIGIN},
+    )
+
+    assert response.status_code == 401
+    assert response.json()["error"]["code"] == "INVALID_CREDENTIALS"
+
+
+async def test_即時失効_認証世代が更新されると既存Cookieは401(account: Account) -> None:
+    async with SessionLocal() as session, session.begin():
+        await session.execute(
+            update(User)
+            .where(User.id == account.user_id)
+            .values(auth_generation=User.auth_generation + 1)
+        )
+
+    response = await account.client.get("/api/v1/auth/me")
+
+    assert response.status_code == 401
+    assert response.json()["error"]["code"] == "UNAUTHENTICATED"
+
+
+async def test_即時失効_利用停止されると既存Cookieは401(account: Account) -> None:
+    async with SessionLocal() as session, session.begin():
+        await session.execute(
+            update(User)
+            .where(User.id == account.user_id)
+            .values(status=UserStatus.SUSPENDED, password=None)
+        )
+
+    assert (await account.client.get("/api/v1/auth/me")).status_code == 401

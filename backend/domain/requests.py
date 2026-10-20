@@ -1,7 +1,7 @@
 """リクエストBodyのスキーマ（API_DESIGN 2.2）。型・必須・長さを検証する。
 
 すべて strict とし、数値から文字列への暗黙の変換や、未定義のフィールドを受け付けない。
-`company_id` や `marketer_id` はクライアント入力を使わないため、フィールドを持たない。
+`company_id` や `user_id` はクライアント入力を使わないため、フィールドを持たない。
 """
 
 from datetime import datetime

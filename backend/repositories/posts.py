@@ -37,7 +37,7 @@ class NewPost:
     """X公開成功後に保存する投稿の内容。"""
 
     company_id: int
-    marketer_id: int
+    user_id: int
     campaign_id: int
     api_idempotency_request_id: int
     body: str
@@ -107,7 +107,7 @@ class PostRepository:
         """投稿・Embedding・トラッキングURL・計測予定を保存する。"""
         post = Post(
             company_id=new.company_id,
-            created_by_marketer_id=new.marketer_id,
+            created_by_user_id=new.user_id,
             campaign_id=new.campaign_id,
             api_idempotency_request_id=new.api_idempotency_request_id,
             body=new.body,

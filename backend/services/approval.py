@@ -188,7 +188,7 @@ class ApprovalExecutor:
         """
         # 1. 親Sessionの所有権。存在しない・他人・子Sessionは区別しない。
         async with self._ctx.session_factory() as session:
-            if await SessionRepository(session).get_parent(auth.marketer_id, session_id) is None:
+            if await SessionRepository(session).get_parent(auth.user_id, session_id) is None:
                 raise AppError("AGENT_SESSION_NOT_FOUND")
         # 2. 安全な解析とマスク。3. Idempotency-Key。
         body = parse_json_object(await body_loader())
@@ -225,17 +225,17 @@ class ApprovalExecutor:
             sessions = SessionRepository(session)
             idempotency = IdempotencyRepository(session)
             # Session行 → Advisory Lock → 冪等性行の順にロックする（常に同じ順序）。
-            agent_session = await sessions.get_parent(auth.marketer_id, session_id, lock=True)
+            agent_session = await sessions.get_parent(auth.user_id, session_id, lock=True)
             if agent_session is None:
                 raise AppError("AGENT_SESSION_NOT_FOUND")
             if operation == ApiOperation.PUBLISH_X_POST:
-                await idempotency.advisory_lock(f"publish_x_post:{auth.marketer_id}:{digest}")
-            row = await idempotency.find_for_update(auth.marketer_id, operation, key)
+                await idempotency.advisory_lock(f"publish_x_post:{auth.user_id}:{digest}")
+            row = await idempotency.find_for_update(auth.user_id, operation, key)
             if row is None:
                 if agent_session.archived_at is not None:
                     raise AppError("AGENT_SESSION_NOT_FOUND")
                 row = await idempotency.reserve(
-                    marketer_id=auth.marketer_id,
+                    user_id=auth.user_id,
                     session_id=session_id,
                     operation=operation,
                     key=key,
@@ -247,7 +247,7 @@ class ApprovalExecutor:
                 if row is not None:
                     return await self._start_new(session, auth, row, operation, key, body, now)
                 # 別Sessionからの同じキーの同時Requestに負けた。勝った行の確定後に再判定する。
-                row = await idempotency.find_for_update(auth.marketer_id, operation, key)
+                row = await idempotency.find_for_update(auth.user_id, operation, key)
                 if row is None:
                     raise AppError(
                         "IDEMPOTENCY_REQUEST_IN_PROGRESS",
@@ -273,7 +273,7 @@ class ApprovalExecutor:
         )
         if operation == ApiOperation.PUBLISH_X_POST and await IdempotencyRepository(
             session
-        ).has_unresolved_duplicate(auth.marketer_id, row.request_hash, exclude_id=row.id):
+        ).has_unresolved_duplicate(auth.user_id, row.request_hash, exclude_id=row.id):
             # 別キーに、同じ内容の処理中・結果不明のX投稿がある。候補を failed で確定する。
             error = AppError("X_POST_UNRESOLVED", agent_turn_id=turn_id)
             outcome = ApprovalOutcome(error.status_code, error_body(error))

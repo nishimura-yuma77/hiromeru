@@ -26,13 +26,11 @@ class ApiIdempotencyRequest(Base):
 
     __tablename__ = "api_idempotency_requests"
     __table_args__ = (
-        UniqueConstraint(
-            "marketer_id", "operation", "idempotency_key", name="uq_air_marketer_op_key"
-        ),
+        UniqueConstraint("user_id", "operation", "idempotency_key", name="uq_air_user_op_key"),
         ForeignKeyConstraint(
-            ["session_id", "marketer_id"],
-            ["agent_sessions.id", "agent_sessions.marketer_id"],
-            name="fk_air_session_marketer",
+            ["session_id", "user_id"],
+            ["agent_sessions.id", "agent_sessions.user_id"],
+            name="fk_air_session_user",
         ),
         ForeignKeyConstraint(
             ["agent_turn_id", "session_id"],
@@ -42,7 +40,7 @@ class ApiIdempotencyRequest(Base):
         Index("ix_air_session_created", "session_id", "created_at"),
         Index("ix_air_status_lease", "status", "lease_expires_at"),
         # request_hash の照合（X_POST_UNRESOLVED の判定）に使う。
-        Index("ix_air_marketer_op_hash", "marketer_id", "operation", "request_hash"),
+        Index("ix_air_user_op_hash", "user_id", "operation", "request_hash"),
         CheckConstraint(
             "(status = 'processing' AND http_status IS NULL AND response_body IS NULL"
             " AND completed_at IS NULL)"
@@ -58,7 +56,7 @@ class ApiIdempotencyRequest(Base):
     )
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
-    marketer_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("marketers.id"))
+    user_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("users.id"))
     session_id: Mapped[int] = mapped_column(BigInteger)
     agent_turn_id: Mapped[int | None] = mapped_column(BigInteger, unique=True, default=None)
     operation: Mapped[ApiOperation] = mapped_column(pg_enum(ApiOperation, "api_operation"))

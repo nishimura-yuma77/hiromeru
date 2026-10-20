@@ -28,6 +28,7 @@ def create_app(context: ServiceContext | None = None) -> FastAPI:
         health.router,
         cron.router,
         auth.router,
+        auth.admin_router,
         sessions.router,
         approvals.router,
         campaigns.router,

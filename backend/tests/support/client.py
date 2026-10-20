@@ -9,10 +9,10 @@ from httpx import AsyncClient, Response
 
 @dataclass
 class Account:
-    """ログイン済みのマーケター。Origin と CSRF ヘッダーは `client` に設定済み。"""
+    """ログイン済みのユーザー。Origin と CSRF ヘッダーは `client` に設定済み。"""
 
     client: AsyncClient
-    marketer_id: int
+    user_id: int
     company_id: int
     email: str
     csrf: str
