@@ -27,6 +27,7 @@ _CLIENT_MODE_FIELDS = {
     "web_fetch_client_mode": "WEB_FETCH_CLIENT_MODE",
     "agent_client_mode": "AGENT_CLIENT_MODE",
     "agent_firewall_mode": "AGENT_FIREWALL_MODE",
+    "email_client_mode": "EMAIL_CLIENT_MODE",
 }
 
 
@@ -55,6 +56,7 @@ class Settings(BaseSettings):
     web_fetch_client_mode: ClientMode = "fake"
     agent_client_mode: ClientMode = "fake"
     agent_firewall_mode: ClientMode = "fake"
+    email_client_mode: ClientMode = "fake"
 
     # 埋め込み（BE_STD 13章）。モデル名と次元数は設定値とする。
     embedding_model: str = "openai/text-embedding-3-small"
@@ -84,6 +86,16 @@ class Settings(BaseSettings):
     ga4_property_id: str = ""
     ga4_service_account_json: SecretStr = SecretStr("")
     ga4_timeout_seconds: float = 30.0
+
+    # 招待メール（AWS SES v2、API_DESIGN 11.2）。SDKは使わず、自動再試行も行わない。
+    ses_region: str = ""
+    ses_from_address: str = ""
+    aws_access_key_id: SecretStr = SecretStr("")
+    aws_secret_access_key: SecretStr = SecretStr("")
+    aws_session_token: SecretStr = SecretStr("")
+    ses_timeout_seconds: float = 10.0
+    # 招待リンクの基点（例: https://app.example.com）。未設定なら環境のOriginから決める。
+    invitation_base_url: str = ""
 
     # Vercel Cron。Endpoint本体はIssue #35で実装する。
     cron_secret: SecretStr = SecretStr("")
@@ -133,6 +145,7 @@ class Settings(BaseSettings):
         is_deployed = self.vercel_env in ("production", "preview")
         self._validate_environment(is_deployed)
         self._validate_external_clients()
+        self._validate_email_client()
         self._validate_cron_limits()
         self._validate_runtime_limits()
         if self.embedding_dimensions != EMBEDDING_DIMENSIONS:
@@ -218,6 +231,21 @@ class Settings(BaseSettings):
             missing = [name for name, value in required.items() if not value.strip()]
             if missing:
                 raise ValueError(f"実Firewallに必要な設定がありません: {', '.join(missing)}")
+
+    def _validate_email_client(self) -> None:
+        """実SESで必要な接続設定と、送信Timeoutを検証する。"""
+        if self.email_client_mode == "real":
+            required = {
+                "SES_REGION": self.ses_region,
+                "SES_FROM_ADDRESS": self.ses_from_address,
+                "AWS_ACCESS_KEY_ID": self.aws_access_key_id.get_secret_value(),
+                "AWS_SECRET_ACCESS_KEY": self.aws_secret_access_key.get_secret_value(),
+            }
+            missing = [name for name, value in required.items() if not value.strip()]
+            if missing:
+                raise ValueError(f"実SESに必要な設定がありません: {', '.join(missing)}")
+        if self.ses_timeout_seconds <= 0:
+            raise ValueError("SES_TIMEOUT_SECONDS は正数にしてください")
 
     def _validate_cron_limits(self) -> None:
         """Cronの件数・試行回数とLeaseの境界を検証する。"""
@@ -343,6 +371,19 @@ class Settings(BaseSettings):
         else:
             origins.update(configured or [_DEV_ORIGIN])
         return frozenset(_normalize_origin(origin) for origin in origins)
+
+    def resolved_invitation_base_url(self) -> str:
+        """招待リンクの基点URLを返す。明示設定がなければ環境のOriginを使う。"""
+        if self.invitation_base_url.strip():
+            return self.invitation_base_url.strip().rstrip("/")
+        if self.vercel_env == "production" and self.vercel_project_production_url:
+            return f"https://{self.vercel_project_production_url}"
+        if self.vercel_env == "preview":
+            host = self.vercel_branch_url or self.vercel_url
+            if host:
+                return f"https://{host}"
+        configured = [item.strip() for item in self.allowed_origins.split(",") if item.strip()]
+        return (configured[0] if configured else _DEV_ORIGIN).rstrip("/")
 
 
 def _normalize_origin(origin: str) -> str:

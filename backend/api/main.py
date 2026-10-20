@@ -4,7 +4,17 @@ from fastapi import FastAPI
 
 from api.exception_handlers import register_exception_handlers
 from api.middleware import AuthCookieMiddleware, RequestContextMiddleware, RequestTimeoutMiddleware
-from api.routers import approvals, auth, campaigns, cron, health, memories, posts, sessions
+from api.routers import (
+    admin_users,
+    approvals,
+    auth,
+    campaigns,
+    cron,
+    health,
+    memories,
+    posts,
+    sessions,
+)
 from core.config import get_settings
 from core.logging import configure_logging
 from services.context import ServiceContext
@@ -29,6 +39,8 @@ def create_app(context: ServiceContext | None = None) -> FastAPI:
         cron.router,
         auth.router,
         auth.admin_router,
+        admin_users.router,
+        admin_users.invitation_router,
         sessions.router,
         approvals.router,
         campaigns.router,

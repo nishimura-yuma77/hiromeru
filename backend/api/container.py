@@ -17,6 +17,7 @@ from agent_runtime.proposal_tools import register_proposal_tools
 from agent_runtime.real_runner import RealAgentRunner
 from agent_runtime.runner import StubAgentRunner
 from agent_runtime.web_tools import WebToolDependencies, register_web_tools
+from clients.email import EmailClient, FakeEmailClient, SesEmailClient
 from clients.embedding import OrcaRouterEmbeddingClient
 from clients.fakes import FakeEmbeddingClient, FakeGa4Client, FakeXApiClient
 from clients.ga4 import GoogleServiceAccountTokenProvider, HttpGa4Client
@@ -97,6 +98,19 @@ def build_default_context(  # noqa: PLR0912 - Clientごとの独立した組み�
             timeout_seconds=resolved.llm_timeout_seconds,
         )
     clock = SystemClock()
+    email_client: EmailClient
+    if resolved.email_client_mode == "fake":
+        email_client = FakeEmailClient()
+    else:
+        email_client = SesEmailClient(
+            region=resolved.ses_region,
+            from_address=resolved.ses_from_address,
+            access_key_id=resolved.aws_access_key_id.get_secret_value(),
+            secret_access_key=resolved.aws_secret_access_key.get_secret_value(),
+            session_token=resolved.aws_session_token.get_secret_value(),
+            timeout_seconds=resolved.ses_timeout_seconds,
+            clock=clock,
+        )
     registry = build_default_tool_registry(
         ToolHandlerDependencies(resolved, SessionLocal, embedding, clock)
     )
@@ -123,6 +137,7 @@ def build_default_context(  # noqa: PLR0912 - Clientごとの独立した組み�
         tool_result_guardrail=guardrail,
         sleep=asyncio.sleep,
         new_uuid=uuid.uuid4,
+        email_client=email_client,
     )
     register_proposal_tools(context)
     register_clarification_tool(registry)

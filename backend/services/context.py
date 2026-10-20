@@ -11,6 +11,7 @@ from agent_runtime.firewall import AgentFirewall
 from agent_runtime.guardrail import ToolResultGuardrail
 from agent_runtime.runner import AgentRunner
 from agent_runtime.tools import ToolRegistry
+from clients.email import EmailClient
 from clients.embedding import EmbeddingClient
 from clients.ga4 import Ga4Client
 from clients.x_api import XApiClient
@@ -49,3 +50,4 @@ class ServiceContext:
     tool_result_guardrail: ToolResultGuardrail
     sleep: Callable[[float], Awaitable[None]]
     new_uuid: Callable[[], uuid.UUID]
+    email_client: EmailClient

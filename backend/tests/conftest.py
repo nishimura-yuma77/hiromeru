@@ -27,6 +27,7 @@ from tests.support.db import create_company, create_user
 from tests.support.fakes import (
     FakeAgentRunner,
     FakeContextCompactor,
+    FakeEmail,
     FakeEmbedding,
     FakeGa4,
     FakeXApi,
@@ -80,7 +81,13 @@ def settings() -> Settings:
 
 
 @pytest.fixture
+def email() -> FakeEmail:
+    return FakeEmail()
+
+
+@pytest.fixture
 def ctx(
+    email: FakeEmail,
     settings: Settings,
     clock: FixedClock,
     embedding: FakeEmbedding,
@@ -120,6 +127,7 @@ def ctx(
         tool_result_guardrail=FakeToolResultGuardrail(),
         sleep=no_sleep,
         new_uuid=uuid.uuid4,
+        email_client=email,
     )
     register_proposal_tools(context)
     register_clarification_tool(registry)

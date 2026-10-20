@@ -35,6 +35,11 @@ def _real_settings(**overrides: object) -> Settings:
         "web_fetch_client_mode": "real",
         "agent_client_mode": "real",
         "agent_firewall_mode": "real",
+        "email_client_mode": "real",
+        "ses_region": "ap-northeast-1",
+        "ses_from_address": "noreply@example.com",
+        "aws_access_key_id": "aws-key",
+        "aws_secret_access_key": "aws-secret",
         "orcarouter_base_url": "https://router.example.com/v1",
         "orcarouter_api_key": "router-secret",
         "orcarouter_firewall_api_key": "firewall-secret",
@@ -233,6 +238,7 @@ def test_設定_本番とPreviewでSecure_CookieとClient_Mode明示を必須に
         web_fetch_client_mode="fake",
         agent_client_mode="fake",
         agent_firewall_mode="fake",
+        email_client_mode="fake",
     )
 
     assert deployed_fake.agent_firewall_mode == "fake"
@@ -249,6 +255,7 @@ def test_設定_デプロイ環境のClient_Modeは環境変数から明示で�
         "WEB_FETCH_CLIENT_MODE",
         "AGENT_CLIENT_MODE",
         "AGENT_FIREWALL_MODE",
+        "EMAIL_CLIENT_MODE",
     ):
         monkeypatch.setenv(name, "fake")
 
@@ -292,6 +299,16 @@ def test_設定_各実Clientだけ固有Credentialを必須にしFakeでは省�
             web_search_api_key=SecretStr(""),
         )
 
+    with pytest.raises(ValueError, match="SES_FROM_ADDRESS"):
+        Settings(
+            auth_cookie_secret=SecretStr(SECRET),
+            email_client_mode="real",
+            ses_region="ap-northeast-1",
+            aws_access_key_id=SecretStr("aws-key"),
+            aws_secret_access_key=SecretStr("aws-secret"),
+        )
+
+    assert fake.email_client_mode == "fake"
     assert fake.embedding_client_mode == "fake"
     assert fake.x_api_client_mode == "fake"
     assert fake.ga4_client_mode == "fake"
@@ -468,3 +485,21 @@ def test_メールアドレス_前後の空白を除き小文字にする() -> N
     assert is_valid_email("taro@example.com")
     assert not is_valid_email("taro@example")
     assert not is_valid_email("a" * 250 + "@example.com")
+
+
+def test_設定_招待リンクの基点は明示設定を優先し環境のOriginへ戻る() -> None:
+    explicit = Settings(
+        auth_cookie_secret=SecretStr(SECRET), invitation_base_url="https://app.example.com/"
+    )
+    preview = _real_settings(vercel_env="preview", vercel_branch_url="branch.vercel.app")
+    production = _real_settings(
+        vercel_env="production",
+        cron_secret="cron-secret",
+        vercel_project_production_url="hiromeru.example.com",
+    )
+    local = Settings(auth_cookie_secret=SecretStr(SECRET))
+
+    assert explicit.resolved_invitation_base_url() == "https://app.example.com"
+    assert preview.resolved_invitation_base_url() == "https://branch.vercel.app"
+    assert production.resolved_invitation_base_url() == "https://hiromeru.example.com"
+    assert local.resolved_invitation_base_url() == "http://localhost:3000"
