@@ -159,10 +159,10 @@ migrations/
 ## 7. API層
 
 - 必須: パスは `/api/v1` 配下とする。Request / Response の形は `API_DESIGN.md` に従う。
-- 必須: Request は Pydantic モデルで検証する。`company_id`、`marketer_id` などの権限に関わる値は Request Body から受け取らず、認証済みの実行コンテキストから決める。
+- 必須: Request は Pydantic モデルで検証する。`company_id`、`user_id` などの権限に関わる値は Request Body から受け取らず、認証済みの実行コンテキストから決める。
 - 必須: 他社のリソースは「存在しない」として扱う（`API_DESIGN.md` に合わせる）。所有権の検証は Repository 呼び出しの前に行うか、クエリの条件に含める。
 - 必須: ルーターの関数には業務処理を書かず、Service を 1 回呼ぶだけにする。
-- 必須: 認証は、署名付き Cookie で行う。Cookie は `HttpOnly`、`Secure`、`SameSite=Lax` とし、`user_id`、認証世代、ログイン日時、有効期限を署名して持たせる。署名鍵は設定値（環境変数）から読み込む。認証付きRequestごとにDBのusersの利用状態・認証世代を照合し、会社、本人の`marketer_id`と管理権限はDBの所属から決める。停止・再開・種別変更時の世代更新による旧Cookieの失効条件は`API_DESIGN.md` 11章に従う。
+- 必須: 認証は、署名付き Cookie で行う。Cookie は `HttpOnly`、`Secure`、`SameSite=Lax` とし、`user_id`、認証世代、ログイン日時、有効期限を署名して持たせる。署名鍵は設定値（環境変数）から読み込む。認証付きRequestごとにDBのusersの利用状態・認証世代を照合し、会社は`users.company_id`、管理権限はadminsから決める。停止・再開・種別変更時の世代更新による旧Cookieの失効条件は`API_DESIGN.md` 11章に従う。
 - 必須: 有効期限は、アイドル 8 時間と絶対上限 7 日とする。操作のたびに Cookie を発行し直してアイドル期限を延長し、絶対上限（ログインから 7 日）は延長しない。
 - 必須: 認証付きの状態変更 API（POST / PUT / PATCH / DELETE）には、次の 2 つの CSRF 対策をどちらも適用する。
   - `Origin` / `Referer` ヘッダーを、許可リストと照合する。
