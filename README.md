@@ -124,6 +124,15 @@ docker compose run --rm --no-deps frontend npm run build
 docker compose run --rm backend pytest
 ```
 
+E2E（Playwright）は、外部ClientをすべてFakeにした本番Buildの環境で実行します。
+
+```bash
+docker compose -f compose.yaml -f compose.e2e.yaml up -d --wait frontend
+docker compose -f compose.yaml -f compose.e2e.yaml run --rm e2e
+```
+
+E2E用の設定では`E2E_MODE=true`となり、テスト専用API（`/api/e2e/*`）が有効になります。終了後に通常の開発環境へ戻すときは`docker compose up -d`で起動し直してください。
+
 backendのテストは、compose の PostgreSQL（pgvector入り）へ接続して実行します。`docker compose run --rm backend pytest`は、DBとmigrationを先に起動します。
 
 以前の`postgres:17-alpine`のボリュームが残っている場合は、`docker compose down --volumes`で削除してから起動し直してください（DBイメージを`pgvector/pgvector:pg17`へ変更したため）。

@@ -55,6 +55,21 @@ function isSendError(error: unknown): error is ApiError {
   );
 }
 
+// 結果を決めつけられない失敗。自動で再送せず、一覧を再取得して保存済みの状態を確認させる。
+function isOutcomeUnknown(error: unknown): boolean {
+  return (
+    !(error instanceof ApiError) ||
+    error.code === "INTERNAL_ERROR" ||
+    error.code === "HTTP_ERROR" ||
+    error.kind === "network" ||
+    error.kind === "timeout" ||
+    error.kind === "parse"
+  );
+}
+
+const OUTCOME_UNKNOWN_NOTICE =
+  "処理結果を確認できませんでした。一覧で送信結果を確認し、届いていない場合は招待メールを再送してください";
+
 function sendErrorMessage(error: ApiError, prefix: string): string {
   return error.code === "INVITATION_SEND_FAILED"
     ? `${prefix}招待メールを送信できませんでした。一覧から再送してください`
@@ -128,6 +143,10 @@ export function useUserManagementController() {
       }
       if (error instanceof ApiError && error.code === "USER_INVITATION_CONFLICT") {
         dispatch({ type: "inviteValidationFailed", nameError: null, emailError: "このメールアドレスでは招待できません" });
+        return;
+      }
+      if (isOutcomeUnknown(error)) {
+        dispatch({ type: "requestEndedWithNotice", notice: { tone: "error", message: OUTCOME_UNKNOWN_NOTICE } });
         return;
       }
       if (error instanceof ApiError && error.code === "INVALID_ARGUMENT") {
@@ -209,6 +228,10 @@ export function useUserManagementController() {
       if (isSendError(error)) {
         const prefix = kind === "reactivate" ? "利用を再開しましたが、" : "新しいリンクを発行しましたが、";
         dispatch({ type: "requestEndedWithNotice", notice: { tone: "error", message: sendErrorMessage(error, prefix) } });
+        return;
+      }
+      if (kind !== "suspend" && isOutcomeUnknown(error)) {
+        dispatch({ type: "requestEndedWithNotice", notice: { tone: "error", message: OUTCOME_UNKNOWN_NOTICE } });
         return;
       }
       dispatch({ type: "requestFailed", message: errorMessage(error), closeConfirm: true });

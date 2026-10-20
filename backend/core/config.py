@@ -97,6 +97,9 @@ class Settings(BaseSettings):
     # 招待リンクの基点（例: https://app.example.com）。未設定なら環境のOriginから決める。
     invitation_base_url: str = ""
 
+    # E2E専用。Fakeの招待メール・時計を操作するAPIを公開する。デプロイ環境では禁止する。
+    e2e_mode: bool = False
+
     # Vercel Cron。Endpoint本体はIssue #35で実装する。
     cron_secret: SecretStr = SecretStr("")
     cron_metric_batch_size: int = 20
@@ -174,6 +177,10 @@ class Settings(BaseSettings):
                 )
         if is_deployed and self.application_database_url().strip() == _DEV_DATABASE_URL:
             raise ValueError("本番・プレビューでは DATABASE_URL が必須です")
+        if is_deployed and self.e2e_mode:
+            raise ValueError("本番・プレビューでは E2E_MODE を有効にできません")
+        if self.e2e_mode and self.email_client_mode != "fake":
+            raise ValueError("E2E_MODE では EMAIL_CLIENT_MODE=fake が必須です")
         if self.vercel_env == "production" and not self.cron_secret.get_secret_value().strip():
             raise ValueError("Productionでは CRON_SECRET が必須です")
 

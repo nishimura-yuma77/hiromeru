@@ -68,3 +68,29 @@ jobs:
       - run: uv run alembic upgrade head
       - run: uv run alembic check
       - run: uv run pytest
+
+  e2e:
+    name: E2E
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      CI: "true"
+    steps:
+      - uses: actions/checkout@v4
+      - name: Start application with fake external clients
+        run: docker compose -f compose.yaml -f compose.e2e.yaml up -d --wait frontend
+      - name: Run Playwright
+        run: docker compose -f compose.yaml -f compose.e2e.yaml run --rm e2e
+      - name: Show application logs
+        if: failure()
+        run: docker compose logs --tail 200 backend frontend
+      - name: Upload Playwright report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: |
+            frontend/playwright-report
+            frontend/test-results
+          retention-days: 7
+

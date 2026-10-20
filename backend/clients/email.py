@@ -207,13 +207,28 @@ class SesEmailClient:
 
 
 class FakeEmailClient:
-    """外部へ送信せず、送信内容を記録して固定PrefixのMessageIdを返す。"""
+    """外部へ送信せず、送信内容を記録して固定PrefixのMessageIdを返す。
+
+    E2Eでは `outcomes` の先頭から1回ずつ応答を決める。空なら受付成功とする。
+    応答は `ok`・`throttled`・`rejected`・`unknown`・`interrupted` のいずれか。
+    """
 
     def __init__(self) -> None:
-        """送信済みのメールを空にする。"""
+        """送信済みのメールと、予約した応答を空にする。"""
         self.sent: list[EmailMessage] = []
+        self.outcomes: list[str] = []
 
     async def send(self, message: EmailMessage) -> str:
-        """送信内容を記録する。"""
+        """送信内容を記録し、予約した応答を返す。"""
         self.sent.append(message)
+        outcome = self.outcomes.pop(0) if self.outcomes else "ok"
+        if outcome == "throttled":
+            raise EmailThrottledError("fake throttled")
+        if outcome == "rejected":
+            raise EmailRejectedError(400, "MessageRejected")
+        if outcome == "unknown":
+            raise EmailOutcomeUnknownError("fake unknown")
+        if outcome == "interrupted":
+            # 処理中断の再現。送信操作はpendingのまま残る。
+            raise RuntimeError("fake interrupted")
         return f"fake-ses-{len(self.sent)}"

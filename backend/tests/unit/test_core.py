@@ -503,3 +503,20 @@ def test_設定_招待リンクの基点は明示設定を優先し環境のOrig
     assert preview.resolved_invitation_base_url() == "https://branch.vercel.app"
     assert production.resolved_invitation_base_url() == "https://hiromeru.example.com"
     assert local.resolved_invitation_base_url() == "http://localhost:3000"
+
+
+def test_設定_E2E_MODEはデプロイ環境と実SESでは使えない() -> None:
+    with pytest.raises(ValueError, match="E2E_MODE"):
+        _real_settings(vercel_env="preview", email_client_mode="fake", e2e_mode=True)
+    with pytest.raises(ValueError, match="EMAIL_CLIENT_MODE=fake"):
+        Settings(
+            auth_cookie_secret=SecretStr(SECRET),
+            e2e_mode=True,
+            email_client_mode="real",
+            ses_region="ap-northeast-1",
+            ses_from_address="noreply@example.com",
+            aws_access_key_id=SecretStr("aws-key"),
+            aws_secret_access_key=SecretStr("aws-secret"),
+        )
+
+    assert Settings(auth_cookie_secret=SecretStr(SECRET), e2e_mode=True).e2e_mode is True

@@ -10,6 +10,7 @@ from api.routers import (
     auth,
     campaigns,
     cron,
+    e2e,
     health,
     memories,
     posts,
@@ -48,6 +49,9 @@ def create_app(context: ServiceContext | None = None) -> FastAPI:
         memories.router,
     ):
         application.include_router(router)
+    if settings.e2e_mode:
+        # E2E専用。デプロイ環境では設定検証で E2E_MODE を拒否する。
+        application.include_router(e2e.router)
     # 後に追加したものが外側になる。request_id を最も外側で付与する。
     application.add_middleware(AuthCookieMiddleware)
     application.add_middleware(

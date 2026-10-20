@@ -24,7 +24,7 @@ from clients.ga4 import GoogleServiceAccountTokenProvider, HttpGa4Client
 from clients.web_fetch import FakeWebFetcher, HttpxPinnedTransport, SafeWebFetcher, SystemResolver
 from clients.web_search import FakeWebSearchProvider, HttpWebSearchProvider
 from clients.x_api import HttpXApiClient
-from core.clock import SystemClock
+from core.clock import AdjustableClock, Clock, SystemClock
 from core.config import Settings, get_settings
 from repositories.database import SessionLocal
 from services.context import ServiceContext
@@ -97,7 +97,7 @@ def build_default_context(  # noqa: PLR0912 - Clientごとの独立した組み�
             api_key=resolved.orcarouter_firewall_api_key.get_secret_value(),
             timeout_seconds=resolved.llm_timeout_seconds,
         )
-    clock = SystemClock()
+    clock: Clock = AdjustableClock(SystemClock()) if resolved.e2e_mode else SystemClock()
     email_client: EmailClient
     if resolved.email_client_mode == "fake":
         email_client = FakeEmailClient()

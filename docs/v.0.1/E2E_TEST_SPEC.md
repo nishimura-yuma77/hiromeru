@@ -947,4 +947,24 @@
 
 本書はv0.1の完成形を対象とする。実行対象の機能とE2E Runnerがそろったケースから検証する。実装状況はケース単位で管理する。
 
-E2E Runner、起動Command、Fixtureの配置、Artifactの保存先は、テスト基盤の採用時に本節へ追記する。
+### 12.1 テスト基盤
+
+| 項目 | 内容 |
+| --- | --- |
+| E2E Runner | Playwright（`@playwright/test` 1.63.0、Chromium）。`frontend/playwright.config.ts`。時計とSES FakeをBackendで共有するため1 Workerで直列に実行する |
+| 起動Command | `docker compose -f compose.yaml -f compose.e2e.yaml up -d --wait frontend`の後に`docker compose -f compose.yaml -f compose.e2e.yaml run --rm e2e`。CIの`E2E`ジョブも同じCommandを使う |
+| 実行環境 | `compose.e2e.yaml`。Frontendは本番Build（`next build`・`next start`）、外部Clientはすべて`fake`、Playwrightは公式Image（`mcr.microsoft.com/playwright:v1.63.0-noble`）から`http://frontend:3000`へ接続する |
+| Fixture・Fake操作 | `frontend/e2e/support/backend.ts`。`E2E_MODE=true`のときだけ公開するBackendの`/api/e2e/*`で、初期設定スクリプトと同じ処理による会社・責任者登録、SES Fakeが受け付けた招待リンクの取得、SES Fakeの応答予約、時計の前進を行う。`E2E_MODE`は本番・プレビューでは起動時に拒否する |
+| テスト用パスワード | `E2E_PASSWORD`、未設定なら実行ごとに条件を満たす値を生成する。Sourceへ平文で保存しない |
+| Artifact | 失敗時のTraceを`frontend/test-results/`、HTML Reportを`frontend/playwright-report/`へ保存する。CIでは失敗時にArtifactとしてUploadする |
+
+### 12.2 ケース別の実装状況
+
+| ID | 状態 | Spec |
+| --- | --- | --- |
+| E2E-016～E2E-020 | 自動化済み | `frontend/e2e/admin-users.spec.ts` |
+| E2E-E08～E2E-E14 | 自動化済み | `frontend/e2e/admin-users-errors.spec.ts` |
+| 上記以外 | 未着手 | — |
+
+- E2E-E12の結果不明は、SES Fakeの「結果不明」と「処理中断」の2通りを独立したケースで実行する。5xx・408・応答なしを結果不明へ分類することは、Backendの単体テスト（`backend/tests/unit/test_email_client.py`）で確認する
+- E2E-E13の「認証Cookieだけを期限切れにする」は、Browser ContextからCookieを削除して再現する

@@ -36,7 +36,8 @@ services:
       context: .
       dockerfile: docker/backend/Dockerfile
     env_file:
-      - .env
+      - path: .env
+        required: false
     command:
       - uvicorn
       - api.main:app
