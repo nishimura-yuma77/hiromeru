@@ -13,6 +13,7 @@ marketers.user_idへ変換する。既存ユーザーはパスワードを持つ
 """
 
 from collections.abc import Sequence
+from datetime import datetime
 
 import sqlalchemy as sa
 from alembic import op
@@ -36,7 +37,7 @@ _OWNER_COLUMNS = (
 )
 
 
-def _timestamps() -> list[sa.Column[object]]:
+def _timestamps() -> list[sa.Column[datetime]]:
     return [
         sa.Column(
             "created_at",
