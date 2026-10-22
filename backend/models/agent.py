@@ -41,18 +41,18 @@ class AgentSession(Base):
 
     __tablename__ = "agent_sessions"
     __table_args__ = (
-        UniqueConstraint("id", "marketer_id", name="uq_agent_sessions_id_marketer"),
+        UniqueConstraint("id", "user_id", name="uq_agent_sessions_id_user"),
         ForeignKeyConstraint(
-            ["parent_session_id", "marketer_id"],
-            ["agent_sessions.id", "agent_sessions.marketer_id"],
+            ["parent_session_id", "user_id"],
+            ["agent_sessions.id", "agent_sessions.user_id"],
             name="fk_agent_sessions_parent",
         ),
-        Index("ix_agent_sessions_marketer_updated", "marketer_id", "updated_at"),
+        Index("ix_agent_sessions_user_updated", "user_id", "updated_at"),
         Index("ix_agent_sessions_parent_created", "parent_session_id", "created_at"),
     )
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
-    marketer_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("marketers.id"))
+    user_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("users.id"))
     parent_session_id: Mapped[int | None] = mapped_column(BigInteger, default=None)
     agent: Mapped[AgentType] = mapped_column(pg_enum(AgentType, "agent_type"))
     title: Mapped[str | None] = mapped_column(String(255), default=None)

@@ -21,12 +21,13 @@ from clients.web_fetch import HttpxPinnedTransport, SafeWebFetcher, SystemResolv
 from clients.web_search import FakeWebSearchProvider
 from core.config import Settings
 from repositories.database import SessionLocal
-from services.auth_service import AuthService
 from services.context import ServiceContext
 from tests.support.client import Account
+from tests.support.db import create_company, create_user
 from tests.support.fakes import (
     FakeAgentRunner,
     FakeContextCompactor,
+    FakeEmail,
     FakeEmbedding,
     FakeGa4,
     FakeXApi,
@@ -80,7 +81,13 @@ def settings() -> Settings:
 
 
 @pytest.fixture
+def email() -> FakeEmail:
+    return FakeEmail()
+
+
+@pytest.fixture
 def ctx(
+    email: FakeEmail,
     settings: Settings,
     clock: FixedClock,
     embedding: FakeEmbedding,
@@ -120,6 +127,7 @@ def ctx(
         tool_result_guardrail=FakeToolResultGuardrail(),
         sleep=no_sleep,
         new_uuid=uuid.uuid4,
+        email_client=email,
     )
     register_proposal_tools(context)
     register_clarification_tool(registry)
@@ -141,32 +149,38 @@ async def anonymous(app: FastAPI) -> AsyncIterator[AsyncClient]:
 type AccountFactory = Callable[[], Coroutine[Any, Any, Account]]
 
 
+async def login_client(
+    stack: AsyncExitStack, app: FastAPI, email: str, password: str, *, admin: bool = False
+) -> tuple[AsyncClient, str]:
+    """ログインしたクライアントとCSRF Tokenを返す。"""
+    transport = ASGITransport(app=app, raise_app_exceptions=False)
+    client = await stack.enter_async_context(
+        AsyncClient(transport=transport, base_url="http://test")
+    )
+    path = "/api/v1/admin/auth/login" if admin else "/api/v1/auth/login"
+    response = await client.post(
+        path, json={"email": email, "password": password}, headers={"Origin": ORIGIN}
+    )
+    assert response.status_code == 200, response.text
+    csrf = response.json()["data"]["csrf_token"]
+    client.headers.update({"Origin": ORIGIN, "X-CSRF-Token": csrf})
+    return client, csrf
+
+
 @pytest.fixture
-async def new_account(app: FastAPI, ctx: ServiceContext) -> AsyncIterator[AccountFactory]:
-    """会社・マーケターを作ってログインした状態のクライアントを作る。呼ぶたびに別の会社を作る。"""
+async def new_account(app: FastAPI) -> AsyncIterator[AccountFactory]:
+    """会社とマーケターユーザーを作ってログインした状態のクライアントを作る。
+
+    呼ぶたびに別の会社を作る。
+    """
     stack = AsyncExitStack()
 
     async def create() -> Account:
         email = f"{uuid.uuid4().hex}@example.com"
-        record = await AuthService(ctx).create_marketer(
-            company_name=f"company-{uuid.uuid4().hex[:8]}",
-            marketer_name="マーケター",
-            email=email,
-            password=PASSWORD,
-        )
-        transport = ASGITransport(app=app, raise_app_exceptions=False)
-        client = await stack.enter_async_context(
-            AsyncClient(transport=transport, base_url="http://test")
-        )
-        response = await client.post(
-            "/api/v1/auth/login",
-            json={"email": email, "password": PASSWORD},
-            headers={"Origin": ORIGIN},
-        )
-        assert response.status_code == 200, response.text
-        csrf = response.json()["data"]["csrf_token"]
-        client.headers.update({"Origin": ORIGIN, "X-CSRF-Token": csrf})
-        return Account(client, record.marketer_id, record.company_id, email, csrf)
+        company_id = await create_company()
+        user_id = await create_user(company_id, email, PASSWORD)
+        client, csrf = await login_client(stack, app, email, PASSWORD)
+        return Account(client, user_id, company_id, email, csrf)
 
     yield create
     await stack.aclose()

@@ -58,3 +58,9 @@ async def test_pgvector拡張の有無_pg_available_extensionsにvectorが1件�
         )
 
     assert result.scalar_one() == 1
+
+
+async def test_E2E専用APIは既定では公開しない(anonymous: AsyncClient) -> None:
+    response = await anonymous.post("/api/e2e/reset")
+
+    assert response.status_code == 404

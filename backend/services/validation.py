@@ -23,6 +23,9 @@ _FIELD_LABELS = {
     "body": "投稿本文",
     "landing_url": "遷移先URL",
     "message": "メッセージ",
+    "name": "表示名",
+    "user_type": "ユーザー種別",
+    "token": "招待トークン",
 }
 
 

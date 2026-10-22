@@ -29,9 +29,9 @@ from models import (
     AgentTurn,
     ApiIdempotencyRequest,
     LlmCall,
-    Marketer,
     SecurityEvent,
     ToolExecution,
+    User,
 )
 
 
@@ -99,10 +99,10 @@ class SessionRepository:
         """セッションを受け取る。"""
         self._session = session
 
-    async def create(self, marketer_id: int, now: datetime) -> AgentSession:
+    async def create(self, user_id: int, now: datetime) -> AgentSession:
         """親セッションを作成する（title は null）。"""
         agent_session = AgentSession(
-            marketer_id=marketer_id,
+            user_id=user_id,
             agent=AgentType.PARENT,
             created_at=now,
             updated_at=now,
@@ -112,7 +112,7 @@ class SessionRepository:
         return agent_session
 
     async def get_parent(
-        self, marketer_id: int, session_id: int, *, lock: bool = False
+        self, user_id: int, session_id: int, *, lock: bool = False
     ) -> AgentSession | None:
         """認証済みマーケターが所有する親セッションを取得する。
 
@@ -121,7 +121,7 @@ class SessionRepository:
         """
         stmt = select(AgentSession).where(
             AgentSession.id == session_id,
-            AgentSession.marketer_id == marketer_id,
+            AgentSession.user_id == user_id,
             AgentSession.agent == AgentType.PARENT,
             AgentSession.parent_session_id.is_(None),
         )
@@ -139,11 +139,11 @@ class SessionRepository:
         )
 
     async def list_parents(
-        self, marketer_id: int, *, limit: int, after: tuple[datetime, int] | None
+        self, user_id: int, *, limit: int, after: tuple[datetime, int] | None
     ) -> list[AgentSession]:
         """`updated_at` の降順（同じ場合は id の降順）で、未アーカイブの親セッションを返す。"""
         stmt = select(AgentSession).where(
-            AgentSession.marketer_id == marketer_id,
+            AgentSession.user_id == user_id,
             AgentSession.agent == AgentType.PARENT,
             AgentSession.parent_session_id.is_(None),
             AgentSession.archived_at.is_(None),
@@ -826,7 +826,7 @@ class ToolExecutionRepository:
             raise ToolCallConflictError
 
     async def runtime_record(
-        self, *, marketer_id: int, company_id: int, session_id: int, turn_id: int
+        self, *, user_id: int, company_id: int, session_id: int, turn_id: int
     ) -> ToolRuntimeRecord | None:
         """Tenant、Session、Turn境界をDB正本で検証する。"""
         row = (
@@ -838,11 +838,11 @@ class ToolExecutionRepository:
                     AgentTurn.status,
                 )
                 .join(AgentTurn, AgentTurn.session_id == AgentSession.id)
-                .join(Marketer, Marketer.id == AgentSession.marketer_id)
+                .join(User, User.id == AgentSession.user_id)
                 .where(
                     AgentSession.id == session_id,
-                    AgentSession.marketer_id == marketer_id,
-                    Marketer.company_id == company_id,
+                    AgentSession.user_id == user_id,
+                    User.company_id == company_id,
                     AgentTurn.id == turn_id,
                     AgentTurn.session_id == session_id,
                     or_(

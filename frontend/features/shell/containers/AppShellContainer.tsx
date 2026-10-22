@@ -11,6 +11,7 @@ import {
 
 type AppShellContainerProps = {
   email: string;
+  isAdmin: boolean;
   logoutLoading: boolean;
   logoutError: string | null;
   onLogout: () => void;
@@ -81,6 +82,7 @@ export function AppShellContainer(props: AppShellContainerProps) {
   return (
     <AppShell
       email={props.email}
+      isAdmin={props.isAdmin}
       navigationItems={APP_NAVIGATION_ITEMS}
       activeNavigationId={navigationIdFromPath(pathname)}
       drawerOpen={drawer.isOpen}

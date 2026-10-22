@@ -11,6 +11,7 @@ from agent_runtime.firewall import AgentFirewall
 from agent_runtime.guardrail import ToolResultGuardrail
 from agent_runtime.runner import AgentRunner
 from agent_runtime.tools import ToolRegistry
+from clients.email import EmailClient
 from clients.embedding import EmbeddingClient
 from clients.ga4 import Ga4Client
 from clients.x_api import XApiClient
@@ -20,12 +21,16 @@ from core.config import Settings
 
 @dataclass(frozen=True)
 class AuthContext:
-    """認証済みマーケターのContext。`company_id` はDBから決め、Requestから受け取らない。"""
+    """認証済みユーザーのContext。`company_id` はDBから決め、Requestから受け取らない。
 
-    marketer_id: int
-    company_id: int
+    管理ユーザーもマーケター向け機能は本人の `user_id` で操作する。`is_admin` は
+    本人のadminsの有無で、管理APIの認可に使う。
+    """
+
     user_id: int
+    company_id: int
     email: str
+    is_admin: bool = False
 
 
 @dataclass(frozen=True)
@@ -45,3 +50,4 @@ class ServiceContext:
     tool_result_guardrail: ToolResultGuardrail
     sleep: Callable[[float], Awaitable[None]]
     new_uuid: Callable[[], uuid.UUID]
+    email_client: EmailClient

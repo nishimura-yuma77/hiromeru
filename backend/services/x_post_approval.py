@@ -88,7 +88,7 @@ async def insert_published_post(
     post = await PostRepository(session).insert_published(
         NewPost(
             company_id=ctx.auth.company_id,
-            marketer_id=ctx.auth.marketer_id,
+            user_id=ctx.auth.user_id,
             campaign_id=campaign_id,
             api_idempotency_request_id=ctx.request_id,
             body=published.body,

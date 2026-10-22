@@ -284,7 +284,7 @@ async def test_先頭Pageで期限切れSnapshotを100件まで削除する(
         session.add_all(
             ApiListSnapshot(
                 id=snapshot_id,
-                marketer_id=account.marketer_id,
+                user_id=account.user_id,
                 resource="metrics",
                 filter_hash="a" * 64,
                 created_at=clock.now() - timedelta(hours=2),

@@ -1,8 +1,9 @@
-"""テストで使う外部依存の代替（時刻・Embedding・X API・待機）。"""
+"""テストで使う外部依存の代替（時刻・Embedding・X API・SES・待機）。"""
 
 import asyncio
 import hashlib
 import random
+import re
 import uuid
 from datetime import UTC, datetime, timedelta
 
@@ -16,6 +17,12 @@ from agent_runtime.runner import (
     ChildRunResult,
     ContentCreatorOutput,
     ProgressReporter,
+)
+from clients.email import (
+    EmailMessage,
+    EmailOutcomeUnknownError,
+    EmailRejectedError,
+    EmailThrottledError,
 )
 from clients.errors import EmbeddingError, XApiOutcomeUnknownError, XApiRejectedError
 from clients.ga4 import Ga4ReportQuery
@@ -104,6 +111,38 @@ class FakeXApi:
         if self.metrics_error is not None:
             raise self.metrics_error
         return self.impression_count
+
+
+class FakeEmail:
+    """SESの代替。`outcomes` の先頭から1回ずつ結果を返し、空なら受付成功とする。
+
+    結果は `ok`、`throttled`、`rejected`、`unknown`、`unexpected` のいずれか。
+    """
+
+    def __init__(self) -> None:
+        """既定は受付成功。"""
+        self.sent: list[EmailMessage] = []
+        self.outcomes: list[str] = []
+
+    async def send(self, message: EmailMessage) -> str:
+        """送信内容を記録し、指定された結果を返す。"""
+        self.sent.append(message)
+        outcome = self.outcomes.pop(0) if self.outcomes else "ok"
+        if outcome == "throttled":
+            raise EmailThrottledError("fake throttled")
+        if outcome == "rejected":
+            raise EmailRejectedError(400, "MessageRejected")
+        if outcome == "unknown":
+            raise EmailOutcomeUnknownError("fake unknown")
+        if outcome == "unexpected":
+            raise RuntimeError("fake unexpected")
+        return f"ses-{uuid.uuid4().hex}"
+
+    def last_token(self) -> str:
+        """最後に送ったメールの招待リンクからトークンを取り出す。"""
+        match = re.search(r"token=([A-Za-z0-9_-]+)", self.sent[-1].body)
+        assert match is not None
+        return match.group(1)
 
 
 class FakeGa4:

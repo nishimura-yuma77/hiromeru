@@ -36,7 +36,8 @@ async def authenticated(request: Request, ctx: Context) -> AuthContext:
     """認証Cookieを検証し、認証済みContextを返す。Cookieを発行し直してアイドル期限を延長する。
 
     Raises:
-        AppError: Cookieがない・署名不正・期限切れ・マーケターの行がない場合（UNAUTHENTICATED）。
+        AppError: Cookieがない・署名不正・期限切れ・ユーザーがactiveでない・認証世代が
+            一致しない場合（UNAUTHENTICATED）。
     """
     token = request.cookies.get(SESSION_COOKIE_NAME)
     now = ctx.clock.now()
@@ -44,11 +45,11 @@ async def authenticated(request: Request, ctx: Context) -> AuthContext:
     session = read_session_token(secret, token, now) if token else None
     if session is None:
         raise AppError("UNAUTHENTICATED")
-    auth = await AuthService(ctx).authenticate(session.marketer_id)
+    auth = await AuthService(ctx).authenticate(session.user_id, session.auth_generation)
     if auth is None:
         raise AppError("UNAUTHENTICATED")
     new_token, idle_expires_at = issue_session_token(
-        secret, auth.marketer_id, session.issued_at, now
+        secret, auth.user_id, session.auth_generation, session.issued_at, now
     )
     request.scope[REISSUE_COOKIE_KEY] = session_cookie(
         ctx.settings, new_token, idle_expires_at, now
@@ -64,12 +65,28 @@ def csrf_protected(request: Request, ctx: Context, auth: Authenticated) -> AuthC
     verify_origin(request, ctx)
     cookie_value = request.cookies.get(CSRF_COOKIE_NAME, "")
     header_value = request.headers.get(CSRF_HEADER_NAME, "")
-    if not csrf_token_matches(
-        ctx.settings.auth_secret(), auth.marketer_id, cookie_value, header_value
-    ):
+    if not csrf_token_matches(ctx.settings.auth_secret(), auth.user_id, cookie_value, header_value):
         raise AppError("CSRF_VALIDATION_FAILED")
     return auth
 
 
 CsrfProtected = Annotated[AuthContext, Depends(csrf_protected)]
 OriginChecked = Depends(verify_origin)
+
+
+def admin_reader(auth: Authenticated) -> AuthContext:
+    """管理APIの参照。認証済みでも管理権限がなければ `ADMIN_FORBIDDEN` とする。"""
+    if not auth.is_admin:
+        raise AppError("ADMIN_FORBIDDEN")
+    return auth
+
+
+def admin_writer(auth: CsrfProtected) -> AuthContext:
+    """管理APIの状態変更。認証・CSRFの検証後に管理権限を確認する（API_DESIGN 11.2）。"""
+    if not auth.is_admin:
+        raise AppError("ADMIN_FORBIDDEN")
+    return auth
+
+
+AdminReader = Annotated[AuthContext, Depends(admin_reader)]
+AdminWriter = Annotated[AuthContext, Depends(admin_writer)]

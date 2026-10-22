@@ -33,7 +33,7 @@ def _context() -> TrustedToolContext:
     clock = FixedClock()
     return TrustedToolContext(
         company_id=1,
-        marketer_id=1,
+        user_id=1,
         session_id=1,
         turn_id=1,
         agent_type=AgentType.PARENT,

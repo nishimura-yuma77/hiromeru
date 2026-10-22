@@ -17,6 +17,7 @@ from core.security import (
     verify_password,
     verify_payload,
 )
+from domain.accounts import is_valid_email, normalize_email, password_error
 
 SECRET = "unit-test-secret-unit-test-secret-0123456789"
 NOW = datetime(2026, 9, 21, 10, 0, tzinfo=UTC)
@@ -34,6 +35,11 @@ def _real_settings(**overrides: object) -> Settings:
         "web_fetch_client_mode": "real",
         "agent_client_mode": "real",
         "agent_firewall_mode": "real",
+        "email_client_mode": "real",
+        "ses_region": "ap-northeast-1",
+        "ses_from_address": "noreply@example.com",
+        "aws_access_key_id": "aws-key",
+        "aws_secret_access_key": "aws-secret",
         "orcarouter_base_url": "https://router.example.com/v1",
         "orcarouter_api_key": "router-secret",
         "orcarouter_firewall_api_key": "firewall-secret",
@@ -115,17 +121,19 @@ def test_署名_改ざんと用途違いは検証に失敗する() -> None:
 
 
 def test_セッショントークン_アイドル期限は8時間で絶対期限を超えない() -> None:
-    token, idle = issue_session_token(SECRET, 1, NOW, NOW)
+    token, idle = issue_session_token(SECRET, 1, 3, NOW, NOW)
     assert idle == NOW + timedelta(hours=8)
-    assert read_session_token(SECRET, token, NOW + timedelta(hours=7)) is not None
+    session = read_session_token(SECRET, token, NOW + timedelta(hours=7))
+    assert session is not None
+    assert (session.user_id, session.auth_generation) == (1, 3)
     assert read_session_token(SECRET, token, NOW + timedelta(hours=9)) is None
 
     late = NOW + timedelta(days=6, hours=23)
-    _, capped = issue_session_token(SECRET, 1, NOW, late)
+    _, capped = issue_session_token(SECRET, 1, 3, NOW, late)
     assert capped == NOW + timedelta(days=7)
 
 
-def test_CSRFトークン_マーケターに束縛されCookieとHeaderが一致するときだけ通る() -> None:
+def test_CSRFトークン_ユーザーに束縛されCookieとHeaderが一致するときだけ通る() -> None:
     token = issue_csrf_token(SECRET, 1)
 
     assert csrf_token_matches(SECRET, 1, token, token)
@@ -230,6 +238,7 @@ def test_設定_本番とPreviewでSecure_CookieとClient_Mode明示を必須に
         web_fetch_client_mode="fake",
         agent_client_mode="fake",
         agent_firewall_mode="fake",
+        email_client_mode="fake",
     )
 
     assert deployed_fake.agent_firewall_mode == "fake"
@@ -246,6 +255,7 @@ def test_設定_デプロイ環境のClient_Modeは環境変数から明示で�
         "WEB_FETCH_CLIENT_MODE",
         "AGENT_CLIENT_MODE",
         "AGENT_FIREWALL_MODE",
+        "EMAIL_CLIENT_MODE",
     ):
         monkeypatch.setenv(name, "fake")
 
@@ -289,6 +299,16 @@ def test_設定_各実Clientだけ固有Credentialを必須にしFakeでは省�
             web_search_api_key=SecretStr(""),
         )
 
+    with pytest.raises(ValueError, match="SES_FROM_ADDRESS"):
+        Settings(
+            auth_cookie_secret=SecretStr(SECRET),
+            email_client_mode="real",
+            ses_region="ap-northeast-1",
+            aws_access_key_id=SecretStr("aws-key"),
+            aws_secret_access_key=SecretStr("aws-secret"),
+        )
+
+    assert fake.email_client_mode == "fake"
     assert fake.embedding_client_mode == "fake"
     assert fake.x_api_client_mode == "fake"
     assert fake.ga4_client_mode == "fake"
@@ -430,3 +450,73 @@ def test_設定_MigrationはUnpooled_URLを必須にしてFallbackしない(
     )
     with pytest.raises(ValueError, match="DATABASE_URL_UNPOOLED"):
         blank.migration_database_url()
+
+
+def test_セッショントークン_認証世代を持たない旧形式のCookieは無効() -> None:
+    legacy = sign_payload(SECRET, "session", {"m": 1, "iat": 0, "exp": 2**40})
+
+    assert read_session_token(SECRET, legacy, NOW) is None
+
+
+@pytest.mark.parametrize(
+    ("password", "expected"),
+    [
+        ("Strong-Passw0rd!", None),
+        ("", "REQUIRED"),
+        ("A1!" + "a" * 126, "TOO_LONG"),
+        ("Aa1!" + "a" * 124, None),
+        ("Short-1a", "INVALID_FORMAT"),
+        ("lowercase-only-1", "INVALID_FORMAT"),
+        ("UPPERCASE-ONLY-1", "INVALID_FORMAT"),
+        ("NoDigits-Password", "INVALID_FORMAT"),
+        ("NoSymbol1Password", "INVALID_FORMAT"),
+        ("Has Space-1Aa", "INVALID_FORMAT"),
+        ("全角を含むPassw0rd!", "INVALID_FORMAT"),
+    ],
+)
+def test_パスワード条件_12から128文字で4種の文字を含む半角だけを許可する(
+    password: str, expected: str | None
+) -> None:
+    assert password_error(password) == expected
+
+
+def test_メールアドレス_前後の空白を除き小文字にする() -> None:
+    assert normalize_email("  Taro@Example.COM ") == "taro@example.com"
+    assert is_valid_email("taro@example.com")
+    assert not is_valid_email("taro@example")
+    assert not is_valid_email("a" * 250 + "@example.com")
+
+
+def test_設定_招待リンクの基点は明示設定を優先し環境のOriginへ戻る() -> None:
+    explicit = Settings(
+        auth_cookie_secret=SecretStr(SECRET), invitation_base_url="https://app.example.com/"
+    )
+    preview = _real_settings(vercel_env="preview", vercel_branch_url="branch.vercel.app")
+    production = _real_settings(
+        vercel_env="production",
+        cron_secret="cron-secret",
+        vercel_project_production_url="hiromeru.example.com",
+    )
+    local = Settings(auth_cookie_secret=SecretStr(SECRET))
+
+    assert explicit.resolved_invitation_base_url() == "https://app.example.com"
+    assert preview.resolved_invitation_base_url() == "https://branch.vercel.app"
+    assert production.resolved_invitation_base_url() == "https://hiromeru.example.com"
+    assert local.resolved_invitation_base_url() == "http://localhost:3000"
+
+
+def test_設定_E2E_MODEはデプロイ環境と実SESでは使えない() -> None:
+    with pytest.raises(ValueError, match="E2E_MODE"):
+        _real_settings(vercel_env="preview", email_client_mode="fake", e2e_mode=True)
+    with pytest.raises(ValueError, match="EMAIL_CLIENT_MODE=fake"):
+        Settings(
+            auth_cookie_secret=SecretStr(SECRET),
+            e2e_mode=True,
+            email_client_mode="real",
+            ses_region="ap-northeast-1",
+            ses_from_address="noreply@example.com",
+            aws_access_key_id=SecretStr("aws-key"),
+            aws_secret_access_key=SecretStr("aws-secret"),
+        )
+
+    assert Settings(auth_cookie_secret=SecretStr(SECRET), e2e_mode=True).e2e_mode is True

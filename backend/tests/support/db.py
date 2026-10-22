@@ -1,13 +1,62 @@
 """テストデータをDBへ直接用意する補助（APIで作れないデータ用）。"""
 
+import asyncio
 from datetime import UTC, datetime
 
 from sqlalchemy import select, update
 
-from domain.enums import PostMetricStatus
-from models import AgentMemory, Campaign, MemoryCampaign, MemoryPost, Post, PostMetric
+from core.security import hash_password
+from domain.enums import PostMetricStatus, UserStatus
+from models import (
+    Admin,
+    AgentMemory,
+    Campaign,
+    Company,
+    MemoryCampaign,
+    MemoryPost,
+    Post,
+    PostMetric,
+    User,
+)
 from repositories.database import SessionLocal
 from tests.support.fakes import vector_for
+
+
+async def create_company() -> int:
+    """会社だけを作る。"""
+    async with SessionLocal() as session, session.begin():
+        company = Company(name="テスト会社")
+        session.add(company)
+        await session.flush()
+        return company.id
+
+
+async def create_user(
+    company_id: int,
+    email: str,
+    password: str | None,
+    *,
+    name: str = "マーケター",
+    status: UserStatus = UserStatus.ACTIVE,
+    admin: bool = False,
+    responsible: bool = False,
+) -> int:
+    """会社に所属するユーザーを作る。`admin` ならadminsも作る。"""
+    password_hash = await asyncio.to_thread(hash_password, password) if password else None
+    async with SessionLocal() as session, session.begin():
+        user = User(
+            company_id=company_id,
+            name=name,
+            email=email,
+            password=password_hash,
+            status=status,
+            auth_generation=0,
+        )
+        session.add(user)
+        await session.flush()
+        if admin:
+            session.add(Admin(user_id=user.id, company_id=company_id, is_responsible=responsible))
+        return user.id
 
 
 async def insert_memory(

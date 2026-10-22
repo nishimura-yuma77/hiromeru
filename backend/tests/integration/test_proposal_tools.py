@@ -31,9 +31,7 @@ from tests.support.fakes import FakeAgentRunner, FixedClock
 
 async def _turn(ctx: ServiceContext, account: Account, session_id: int) -> tuple[int, int]:
     async with ctx.session_factory() as session, session.begin():
-        assert await SessionRepository(session).get_parent(
-            account.marketer_id, session_id, lock=True
-        )
+        assert await SessionRepository(session).get_parent(account.user_id, session_id, lock=True)
         turn = await TurnRepository(session).create_turn(session_id, ctx.clock.now())
         item = await TurnRepository(session).append_item(
             turn.id,
@@ -56,7 +54,7 @@ async def _executor(
     context = await AgentContextBuilder(ctx).build(session_id, turn_id)
     return ToolExecutor(
         ctx,
-        marketer_id=account.marketer_id,
+        user_id=account.user_id,
         company_id=account.company_id,
         session_id=session_id,
         turn_id=turn_id,

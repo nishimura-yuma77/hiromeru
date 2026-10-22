@@ -9,6 +9,7 @@ import styles from "./AppShell.module.scss";
 
 type AppShellProps = {
   email: string;
+  isAdmin: boolean;
   navigationItems: AppNavigationItem[];
   activeNavigationId: AppNavigationId;
   drawerOpen: boolean;
@@ -63,6 +64,10 @@ function Navigation({
   );
 }
 
+function AdminLink({ onNavigate }: { onNavigate?: () => void }) {
+  return <Link className={styles.adminLink} href="/admin/users" onClick={onNavigate}>管理画面へ</Link>;
+}
+
 function Account({ email, isPending, onLogout }: { email: string; isPending: boolean; onLogout: () => void }) {
   return (
     <div className={styles.account}>
@@ -74,6 +79,7 @@ function Account({ email, isPending, onLogout }: { email: string; isPending: boo
 
 export function AppShell({
   email,
+  isAdmin,
   navigationItems,
   activeNavigationId,
   drawerOpen,
@@ -94,6 +100,7 @@ export function AppShell({
       <aside className={styles.sidebar}>
         <Brand />
         <Navigation items={navigationItems} activeId={activeNavigationId} />
+        {isAdmin ? <AdminLink /> : null}
         <Account email={email} isPending={logoutLoading} onLogout={onLogout} />
       </aside>
 
@@ -132,6 +139,7 @@ export function AppShell({
               <Button ref={drawerCloseButtonRef} variant="ghost" iconOnly aria-label="メニューを閉じる" onClick={onDrawerClose}>×</Button>
             </div>
             <Navigation items={navigationItems} activeId={activeNavigationId} onNavigate={onDrawerClose} />
+            {isAdmin ? <AdminLink onNavigate={onDrawerClose} /> : null}
             <Account email={email} isPending={logoutLoading} onLogout={onLogout} />
           </div>
         </div>

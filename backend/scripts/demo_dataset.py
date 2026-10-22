@@ -27,7 +27,6 @@ _PASSWORD_HASH = (
 )
 _COMPANY_ID = 9_003_000_001
 _USER_ID = 9_003_000_001
-_MARKETER_ID = 9_003_000_001
 _CAMPAIGN_IDS = (9_003_001_001, 9_003_001_002, 9_003_001_003)
 _SESSION_IDS = (9_003_002_001, 9_003_002_002, 9_003_002_003)
 _TURN_IDS = tuple(range(9_003_003_001, 9_003_003_008))
@@ -241,7 +240,6 @@ def _preflight_upgrade() -> None:
     checks = {
         "companies.id": ("companies", "id", (_COMPANY_ID,)),
         "users.id": ("users", "id", (_USER_ID,)),
-        "marketers.id": ("marketers", "id", (_MARKETER_ID,)),
         "campaigns.id": ("campaigns", "id", _CAMPAIGN_IDS),
         "agent_sessions.id": ("agent_sessions", "id", _SESSION_IDS),
         "agent_turns.id": ("agent_turns", "id", _TURN_IDS),
@@ -294,26 +292,15 @@ def seed_demo() -> None:
     )
     _insert(
         "users",
-        ("id", "email", "password", "created_at", "updated_at"),
+        ("id", "company_id", "name", "email", "password", "status", "created_at", "updated_at"),
         [
             {
                 "id": _USER_ID,
+                "company_id": _COMPANY_ID,
+                "name": "デモマーケター",
                 "email": _DEMO_EMAIL,
                 "password": _PASSWORD_HASH,
-                "created_at": created,
-                "updated_at": created,
-            }
-        ],
-    )
-    _insert(
-        "marketers",
-        ("id", "user_id", "name", "company_id", "created_at", "updated_at"),
-        [
-            {
-                "id": _MARKETER_ID,
-                "user_id": _USER_ID,
-                "name": "デモマーケター",
-                "company_id": _COMPANY_ID,
+                "status": "active",
                 "created_at": created,
                 "updated_at": created,
             }
@@ -342,7 +329,7 @@ def seed_demo() -> None:
         "agent_sessions",
         (
             "id",
-            "marketer_id",
+            "user_id",
             "parent_session_id",
             "agent",
             "title",
@@ -353,7 +340,7 @@ def seed_demo() -> None:
         [
             {
                 "id": session_id,
-                "marketer_id": _MARKETER_ID,
+                "user_id": _USER_ID,
                 "parent_session_id": None,
                 "agent": "parent",
                 "title": titles[index],
@@ -371,7 +358,7 @@ def seed_demo() -> None:
         (
             "id",
             "company_id",
-            "created_by_marketer_id",
+            "created_by_user_id",
             "title",
             "target_profile",
             "background",
@@ -385,7 +372,7 @@ def seed_demo() -> None:
             {
                 **campaign,
                 "company_id": _COMPANY_ID,
-                "created_by_marketer_id": _MARKETER_ID,
+                "created_by_user_id": _USER_ID,
                 "updated_at": campaign["created_at"],
                 "archived_at": None,
             }
@@ -516,7 +503,7 @@ def seed_demo() -> None:
         request_rows.append(
             {
                 "id": _REQUEST_IDS[index],
-                "marketer_id": _MARKETER_ID,
+                "user_id": _USER_ID,
                 "session_id": session_id,
                 "agent_turn_id": turn_id,
                 "operation": "publish_x_post",
@@ -538,7 +525,7 @@ def seed_demo() -> None:
         "api_idempotency_requests",
         (
             "id",
-            "marketer_id",
+            "user_id",
             "session_id",
             "agent_turn_id",
             "operation",
@@ -664,7 +651,7 @@ def seed_demo() -> None:
         (
             "id",
             "company_id",
-            "created_by_marketer_id",
+            "created_by_user_id",
             "campaign_id",
             "api_idempotency_request_id",
             "body",
@@ -677,7 +664,7 @@ def seed_demo() -> None:
             {
                 "id": post["id"],
                 "company_id": _COMPANY_ID,
-                "created_by_marketer_id": _MARKETER_ID,
+                "created_by_user_id": _USER_ID,
                 "campaign_id": post["campaign_id"],
                 "api_idempotency_request_id": _REQUEST_IDS[index],
                 "body": post["body"],
@@ -797,7 +784,7 @@ def _has_non_seed_dependents() -> bool:
     bind = _BIND.get()
     params = {
         "company_id": _COMPANY_ID,
-        "marketer_id": _MARKETER_ID,
+        "user_id": _USER_ID,
         "campaign_ids": _CAMPAIGN_IDS,
         "session_ids": _SESSION_IDS,
         "turn_ids": _TURN_IDS,
@@ -809,15 +796,15 @@ def _has_non_seed_dependents() -> bool:
         "memory_ids": _MEMORY_IDS,
     }
     checks = (
-        "SELECT 1 FROM api_list_snapshots WHERE marketer_id = :marketer_id",
+        "SELECT 1 FROM api_list_snapshots WHERE user_id = :user_id",
         "SELECT 1 FROM campaigns WHERE company_id = :company_id AND id NOT IN :campaign_ids",
         "SELECT 1 FROM agent_memories WHERE company_id = :company_id AND id NOT IN :memory_ids",
-        "SELECT 1 FROM agent_sessions WHERE marketer_id = :marketer_id AND id NOT IN :session_ids",
+        "SELECT 1 FROM agent_sessions WHERE user_id = :user_id AND id NOT IN :session_ids",
         "SELECT 1 FROM agent_sessions WHERE parent_session_id IN :session_ids "
         "AND id NOT IN :session_ids",
         "SELECT 1 FROM agent_turns WHERE session_id IN :session_ids AND id NOT IN :turn_ids",
         "SELECT 1 FROM agent_items WHERE agent_turn_id IN :turn_ids AND id NOT IN :item_ids",
-        "SELECT 1 FROM api_idempotency_requests WHERE marketer_id = :marketer_id "
+        "SELECT 1 FROM api_idempotency_requests WHERE user_id = :user_id "
         "AND id NOT IN :request_ids",
         "SELECT 1 FROM posts WHERE company_id = :company_id AND id NOT IN :post_ids",
         "SELECT 1 FROM post_tracking_links WHERE post_id IN :post_ids AND id NOT IN :tracking_ids",
@@ -873,7 +860,6 @@ def remove_demo() -> None:
     _delete_ids("campaigns", "id", _CAMPAIGN_IDS)
     _delete_ids("agent_memories", "id", _MEMORY_IDS)
     _delete_ids("agent_sessions", "id", _SESSION_IDS)
-    _delete_ids("marketers", "id", (_MARKETER_ID,))
     _delete_ids("users", "id", (_USER_ID,))
     _delete_ids("companies", "id", (_COMPANY_ID,))
 

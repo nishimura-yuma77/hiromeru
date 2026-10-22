@@ -194,7 +194,7 @@ class CampaignService:
     def _log_fields(auth: AuthContext, campaign_id: int) -> dict[str, int]:
         return {
             "company_id": auth.company_id,
-            "marketer_id": auth.marketer_id,
+            "user_id": auth.user_id,
             "campaign_id": campaign_id,
         }
 

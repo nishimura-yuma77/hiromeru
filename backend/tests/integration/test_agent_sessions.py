@@ -407,7 +407,7 @@ async def test_SSE_切断後もTurnを継続し待機中はkeep_aliveを返す(
 
     service = TurnService(ctx)
     prepared = await service.begin(
-        AuthContext(account.marketer_id, account.company_id, 1, account.email),
+        AuthContext(account.user_id, account.company_id, account.email),
         session_id,
         body,
     )

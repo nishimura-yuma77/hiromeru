@@ -18,7 +18,7 @@ _TRUSTED_FIELD_NAMES = frozenset(
         "agent_type",
         "agent_context",
         "company_id",
-        "marketer_id",
+        "user_id",
         "parent_activity_id",
         "parent_session_id",
         "progress_reporter",
@@ -127,7 +127,7 @@ class TrustedToolContext(StrictToolModel):
     """認証とDB正本からExecutorが組み立てるTrusted Runtime Context。"""
 
     company_id: int = Field(gt=0)
-    marketer_id: int = Field(gt=0)
+    user_id: int = Field(gt=0)
     session_id: int = Field(gt=0)
     parent_session_id: int | None = Field(default=None, gt=0)
     turn_id: int = Field(gt=0)

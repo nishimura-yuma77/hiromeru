@@ -512,7 +512,7 @@
 
 **事前条件**
 
-- 初期設定スクリプトへ大文字を含むメールアドレスを指定し、`COMPANY_A`と`ADMIN_A`を同一トランザクションに登録している。DBのEmailは前後空白を除去・小文字化した値で、`ADMIN_A`はactive、adminsと本人のmarketersを持つ
+- 初期設定スクリプトへ大文字を含むメールアドレスを指定し、`COMPANY_A`と`ADMIN_A`を同一トランザクションに登録している。DBのEmailは前後空白を除去・小文字化した値で、`ADMIN_A`はactive、`company_id`が`COMPANY_A`で、adminsを持つ
 - `ADMIN_A`は未ログインである
 
 | Step | 操作者 | 操作 | 確認項目 | 関連画面 | 関連API |
@@ -525,9 +525,9 @@
 
 **最終確認**
 
-- 会社に責任者が1人だけ存在し、会社・責任者ユーザー・admins・marketersが揃っている。初期登録では招待メールを送っていない
+- 会社に責任者が1人だけ存在し、会社・責任者ユーザー・adminsが揃っている。初期登録では招待メールを送っていない
 - 初期登録した責任者のメールアドレスは招待APIと同じ正規化済みで全社一意である。大小文字・前後空白だけ異なる再登録では会社も含めてロールバックされる
-- 2種類の画面で共通Cookieが使われ、会話履歴の所有者は`ADMIN_A`本人の`marketer_id`である
+- 2種類の画面で共通Cookieが使われ、会話履歴の所有者は`ADMIN_A`本人の`user_id`である
 - ログイン用と入口ヒント用のCookieが別物であり、後者は権限判定に使われない
 
 ### E2E-017 マーケターユーザーを招待し、本人が登録・ログインする
@@ -546,7 +546,7 @@
 
 **最終確認**
 
-- `INVITEE_A`のusersはactiveで、所属会社のmarketersを1件持ち、adminsは持たない。`COMPANY_A`には複数のmarketersが所属できる
+- `INVITEE_A`のusersはactiveで、`company_id`が`COMPANY_A`であり、adminsは持たない。`COMPANY_A`には複数のusersが所属できる
 - 招待行と送信操作はSES呼び出し前に存在し、リンクの有効期限は発行時刻から1時間である。パスワードハッシュとトークンの平文はAPI Responseにない
 
 ### E2E-018 管理ユーザーを招待し、本人が登録・管理画面を開く
@@ -564,7 +564,7 @@
 
 **最終確認**
 
-- 対象のusers・admins・marketersは同じ会社に属し、責任者フラグはfalseである
+- 対象のusers・adminsは同じ会社に属し、責任者フラグはfalseである
 - 招待登録APIは認証Cookieを発行せず、パスワード設定後に管理者ログインAPIでCookieが発行される
 
 ### E2E-019 自社ユーザーの一覧・ページ移動・表示名編集を行う
@@ -593,14 +593,14 @@
 | Step | 操作者 | 操作 | 確認項目 | 関連画面 | 関連API |
 | ---: | --- | --- | --- | --- | --- |
 | 1 | `ADMIN_A` | `MARKETER_A`の操作モーダルで表示名と種別を管理ユーザーへ変更し、確認モーダルを開いて一度キャンセルする | 変更前後の種別と旧ログインの失効を示す。下のモーダルは操作できず、キャンセル後も入力内容が残る。PATCHはまだ送られない | SC-11 | なし |
-| 2 | `ADMIN_A` | 再度確認し、昇格を確定する | 表示名と種別を1回のPATCHで更新し、`200`の`data.user`を一覧に反映する。`admins`を追加して認証世代を1回更新する。本人の`marketers`・パスワード・会話履歴は変わらず、SES送信と`emails`・`invitations`の変更もない | SC-11 | `PATCH /api/v1/admin/users/{user_id}` |
+| 2 | `ADMIN_A` | 再度確認し、昇格を確定する | 表示名と種別を1回のPATCHで更新し、`200`の`data.user`を一覧に反映する。`admins`を追加して認証世代を1回更新する。usersの行・パスワード・会話履歴は変わらず、SES送信と`emails`・`invitations`の変更もない | SC-11 | `PATCH /api/v1/admin/users/{user_id}` |
 | 3 | `MARKETER_A` | 昇格前のCookieで認証付き画面を再読み込みし、既存のリンクから管理者ログインへ移って再ログインする | 旧Cookieは`401 UNAUTHENTICATED`。管理者ログイン成功後にユーザー管理と本人の会話履歴を利用できる。他人の会話履歴は見られない | SC-01、SC-10、SC-11、SC-02 | `GET /api/v1/auth/me`、`POST /api/v1/admin/auth/login`、`GET /api/v1/agent-sessions` |
-| 4 | `ADMIN_A` | `ADMIN_A2`の種別だけをマーケターユーザーに変更し、確認して確定する | 1回のPATCHで`admins`を削除し認証世代を1回更新する。表示名・`marketers`・会話履歴・パスワードは維持され、メールは送信されない | SC-11 | `PATCH /api/v1/admin/users/{user_id}` |
+| 4 | `ADMIN_A` | `ADMIN_A2`の種別だけをマーケターユーザーに変更し、確認して確定する | 1回のPATCHで`admins`を削除し認証世代を1回更新する。表示名・usersの行・会話履歴・パスワードは維持され、メールは送信されない | SC-11 | `PATCH /api/v1/admin/users/{user_id}` |
 | 5 | `ADMIN_A2` | 降格前のCookieで管理画面を再読み込みし、既存のリンクからマーケター用ログインへ移って再ログインする | 旧Cookieは`401 UNAUTHENTICATED`。管理者ログインは拒否され、マーケター用ログインが成功し本人の会話履歴を開ける。管理画面・管理APIは利用できない | SC-11、SC-10、SC-01、SC-02 | `GET /api/v1/auth/me`、`POST /api/v1/admin/auth/login`、`POST /api/v1/auth/login`、`GET /api/v1/admin/users?page=1` |
 
 **最終確認**
 
-- 両方向とも同じユーザーID・marketer_idで会話履歴を保持し、変更前のCookieは新種別でのログイン後も復活しない
+- 両方向とも同じユーザーIDで会話履歴を保持し、変更前のCookieは新種別でのログイン後も復活しない
 - 招待メールは送られず、招待・送信履歴は増減しない
 
 ## 9. 異常系テストケース
@@ -947,4 +947,24 @@
 
 本書はv0.1の完成形を対象とする。実行対象の機能とE2E Runnerがそろったケースから検証する。実装状況はケース単位で管理する。
 
-E2E Runner、起動Command、Fixtureの配置、Artifactの保存先は、テスト基盤の採用時に本節へ追記する。
+### 12.1 テスト基盤
+
+| 項目 | 内容 |
+| --- | --- |
+| E2E Runner | Playwright（`@playwright/test` 1.63.0、Chromium）。`frontend/playwright.config.ts`。時計とSES FakeをBackendで共有するため1 Workerで直列に実行する |
+| 起動Command | `docker compose -f compose.yaml -f compose.e2e.yaml up -d --wait frontend`の後に`docker compose -f compose.yaml -f compose.e2e.yaml run --rm e2e`。CIの`E2E`ジョブも同じCommandを使う |
+| 実行環境 | `compose.e2e.yaml`。Frontendは本番Build（`next build`・`next start`）、外部Clientはすべて`fake`、Playwrightは公式Image（`mcr.microsoft.com/playwright:v1.63.0-noble`）から`http://frontend:3000`へ接続する |
+| Fixture・Fake操作 | `frontend/e2e/support/backend.ts`。`E2E_MODE=true`のときだけ公開するBackendの`/api/e2e/*`で、初期設定スクリプトと同じ処理による会社・責任者登録、SES Fakeが受け付けた招待リンクの取得、SES Fakeの応答予約、時計の前進を行う。`E2E_MODE`は本番・プレビューでは起動時に拒否する |
+| テスト用パスワード | `E2E_PASSWORD`、未設定なら実行ごとに条件を満たす値を生成する。Sourceへ平文で保存しない |
+| Artifact | 失敗時のTraceを`frontend/test-results/`、HTML Reportを`frontend/playwright-report/`へ保存する。CIでは失敗時にArtifactとしてUploadする |
+
+### 12.2 ケース別の実装状況
+
+| ID | 状態 | Spec |
+| --- | --- | --- |
+| E2E-016～E2E-020 | 自動化済み | `frontend/e2e/admin-users.spec.ts` |
+| E2E-E08～E2E-E14 | 自動化済み | `frontend/e2e/admin-users-errors.spec.ts` |
+| 上記以外 | 未着手 | — |
+
+- E2E-E12の結果不明は、SES Fakeの「結果不明」と「処理中断」の2通りを独立したケースで実行する。5xx・408・応答なしを結果不明へ分類することは、Backendの単体テスト（`backend/tests/unit/test_email_client.py`）で確認する
+- E2E-E13の「認証Cookieだけを期限切れにする」は、Browser ContextからCookieを削除して再現する

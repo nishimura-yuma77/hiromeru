@@ -83,9 +83,7 @@ def test_Tool固有schemaはstrictかつextra_forbid() -> None:
         ToolRegistry().register(_definition(input_model=LooseInput))
 
 
-@pytest.mark.parametrize(
-    "field", ["company_id", "marketer_id", "session_id", "turn_id", "agent_type"]
-)
+@pytest.mark.parametrize("field", ["company_id", "user_id", "session_id", "turn_id", "agent_type"])
 def test_Trusted値をTool引数へ注入できない(field: str) -> None:
     with pytest.raises(ValidationError):
         ToolCall(name="sample_tool", stable_key="provider-1", arguments={field: 1})

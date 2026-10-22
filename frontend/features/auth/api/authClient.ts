@@ -1,9 +1,11 @@
 import { browserApiRequest } from "@/shared/api/browserApiClient";
 import { parseLoginResult, type LoginResult } from "@/features/auth/types/auth";
+import type { LoginPortal } from "@/shared/lib/loginPortal";
 
-type LoginRequest = {
+export type LoginRequest = {
   email: string;
   password: string;
+  portal: LoginPortal;
 };
 
 function parseNull(input: unknown): null {
@@ -13,10 +15,10 @@ function parseNull(input: unknown): null {
   return null;
 }
 
-export function login(request: LoginRequest): Promise<LoginResult> {
-  return browserApiRequest("/api/v1/auth/login", {
+export function login({ portal, ...credentials }: LoginRequest): Promise<LoginResult> {
+  return browserApiRequest(portal === "admin" ? "/api/v1/admin/auth/login" : "/api/v1/auth/login", {
     method: "POST",
-    body: request,
+    body: credentials,
     parseData: parseLoginResult,
     retryCsrf: false,
   });

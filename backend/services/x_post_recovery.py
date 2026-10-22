@@ -22,7 +22,7 @@ from domain.requests import XPostRequest
 from domain.search_text import build_post_search_text
 from domain.timefmt import format_utc
 from domain.tracking import build_tracking_url
-from models import AgentItem, ApiIdempotencyRequest, Marketer
+from models import AgentItem, ApiIdempotencyRequest, User
 from repositories.agent import SessionRepository, TurnRepository
 from repositories.idempotency import IdempotencyRepository
 from services.approval import ExecutionContext, error_body
@@ -45,7 +45,7 @@ class RecoveryCandidate:
 
     request_id: int
     company_id: int
-    marketer_id: int
+    user_id: int
     session_id: int
     status: str
     recovery: Literal["manual_reconciliation", "resume_persistence"]
@@ -86,15 +86,15 @@ class XPostRecoveryService:
             )
             owners = (
                 await session.execute(
-                    select(Marketer.id, Marketer.company_id).where(
-                        Marketer.id.in_({row.marketer_id for row in rows})
+                    select(User.id, User.company_id).where(
+                        User.id.in_({row.user_id for row in rows})
                     )
                 )
             ).all()
-            company_by_marketer: dict[int, int] = {}
-            for marketer_id, owner_company_id in owners:
-                company_by_marketer[marketer_id] = owner_company_id
-        return [self._metadata(row, company_by_marketer[row.marketer_id], now) for row in rows]
+            company_by_user: dict[int, int] = {}
+            for user_id, owner_company_id in owners:
+                company_by_user[user_id] = owner_company_id
+        return [self._metadata(row, company_by_user[row.user_id], now) for row in rows]
 
     async def inspect(self, request_id: int) -> RecoveryCandidate:
         """復旧対象を1件確認する。Payloadは返さない。"""
@@ -103,10 +103,10 @@ class XPostRecoveryService:
             row = await IdempotencyRepository(session).get(request_id)
             if row is None or not self._is_candidate(row, now):
                 raise XPostRecoveryError("request is not an unresolved X recovery candidate")
-            marketer = await session.get(Marketer, row.marketer_id)
-            if marketer is None:
+            owner = await session.get(User, row.user_id)
+            if owner is None:
                 raise XPostRecoveryError("request owner is unavailable")
-            return self._metadata(row, marketer.company_id, now)
+            return self._metadata(row, owner.company_id, now)
 
     async def resolve_posted(
         self,
@@ -214,10 +214,10 @@ class XPostRecoveryService:
             if row is None or not self._is_resumable(row, now):
                 raise XPostRecoveryError("request is not an expired persistence recovery candidate")
             request = await self._load_original_request(session, row, supplied=request_body)
-            marketer = await session.get(Marketer, row.marketer_id)
-            if marketer is None or row.agent_turn_id is None or row.external_result is None:
+            owner = await session.get(User, row.user_id)
+            if owner is None or row.agent_turn_id is None or row.external_result is None:
                 raise XPostRecoveryError("request recovery metadata is incomplete")
-            auth = AuthContext(marketer.id, marketer.company_id, marketer.user_id, "")
+            auth = AuthContext(owner.id, owner.company_id, owner.email)
 
         token = self._ctx.new_uuid()
         async with self._ctx.session_factory() as session, session.begin():
@@ -269,10 +269,10 @@ class XPostRecoveryService:
             row = await IdempotencyRepository(session).get(request_id)
             if row is None or row.status != ApiIdempotencyStatus.OUTCOME_UNKNOWN:
                 raise XPostRecoveryError("request is not awaiting manual reconciliation")
-            marketer = await session.get(Marketer, row.marketer_id)
-            if marketer is None:
+            owner = await session.get(User, row.user_id)
+            if owner is None:
                 raise XPostRecoveryError("request owner is unavailable")
-            auth = AuthContext(marketer.id, marketer.company_id, marketer.user_id, "")
+            auth = AuthContext(owner.id, owner.company_id, owner.email)
             return row, auth
 
     @staticmethod
@@ -302,9 +302,7 @@ class XPostRecoveryService:
             raise XPostRecoveryError("original request cannot be safely reconstructed") from None
 
     async def _lock_parent_session(self, session: AsyncSession, row: ApiIdempotencyRequest) -> None:
-        parent = await SessionRepository(session).get_parent(
-            row.marketer_id, row.session_id, lock=True
-        )
+        parent = await SessionRepository(session).get_parent(row.user_id, row.session_id, lock=True)
         if parent is None:
             raise XPostRecoveryError("parent session is unavailable")
 
@@ -402,7 +400,7 @@ class XPostRecoveryService:
         return RecoveryCandidate(
             request_id=row.id,
             company_id=company_id,
-            marketer_id=row.marketer_id,
+            user_id=row.user_id,
             session_id=row.session_id,
             status=row.status,
             recovery="resume_persistence" if resumable else "manual_reconciliation",

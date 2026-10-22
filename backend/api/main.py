@@ -4,7 +4,18 @@ from fastapi import FastAPI
 
 from api.exception_handlers import register_exception_handlers
 from api.middleware import AuthCookieMiddleware, RequestContextMiddleware, RequestTimeoutMiddleware
-from api.routers import approvals, auth, campaigns, cron, health, memories, posts, sessions
+from api.routers import (
+    admin_users,
+    approvals,
+    auth,
+    campaigns,
+    cron,
+    e2e,
+    health,
+    memories,
+    posts,
+    sessions,
+)
 from core.config import get_settings
 from core.logging import configure_logging
 from services.context import ServiceContext
@@ -28,6 +39,9 @@ def create_app(context: ServiceContext | None = None) -> FastAPI:
         health.router,
         cron.router,
         auth.router,
+        auth.admin_router,
+        admin_users.router,
+        admin_users.invitation_router,
         sessions.router,
         approvals.router,
         campaigns.router,
@@ -35,6 +49,9 @@ def create_app(context: ServiceContext | None = None) -> FastAPI:
         memories.router,
     ):
         application.include_router(router)
+    if settings.e2e_mode:
+        # E2E専用。デプロイ環境では設定検証で E2E_MODE を拒否する。
+        application.include_router(e2e.router)
     # 後に追加したものが外側になる。request_id を最も外側で付与する。
     application.add_middleware(AuthCookieMiddleware)
     application.add_middleware(

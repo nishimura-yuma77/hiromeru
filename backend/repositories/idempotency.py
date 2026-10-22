@@ -33,13 +33,13 @@ class IdempotencyRepository:
         )
 
     async def find_for_update(
-        self, marketer_id: int, operation: ApiOperation, key: uuid.UUID
+        self, user_id: int, operation: ApiOperation, key: uuid.UUID
     ) -> ApiIdempotencyRequest | None:
         """マーケター・操作種別・キーで行をロックして取得する。"""
         stmt = (
             select(ApiIdempotencyRequest)
             .where(
-                ApiIdempotencyRequest.marketer_id == marketer_id,
+                ApiIdempotencyRequest.user_id == user_id,
                 ApiIdempotencyRequest.operation == operation,
                 ApiIdempotencyRequest.idempotency_key == key,
             )
@@ -64,11 +64,11 @@ class IdempotencyRepository:
         self, *, now: datetime, limit: int, company_id: int | None = None
     ) -> list[ApiIdempotencyRequest]:
         """結果不明と、X成功後に保存待ちの期限切れRequestを列挙する。"""
-        from models import Marketer  # noqa: PLC0415 - 循環を避け、運用Queryだけで使う
+        from models import User  # noqa: PLC0415 - 循環を避け、運用Queryだけで使う
 
         stmt = (
             select(ApiIdempotencyRequest)
-            .join(Marketer, Marketer.id == ApiIdempotencyRequest.marketer_id)
+            .join(User, User.id == ApiIdempotencyRequest.user_id)
             .where(
                 ApiIdempotencyRequest.operation == ApiOperation.PUBLISH_X_POST,
                 or_(
@@ -84,13 +84,13 @@ class IdempotencyRepository:
             .limit(limit)
         )
         if company_id is not None:
-            stmt = stmt.where(Marketer.company_id == company_id)
+            stmt = stmt.where(User.company_id == company_id)
         return list((await self._session.execute(stmt)).scalars())
 
     async def reserve(
         self,
         *,
-        marketer_id: int,
+        user_id: int,
         session_id: int,
         operation: ApiOperation,
         key: uuid.UUID,
@@ -103,7 +103,7 @@ class IdempotencyRepository:
         stmt = (
             pg_insert(ApiIdempotencyRequest)
             .values(
-                marketer_id=marketer_id,
+                user_id=user_id,
                 session_id=session_id,
                 operation=operation,
                 idempotency_key=key,
@@ -114,18 +114,18 @@ class IdempotencyRepository:
                 created_at=now,
                 updated_at=now,
             )
-            .on_conflict_do_nothing(index_elements=["marketer_id", "operation", "idempotency_key"])
+            .on_conflict_do_nothing(index_elements=["user_id", "operation", "idempotency_key"])
             .returning(ApiIdempotencyRequest.id)
         )
         new_id = (await self._session.execute(stmt)).scalar_one_or_none()
         return None if new_id is None else await self.get(new_id)
 
     async def has_unresolved_duplicate(
-        self, marketer_id: int, request_hash: str, *, exclude_id: int
+        self, user_id: int, request_hash: str, *, exclude_id: int
     ) -> bool:
         """別キーで、同じ内容の処理中または結果不明のX投稿があるか（X_POST_UNRESOLVED）。"""
         stmt = select(ApiIdempotencyRequest.id).where(
-            ApiIdempotencyRequest.marketer_id == marketer_id,
+            ApiIdempotencyRequest.user_id == user_id,
             ApiIdempotencyRequest.operation == ApiOperation.PUBLISH_X_POST,
             ApiIdempotencyRequest.request_hash == request_hash,
             ApiIdempotencyRequest.id != exclude_id,

@@ -51,3 +51,7 @@ Thumbs.db
 *DATABASE.dbdiagram
 dbml-error.log
 artifacts*
+
+# Playwright
+frontend/test-results/
+frontend/playwright-report/

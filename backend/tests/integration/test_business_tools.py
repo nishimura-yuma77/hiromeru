@@ -48,7 +48,7 @@ def _context(
 ) -> TrustedToolContext:
     return TrustedToolContext(
         company_id=account.company_id,
-        marketer_id=account.marketer_id,
+        user_id=account.user_id,
         session_id=session_id,
         parent_session_id=None,
         turn_id=turn_id,
@@ -83,9 +83,7 @@ async def _error(
 
 async def _new_turn(ctx: ServiceContext, account: Account, session_id: int) -> tuple[int, int]:
     async with ctx.session_factory() as session, session.begin():
-        locked = await SessionRepository(session).get_parent(
-            account.marketer_id, session_id, lock=True
-        )
+        locked = await SessionRepository(session).get_parent(account.user_id, session_id, lock=True)
         assert locked is not None
         turn = await TurnRepository(session).create_turn(session_id, ctx.clock.now())
         item = await TurnRepository(session).append_item(
@@ -144,9 +142,7 @@ async def test_業務ToolはRepository境界で9種の主要経路を処理す�
     post_id = int(response.json()["data"]["post_id"])
 
     async with ctx.session_factory() as session, session.begin():
-        locked = await SessionRepository(session).get_parent(
-            account.marketer_id, session_id, lock=True
-        )
+        locked = await SessionRepository(session).get_parent(account.user_id, session_id, lock=True)
         assert locked is not None
         turn = await TurnRepository(session).create_turn(session_id, ctx.clock.now())
         remember = await TurnRepository(session).append_item(
@@ -329,9 +325,7 @@ async def test_get_session_itemsはCheckpoint元だけを会話順で返す(
 ) -> None:
     session_id = await account.create_session()
     async with ctx.session_factory() as session, session.begin():
-        locked = await SessionRepository(session).get_parent(
-            account.marketer_id, session_id, lock=True
-        )
+        locked = await SessionRepository(session).get_parent(account.user_id, session_id, lock=True)
         assert locked is not None
         source_turn = await TurnRepository(session).create_turn(session_id, ctx.clock.now())
         source = await TurnRepository(session).append_item(
@@ -752,7 +746,7 @@ async def test_Business_schema不正はExecutorでINVALID_ARGUMENTを返す(
     turn_id, _ = await _new_turn(ctx, account, session_id)
     executor = ToolExecutor(
         ctx,
-        marketer_id=account.marketer_id,
+        user_id=account.user_id,
         company_id=account.company_id,
         session_id=session_id,
         turn_id=turn_id,

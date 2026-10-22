@@ -1,0 +1,43 @@
+# E2E（docs/v.0.1/E2E_TEST_SPEC.md）。外部接続はすべてFakeに固定し、E2E専用APIを有効にする。
+#   docker compose -f compose.yaml -f compose.e2e.yaml up -d --wait frontend
+#   docker compose -f compose.yaml -f compose.e2e.yaml run --rm e2e
+services:
+  backend:
+    environment:
+      E2E_MODE: "true"
+      EMBEDDING_CLIENT_MODE: fake
+      X_API_CLIENT_MODE: fake
+      GA4_CLIENT_MODE: fake
+      WEB_SEARCH_CLIENT_MODE: fake
+      WEB_FETCH_CLIENT_MODE: fake
+      AGENT_CLIENT_MODE: fake
+      AGENT_FIREWALL_MODE: fake
+      EMAIL_CLIENT_MODE: fake
+      ALLOWED_ORIGINS: http://frontend:3000
+      INVITATION_BASE_URL: http://frontend:3000
+
+  frontend:
+    # E2E対象のNext.js Build（E2E_TEST_SPEC 5章）。開発サーバーは使わない。
+    command: ["sh", "-c", "npm run build && npm run start -- --hostname 0.0.0.0"]
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:3000/login || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 60
+      start_period: 120s
+
+  e2e:
+    image: mcr.microsoft.com/playwright:v1.63.0-noble
+    profiles: ["e2e"]
+    working_dir: /app
+    environment:
+      E2E_BASE_URL: http://frontend:3000
+      E2E_API_URL: http://backend:8000
+      CI: ${CI:-}
+    depends_on:
+      frontend:
+        condition: service_healthy
+    volumes:
+      - ./frontend:/app
+      - frontend_node_modules:/app/node_modules
+    command: ["npx", "playwright", "test"]

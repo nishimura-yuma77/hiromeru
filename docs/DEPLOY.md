@@ -17,6 +17,16 @@
 
 Git連携後はPull RequestごとにPreview Deploymentが作成され、`main`へのmergeでProduction Deploymentが自動実行されます。
 
+## 会社と責任者の初期設定
+
+新しい会社と最初の責任者（管理ユーザー）は、初期設定スクリプトで登録します。接続先の`DATABASE_URL`を確認してから`backend/`で実行してください。パスワードはプロンプトで入力し（`--password-stdin`で標準入力からも渡せます）、12～128文字で空白を除く半角英数字・記号だけを使い、英大文字・英小文字・数字・記号をそれぞれ1文字以上含めます。
+
+```bash
+python scripts/setup_company.py --company "株式会社サンプル" --name "山田太郎" --email taro@example.com
+```
+
+会社・責任者ユーザー・責任者のadminsは同一トランザクションで登録し、メールアドレスが使用済みなら会社を含めて登録しません。招待メールは送らず、責任者は作成直後から`/admin/login`でログインできます。以後の自社ユーザーは管理画面から招待します。
+
 ## Neon PostgreSQL
 
 Vercel MarketplaceからNeonを追加し、Vercelプロジェクトへ接続します。環境変数はPreviewとProductionの両方へ設定してください。
@@ -132,6 +142,7 @@ PreviewとProductionには、接続先を環境ごとに分離して次を設定
 | `WEB_FETCH_CLIENT_MODE` | Web取得接続の`real`/`fake`。Preview・Productionでは明示必須 |
 | `AGENT_CLIENT_MODE` | Agent Model接続の`real`/`fake`。Preview・Productionでは明示必須 |
 | `AGENT_FIREWALL_MODE` | Agent Tool Firewallの`real`/`fake`。Preview・Productionでは明示必須 |
+| `EMAIL_CLIENT_MODE` | 招待メール（AWS SES v2）の`real`/`fake`。Preview・Productionでは明示必須 |
 | `ORCAROUTER_BASE_URL` | OrcaRouter APIのBase URL |
 | `ORCAROUTER_API_KEY` | OrcaRouter APIの認証鍵 |
 | `ORCAROUTER_FIREWALL_API_KEY` | Agent Firewall専用のgateway-scoped認証鍵 |
@@ -146,6 +157,13 @@ PreviewとProductionには、接続先を環境ごとに分離して次を設定
 | `X_ACCESS_TOKEN_SECRET` | 環境固定XアカウントのUser Access Token Secret |
 | `GA4_PROPERTY_ID` | 環境固定GA4 PropertyのID |
 | `GA4_SERVICE_ACCOUNT_JSON` | GA4 Data API用Service Account認証情報 |
+| `SES_REGION` | 招待メールを送るSESのリージョン（例: `ap-northeast-1`） |
+| `SES_FROM_ADDRESS` | SESで検証済みの送信元メールアドレス |
+| `AWS_ACCESS_KEY_ID` | SES送信権限（`ses:SendEmail`）だけを持つIAMの認証鍵 |
+| `AWS_SECRET_ACCESS_KEY` | 上記IAMのSecret |
+| `AWS_SESSION_TOKEN` | 一時Credentialを使う場合だけ設定する |
+| `SES_TIMEOUT_SECONDS` | SES送信1回のtimeout。既定10秒。Timeoutは送信結果不明として自動再送しない |
+| `INVITATION_BASE_URL` | 招待リンクの基点URL。未設定ならProductionのURL、PreviewのBranch URLを使う |
 
 PreviewとProductionは起動時にこれらの必須設定を検証し、Productionでは`CRON_SECRET`も必須です。FakeまたはMockの外部API Clientを明示的に使う開発・テスト環境だけは、OrcaRouter、X、GA4の実Credentialを省略できます。Secret値をBuild log、Runtime log、Response、Frontend環境変数へ出力しないでください。
 

@@ -8,6 +8,7 @@ from sqlalchemy import (
     BigInteger,
     CheckConstraint,
     ForeignKey,
+    ForeignKeyConstraint,
     Index,
     String,
     Text,
@@ -25,11 +26,19 @@ class Post(Base):
     """X公開成功を確認した投稿だけを保存する。"""
 
     __tablename__ = "posts"
-    __table_args__ = (Index("ix_posts_company_published", "company_id", "published_at"),)
+    __table_args__ = (
+        Index("ix_posts_company_published", "company_id", "published_at"),
+        # 作成者が投稿と同じ会社に所属することをDBで保証する。
+        ForeignKeyConstraint(
+            ["created_by_user_id", "company_id"],
+            ["users.id", "users.company_id"],
+            name="fk_posts_creator_company",
+        ),
+    )
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
     company_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("companies.id"))
-    created_by_marketer_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("marketers.id"))
+    created_by_user_id: Mapped[int] = mapped_column(BigInteger)
     campaign_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("campaigns.id"))
     api_idempotency_request_id: Mapped[int] = mapped_column(
         BigInteger, ForeignKey("api_idempotency_requests.id"), unique=True

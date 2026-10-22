@@ -31,7 +31,7 @@
 | `ask_user` | ○ |  |  | 親Agentが必要な不足事項・確認事項を質問カードとして提示する終端Tool |
 
 ## Agent Tool共通仕様
-- Toolへ`company_id`、`marketer_id`、`session_id`を任意入力させず、認証済みの実行Contextからアプリケーションが決定する
+- Toolへ`company_id`、`user_id`、`session_id`を任意入力させず、認証済みの実行Contextからアプリケーションが決定する
 - 入力と出力はTool固有のJSON Schemaで検証し、検証に失敗した入力を実行しない
 - Tool Call、実行状態、Tool Resultは現在のTurnへ保存し、同じ`idempotency_key`による二重実行を防ぐ
 - 読み取りToolは実行主体がアクセスできる会社のデータだけを返す

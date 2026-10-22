@@ -100,7 +100,7 @@ async def test_子Agentの情報不足から親が質問Toolを呼ぶ(
 
     service = TurnService(ctx)
     prepared = await service.begin(
-        AuthContext(account.marketer_id, account.company_id, account.marketer_id, account.email),
+        AuthContext(account.user_id, account.company_id, account.email),
         session_id,
         body,
     )

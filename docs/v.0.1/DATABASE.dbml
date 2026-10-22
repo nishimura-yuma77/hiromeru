@@ -10,16 +10,18 @@ Project hiromeru {
 
     DBMLでは完全に表現できないアプリケーション不変条件:
     - 提案Tool Resultは変更せず、UIフォームの中間編集は保存しない。Agentへの再相談内容とAPIが受け取った最終フォーム値をエージェント履歴へ追記する。
-    - 会社は業務データを所有し、マーケターはそのデータを操作する主体となる。管理ユーザーにも本人のマーケタープロファイルを作成し、マーケター向け操作と本人の会話履歴にはそのmarketer_idを使う。
-    - 認証はusersで行い、管理権限はadminsの存在で判定する。認証Cookieにはuser_idとauth_generationを署名して保持し、認証付きRequestごとにDBのstatusとauth_generationを検証する。会社とmarketer_idは認証済みユーザーの所属から決定する。
-    - 初期設定スクリプトは会社名・責任者の表示名・メールアドレス・パスワードを受け取り、責任者のメールアドレスは前後の空白除去と小文字化を行ってから全社一意を判定・保存する。招待とログインも同じ正規化を使う。会社・責任者ユーザー・責任者のmarketersとadminsは同一トランザクションに登録し、メール重複時は会社を含めて登録しない。責任者のパスワードはargon2のハッシュとして保存し、users.statusをactiveにして作成直後からログインできるようにする。招待リンクは使わない。DBのデータは初期化して再投入し、既存会社・既存マーケターの移行は行わない。責任者は会社ごとに1人とし、責任者の削除・利用停止・責任者フラグ解除を禁止する。会社も削除しない。最低1人の責任者は登録手順と操作禁止で維持し、部分ユニーク索引だけでは保証しない。
+    - 会社は業務データを所有し、ユーザーはそのデータを操作する主体となる。操作主体・作成者・会話履歴の所有者はすべてusers.idを参照するuser_id（作成者はcreated_by_user_id）で表す。marketersテーブルは廃止し、表示名と所属会社はusersで保持する。
+    - 「マーケター」はadminsを持たないユーザー、「管理ユーザー」はadminsを持つユーザーの呼称とする。管理ユーザーもマーケター向け機能を本人のuser_idで操作する。
+    - ユーザーは1社だけに所属し、所属会社は作成後に変更しない。業務データの作成者は、users.(id, company_id)への複合外部キーで業務データの会社に所属することをDBで保証する。
+    - 認証はusersで行い、管理権限はadminsの存在で判定する。認証Cookieにはuser_idとauth_generationを署名して保持し、認証付きRequestごとにDBのstatusとauth_generationを検証する。会社は認証済みユーザーのusers.company_idから決定する。
+    - 初期設定スクリプトは会社名・責任者の表示名・メールアドレス・パスワードを受け取り、責任者のメールアドレスは前後の空白除去と小文字化を行ってから全社一意を判定・保存する。招待とログインも同じ正規化を使う。会社・責任者ユーザー・責任者のadminsは同一トランザクションに登録し、メール重複時は会社を含めて登録しない。責任者のパスワードはargon2のハッシュとして保存し、users.statusをactiveにして作成直後からログインできるようにする。招待リンクは使わない。DBのデータは初期化して再投入し、既存会社・既存マーケター・既存ユーザーの移行は行わない。責任者は会社ごとに1人とし、責任者の削除・利用停止・責任者フラグ解除を禁止する。会社も削除しない。最低1人の責任者は登録手順と操作禁止で維持し、部分ユニーク索引だけでは保証しない。
     - 初期設定スクリプトで指定する責任者のパスワードと招待リンクから設定するパスワードは、12～128文字で空白を除く半角英数字・記号だけを許可し、英大文字・英小文字・数字・記号をそれぞれ1文字以上含める。平文を保存しないため、この入力条件はハッシュ化前にスクリプトまたはAPIで検証する。
-    - 招待時にusersとmarketersを作成し、管理ユーザーならadminsも作成する。パスワード設定前はログインできない。停止時はパスワードハッシュを消去し、認証世代を更新して既存Cookieと招待リンクを即時失効させる。再開時も認証世代を更新し、古いログインを復活させず新しいリンクによるパスワード設定までログインさせない。
-    - 同じ会社の別のactiveユーザーに限り、管理ユーザーへの種別変更ではadminsを追加し、マーケターユーザーへの変更ではadminsを削除する。操作中の管理ユーザー本人と責任者は変更できない。marketersとその会話履歴、usersのパスワード、invitations、emailsは維持する。実際に種別が変わるときだけusers.auth_generationを同じトランザクションで更新し、旧Cookieを失効させる。表示名も同時に更新できる。
+    - 招待時にusersを作成し、管理ユーザーならadminsも作成する。パスワード設定前はログインできない。停止時はパスワードハッシュを消去し、認証世代を更新して既存Cookieと招待リンクを即時失効させる。再開時も認証世代を更新し、古いログインを復活させず新しいリンクによるパスワード設定までログインさせない。
+    - 同じ会社の別のactiveユーザーに限り、管理ユーザーへの種別変更ではadminsを追加し、マーケターユーザーへの変更ではadminsを削除する。操作中の管理ユーザー本人と責任者は変更できない。usersの行・user_idに紐づく会話履歴と業務データの作成者、usersのパスワード、invitations、emailsは維持する。実際に種別が変わるときだけusers.auth_generationを同じトランザクションで更新し、旧Cookieを失効させる。表示名も同時に更新できる。
     - 初回招待・手動再送・利用再開では、招待トークンを発行し、users・所属（既存ユーザーでは状態変更）・emails・invitationsをSES送信前のトランザクションで保存する。手動再送時には古い未使用リンクを無効化してから新しい行を作る。リンクは発行から1時間有効で、使用済み・無効化済み・期限切れを拒否する。同じ送信操作内の自動再試行には同じリンクを使用する。
     - SESの成功応答は送信受付を示し配達完了は示さない。明確なスロットリング応答だけ最大2回、指数バックオフとジッターで自動再試行する。5xx、408、応答なし、処理中断は結果不明として自動再試行しない。送信前と送信開始後は区別せず、処理中断でpendingのまま残った送信操作も自動再送しない。時間経過でpendingをoutcome_unknownへ変更せず、一覧では既存の結果不明表示を使う。SDK側の自動再試行も無効にする。送信失敗・結果不明でもユーザーと招待行を残す。リンクは手動再送・利用停止・1時間の期限切れまで有効とする。
     - 施策に紐づく投稿は同じ会社に所属しなければならない。
-    - 業務データを操作するマーケターは、そのデータを所有する会社に所属しなければならない。
+    - 業務データを操作するユーザーは、そのデータを所有する会社に所属しなければならない。
     - 記憶と、それに紐づく施策または投稿は同じ会社に所属しなければならない。
     - 記憶、施策検索、投稿検索用の埋め込みベクトルは、単一設定されたモデルと次元数を使用して生成する。MVPはopenai/text-embedding-3-small（OrcaRouter経由）、1536次元とし、各埋め込み列はvector(1536)、コサイン距離のHNSWインデックス（vector_cosine_ops）をSQL migrationで追加する。
     - 施策と施策検索用の埋め込みベクトルは同じトランザクションで保存・更新し、埋め込み生成に失敗した場合は施策を保存しない。
@@ -28,8 +30,8 @@ Project hiromeru {
     - 投稿計測、エージェントターン、エージェントアイテム、ツール実行、LLM呼び出しなどの子レコードは、必須の親レコードから会社所有権を継承する。
     - Xへ公開できるのは、認証済みUIの承認・公開ボタンから最終フォーム値をX投稿APIへ送信し、認証、会社所有権、入力Schemaを検証できた投稿だけとする。
     - 施策案と未公開投稿案は人間が承認するまでエージェント履歴に保持し、承認後の施策登録・更新とX投稿はLLMを介さずアプリケーションAPIで実行する。
-    - 承認APIのPathで指定できるのは、認証済みユーザー本人のマーケターが所有する未アーカイブの親エージェントセッションだけとする。最終RequestとAPI結果は、そのセッションに作成した新しいターンへ保存する。
-    - 施策upsert APIとX投稿APIは、マーケター、操作種別、Idempotency-Keyの組み合わせで最初のRequestだけを実行する。同じキーによる再送では業務データとエージェント履歴を重複作成しない。
+    - 承認APIのPathで指定できるのは、認証済みユーザー本人が所有する未アーカイブの親エージェントセッションだけとする。最終RequestとAPI結果は、そのセッションに作成した新しいターンへ保存する。
+    - 施策upsert APIとX投稿APIは、ユーザー、操作種別、Idempotency-Keyの組み合わせで最初のRequestだけを実行する。同じキーによる再送では業務データとエージェント履歴を重複作成しない。
     - 施策または投稿の業務データ保存、API Result、API実行Turnの完了、冪等性レコードの成功確定は同じトランザクションで行う。X投稿結果を確定できない場合は同じキーで再投稿しない。X投稿成功後は、業務データの保存より先にX投稿結果をexternal_resultへ保存し、その後のDB保存が失敗しても同じキーの再送でDB保存だけを再実行する。
     - 公開済み投稿と完了済み監査記録は通常のCRUD操作で削除してはならない。
     - エージェントセッションは順序付けられたターンを持ち、各ターンは順序付けられたアイテムを持つ。アイテムはセッションを直接参照しない。
@@ -159,6 +161,8 @@ Enum email_status {
 
 Table users {
   id bigint [pk, increment, note: '【ユーザーID】']
+  company_id bigint [not null, note: '【所属会社ID】作成時に確定し、変更しない。']
+  name varchar(255) [not null, note: '【表示名】旧marketers.nameを統合した値。']
   email varchar(255) [not null, note: '【メールアドレス】登録時に前後の空白を除き小文字化してから保存する。']
   password varchar(255) [note: '【パスワードハッシュ】argon2でハッシュ化した値。invited・suspendedではNULL。平文は保存しない。']
   status user_status [not null, default: 'invited', note: '【利用状態】招待中、利用中、利用停止中。送信結果とは独立する。']
@@ -168,6 +172,8 @@ Table users {
 
   indexes {
     email [unique]
+    (id, company_id) [unique, note: '業務データ・adminsからの複合外部キー参照先。']
+    company_id
   }
 
   checks {
@@ -175,7 +181,7 @@ Table users {
     `auth_generation >= 0` [name: 'users_auth_generation_check']
   }
 
-  Note: '認証主体。メールアドレスは初期設定スクリプト・招待API・ログインで同じ正規化を用い、全社で一意にする。招待ユーザーはinvitedからパスワード設定でactive、停止でsuspended、再開でinvitedへ遷移する。初期設定スクリプトで作る責任者は、指定されたパスワードをハッシュ化して保存し、作成時からactiveにする。停止時はpasswordを消去し、停止・再開・実際の種別変更でauth_generationを更新する。'
+  Note: '認証主体かつ業務操作・会話履歴の主体。旧marketersの表示名と所属会社を統合し、1人のユーザーは1社だけに所属する。1社には複数人所属できる。company_idは作成後に変更しない。メールアドレスは初期設定スクリプト・招待API・ログインで同じ正規化を用い、全社で一意にする。招待ユーザーはinvitedからパスワード設定でactive、停止でsuspended、再開でinvitedへ遷移する。初期設定スクリプトで作る責任者は、指定されたパスワードをハッシュ化して保存し、作成時からactiveにする。停止時はpasswordを消去し、停止・再開・実際の種別変更でauth_generationを更新する。'
 }
 
 Table companies {
@@ -187,29 +193,12 @@ Table companies {
   Note: '施策関連データと業務データの所有主体。'
 }
 
-Table marketers {
-  id bigint [pk, increment, note: '【マーケターID】']
-  user_id bigint [not null, unique, note: '【ユーザーID】']
-  name varchar(255) [not null, note: '【表示名】管理ユーザーも本人のマーケタープロファイルで保持する。']
-  company_id bigint [not null, note: '【会社ID】']
-  created_at timestamptz [not null, default: `now()`, note: '【作成日時】']
-  updated_at timestamptz [not null, default: `now()`, note: '【更新日時】']
-
-  indexes {
-    (user_id, company_id) [unique]
-    company_id
-  }
-
-  Note: 'マーケター向け機能の操作と会話履歴の主体。1人のユーザーに1件、1社には複数人所属できる。管理ユーザーもmarketersを持ち、adminsの複合外部キーで所属会社を一致させる。'
-}
-
-Ref: marketers.user_id > users.id [delete: restrict]
-Ref: marketers.company_id > companies.id [delete: restrict]
+Ref: users.company_id > companies.id [delete: restrict]
 
 Table admins {
   id bigint [pk, increment, note: '【管理ユーザーID】']
   user_id bigint [not null, unique, note: '【ユーザーID】管理権限を持つ本人。']
-  company_id bigint [not null, note: '【所属会社ID】marketersと一致させる。']
+  company_id bigint [not null, note: '【所属会社ID】users.company_idと一致させる。']
   is_responsible boolean [not null, default: false, note: '【責任者フラグ】会社ごとに1人。変更・削除・利用停止は禁止する。']
   created_at timestamptz [not null, default: `now()`, note: '【作成日時】']
   updated_at timestamptz [not null, default: `now()`, note: '【更新日時】']
@@ -218,12 +207,11 @@ Table admins {
     company_id
   }
 
-  Note: '自社ユーザーの管理権限。user_idとcompany_idの組でmarketersを参照し、管理ユーザーにも本人のマーケタープロファイルを必須とする。利用中の別ユーザーの昇格時に追加し、責任者以外の利用中の別ユーザーの降格時に削除する。is_responsible=trueの行を会社ごとに最大1件とする部分ユニーク索引をSQL migrationで追加する。責任者の最低1人は会社・責任者の同時登録と、責任者の削除・停止・フラグ解除の禁止で維持する。'
+  Note: '自社ユーザーの管理権限。user_idとcompany_idの組でusersを参照し、所属会社を一致させる。利用中の別ユーザーの昇格時に追加し、責任者以外の利用中の別ユーザーの降格時に削除する。is_responsible=trueの行を会社ごとに最大1件とする部分ユニーク索引をSQL migrationで追加する。責任者の最低1人は会社・責任者の同時登録と、責任者の削除・停止・フラグ解除の禁止で維持する。'
 }
 
-Ref: admins.user_id > users.id [delete: restrict]
 Ref: admins.company_id > companies.id [delete: restrict]
-Ref: admins.(user_id, company_id) > marketers.(user_id, company_id) [delete: restrict]
+Ref: admins.(user_id, company_id) > users.(id, company_id) [delete: restrict]
 
 Table emails {
   id bigint [pk, increment, note: '【メール送信操作ID】']
@@ -278,7 +266,7 @@ Ref: invitations.(email_id, user_id) > emails.(id, user_id) [delete: restrict]
 Table campaigns {
   id bigint [pk, increment, note: '【施策ID】']
   company_id bigint [not null, note: '【会社ID】']
-  created_by_marketer_id bigint [not null, note: '【作成者マーケターID】']
+  created_by_user_id bigint [not null, note: '【作成者ユーザーID】業務データと同じ会社に所属するユーザー。']
   title varchar(255) [not null, note: '【施策タイトル】']
   target_profile text [not null, note: '【ターゲット像】施策でリーチする対象者の属性、状況、課題、動機。']
   background text [not null, note: '【実施背景】']
@@ -294,7 +282,7 @@ Table campaigns {
 }
 
 Ref: campaigns.company_id > companies.id [delete: restrict]
-Ref: campaigns.created_by_marketer_id > marketers.id [delete: restrict]
+Ref: campaigns.(created_by_user_id, company_id) > users.(id, company_id) [delete: restrict]
 
 Table campaign_embeddings {
   campaign_id bigint [pk, note: '【施策ID】']
@@ -315,7 +303,7 @@ Ref: campaign_embeddings.campaign_id > campaigns.id [delete: cascade]
 Table posts {
   id bigint [pk, increment, note: '【投稿ID】']
   company_id bigint [not null, note: '【会社ID】']
-  created_by_marketer_id bigint [not null, note: '【作成者マーケターID】']
+  created_by_user_id bigint [not null, note: '【作成者ユーザーID】業務データと同じ会社に所属するユーザー。']
   campaign_id bigint [not null, note: '【施策ID】']
   api_idempotency_request_id bigint [not null, unique, note: '【API冪等性Request ID】X公開成功を確定したpublish_x_post Request。']
   body text [not null, note: '【投稿本文】現行のXテキスト文字数規則をアプリケーションで検証する。']
@@ -332,7 +320,7 @@ Table posts {
 }
 
 Ref: posts.company_id > companies.id [delete: restrict]
-Ref: posts.created_by_marketer_id > marketers.id [delete: restrict]
+Ref: posts.(created_by_user_id, company_id) > users.(id, company_id) [delete: restrict]
 Ref: posts.campaign_id > campaigns.id [delete: restrict]
 Ref: posts.api_idempotency_request_id > api_idempotency_requests.id [delete: restrict]
 
@@ -402,7 +390,7 @@ Ref: post_metrics.post_id > posts.id [delete: restrict]
 
 Table api_list_snapshots {
   id uuid [pk, note: '【一覧Snapshot ID】サーバーが生成し、不透明Cursorへ含める。']
-  marketer_id bigint [not null, note: '【マーケターID】Snapshotを作成した認証主体。']
+  user_id bigint [not null, note: '【ユーザーID】Snapshotを作成した認証主体。']
   resource varchar(50) [not null, note: '【一覧種別】postsまたはmetrics。']
   filter_hash varchar(64) [not null, note: '【条件Hash】正規化したFilterとSortのSHA-256。']
   summary jsonb [note: '【Snapshot Summary】metricsの期間全体集計。postsではNULL。']
@@ -410,14 +398,14 @@ Table api_list_snapshots {
   expires_at timestamptz [not null, note: '【有効期限】作成から30分。']
 
   indexes {
-    (marketer_id, resource, expires_at)
+    (user_id, resource, expires_at)
     expires_at
   }
 
   Note: '可変な計測値で並べる一覧をPage間で固定する短期Snapshot。期限切れ後のCursorはINVALID_ARGUMENTとし、Browser向けResponseへSnapshot IDを直接返さない。'
 }
 
-Ref: api_list_snapshots.marketer_id > marketers.id [delete: cascade]
+Ref: api_list_snapshots.user_id > users.id [delete: cascade]
 
 Table api_list_snapshot_items {
   snapshot_id uuid [not null, note: '【一覧Snapshot ID】']
@@ -477,7 +465,7 @@ Ref: memory_posts.post_id > posts.id [delete: cascade]
 
 Table agent_sessions {
   id bigint [pk, increment, note: '【エージェントセッションID】']
-  marketer_id bigint [not null, note: '【マーケターID】']
+  user_id bigint [not null, note: '【所有ユーザーID】会話履歴の所有者。管理ユーザーへの種別変更後も変わらない。']
   parent_session_id bigint [note: '【親エージェントセッションID】サブエージェントを呼び出したセッション。']
   agent agent_type [not null, note: '【エージェント種別】']
   title varchar(255) [note: '【セッションタイトル】セッション一覧での識別に使用し、会話内容から自動生成できる。']
@@ -486,16 +474,16 @@ Table agent_sessions {
   updated_at timestamptz [not null, default: `now()`, note: '【更新日時】']
 
   indexes {
-    (id, marketer_id) [unique]
-    (marketer_id, updated_at)
+    (id, user_id) [unique]
+    (user_id, updated_at)
     (parent_session_id, created_at)
   }
 
   Note: '1つのエージェントが所有する再開可能な会話。ユーザーが切り替えるのは親セッションだけとし、サブエージェントにはparent_session_idで親と紐づく内部セッションを割り当てる。'
 }
 
-Ref: agent_sessions.marketer_id > marketers.id [delete: restrict]
-Ref: agent_sessions.(parent_session_id, marketer_id) > agent_sessions.(id, marketer_id) [delete: restrict]
+Ref: agent_sessions.user_id > users.id [delete: restrict]
+Ref: agent_sessions.(parent_session_id, user_id) > agent_sessions.(id, user_id) [delete: restrict]
 
 Table agent_turns {
   id bigint [pk, increment, note: '【エージェントターンID】']
@@ -524,7 +512,7 @@ Ref: agent_turns.session_id > agent_sessions.id [delete: restrict]
 
 Table api_idempotency_requests {
   id bigint [pk, increment, note: '【API冪等性Request ID】']
-  marketer_id bigint [not null, note: '【マーケターID】認証済みContextから設定する。']
+  user_id bigint [not null, note: '【ユーザーID】認証済みContextから設定する。']
   session_id bigint [not null, note: '【親エージェントセッションID】最初のRequestで確定し、再送時に変更しない。']
   agent_turn_id bigint [unique, note: '【API実行ターンID】最初のRequestで作成した監査Turn。Turn作成前の障害時はNULLを許可する。']
   operation api_operation [not null, note: '【API操作種別】']
@@ -542,7 +530,8 @@ Table api_idempotency_requests {
   completed_at timestamptz [note: '【完了日時】']
 
   indexes {
-    (marketer_id, operation, idempotency_key) [unique]
+    (user_id, operation, idempotency_key) [unique]
+    (user_id, operation, request_hash)
     (session_id, created_at)
     (status, lease_expires_at)
   }
@@ -550,8 +539,8 @@ Table api_idempotency_requests {
   Note: '施策upsert API（承認）とX投稿APIに共通する永続的な冪等性制御。最初のRequestだけがprocessing行の作成に成功して実行権を得る。同じキーの再送ではsession_idとrequest_hashの一致を確認し、完了済みなら保存済みResponseを返す。実行権取得時はexecution_tokenとlease_expires_atを設定し、通常の業務処理を完了する最終Transactionはstatusがprocessing、execution_tokenが一致、かつLeaseが有効な場合だけCommitする。succeeded、failed、outcome_unknownではhttp_status、response_body、completed_atを必須とし、processingではNULLとするCHECK制約を追加する。publish_x_postのexternal_effect_started_atはX API送信直前に設定し、X API成功直後にexternal_resultを設定する。external_resultの保存後にDB保存が失敗した場合は、processingのままLeaseを即時失効させ、同じキーの再送でexternal_resultを使ってDB保存だけを再実行する。外部作用開始後にLeaseが切れ、かつexternal_resultがNULLの場合だけ、期限切れと旧Tokenを条件とする専用の復旧Transactionでoutcome_unknown、API Result、元Turn完了を同時に保存する。external_resultがNULLでないのはoperationがpublish_x_postでexternal_effect_started_atがNULLでない行だけとするCHECK制約を追加する。outcome_unknownからsucceededまたはfailedへの変更と暫定Responseの置換は、外部結果を手動照合した管理処理だけに許可する。postsが参照できるのはoperationがpublish_x_postで、同じTransactionの終了時にsucceededとなるRequestだけとする。通常運用では削除しない。'
 }
 
-Ref: api_idempotency_requests.marketer_id > marketers.id [delete: restrict]
-Ref: api_idempotency_requests.(session_id, marketer_id) > agent_sessions.(id, marketer_id) [delete: restrict]
+Ref: api_idempotency_requests.user_id > users.id [delete: restrict]
+Ref: api_idempotency_requests.(session_id, user_id) > agent_sessions.(id, user_id) [delete: restrict]
 Ref: api_idempotency_requests.(agent_turn_id, session_id) > agent_turns.(id, session_id) [delete: restrict]
 
 Table tool_executions {

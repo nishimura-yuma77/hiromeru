@@ -1,13 +1,14 @@
 """リクエストBodyのスキーマ（API_DESIGN 2.2）。型・必須・長さを検証する。
 
 すべて strict とし、数値から文字列への暗黙の変換や、未定義のフィールドを受け付けない。
-`company_id` や `marketer_id` はクライアント入力を使わないため、フィールドを持たない。
+`company_id` や `user_id` はクライアント入力を使わないため、フィールドを持たない。
 """
 
 from datetime import datetime
-from typing import Annotated
+from typing import Annotated, Literal
 
 from pydantic import (
+    AfterValidator,
     BaseModel,
     BeforeValidator,
     ConfigDict,
@@ -18,6 +19,7 @@ from pydantic import (
     model_validator,
 )
 
+from domain.accounts import MAX_EMAIL_LENGTH, MAX_USER_NAME_LENGTH, is_valid_email
 from domain.constants import (
     MAX_CAMPAIGN_TEXT_LENGTH,
     MAX_CAMPAIGN_TITLE_LENGTH,
@@ -129,3 +131,52 @@ class MessageRequest(StrictModel):
         if (self.message is None) == (self.clarification_response is None):
             raise ValueError("message or clarification_response is required")
         return self
+
+
+def _invite_email(value: str) -> str:
+    normalized = value.lower()
+    if not is_valid_email(normalized):
+        raise ValueError("メールアドレスの形式が正しくありません")
+    return normalized
+
+
+UserType = Literal["admin", "marketer"]
+UserName = Annotated[
+    str, StringConstraints(strip_whitespace=True, min_length=1, max_length=MAX_USER_NAME_LENGTH)
+]
+InviteEmail = Annotated[
+    str,
+    StringConstraints(strip_whitespace=True, min_length=1, max_length=MAX_EMAIL_LENGTH),
+    AfterValidator(_invite_email),
+]
+
+
+class InviteUserRequest(StrictModel):
+    """自社ユーザーの新規招待（API_DESIGN 11.2）。"""
+
+    user_type: UserType
+    name: UserName
+    email: InviteEmail
+
+
+class UpdateUserRequest(StrictModel):
+    """表示名・ユーザー種別の部分更新。少なくとも一方を指定する。"""
+
+    name: UserName | None = None
+    user_type: UserType | None = None
+
+    @model_validator(mode="after")
+    def _require_any(self) -> "UpdateUserRequest":
+        if self.name is None and self.user_type is None:
+            raise ValueError("name または user_type を指定してください")
+        return self
+
+
+class AcceptInvitationRequest(StrictModel):
+    """招待リンクからのパスワード設定（API_DESIGN 11.3）。
+
+    パスワード条件は、リンクの有効性を確かめた後にサービスで検証する。
+    """
+
+    token: Annotated[str, StringConstraints(min_length=1, max_length=512)]
+    password: Annotated[str, StringConstraints(max_length=1024)]

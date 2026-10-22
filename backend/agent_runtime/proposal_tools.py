@@ -181,7 +181,7 @@ class _RunChildHandler(_ParentHandler):
                         AgentTurn.session_id == context.session_id,
                         AgentTurn.status == AgentTurnStatus.RUNNING,
                         AgentSession.id == context.session_id,
-                        AgentSession.marketer_id == context.marketer_id,
+                        AgentSession.user_id == context.user_id,
                         AgentSession.agent == AgentType.PARENT,
                         AgentSession.parent_session_id.is_(None),
                     )
@@ -221,7 +221,7 @@ class _RunChildHandler(_ParentHandler):
                 if campaign.archived_at is not None:
                     _raise("CAMPAIGN_ARCHIVED")
             child_session = AgentSession(
-                marketer_id=context.marketer_id,
+                user_id=context.user_id,
                 parent_session_id=context.session_id,
                 agent=self.agent_type,
                 created_at=now,
@@ -300,7 +300,7 @@ class _RunChildHandler(_ParentHandler):
         )
         child_executor = ToolExecutor(
             self._ctx,
-            marketer_id=context.marketer_id,
+            user_id=context.user_id,
             company_id=context.company_id,
             session_id=record.session_id,
             turn_id=record.turn_id,
@@ -317,7 +317,7 @@ class _RunChildHandler(_ParentHandler):
                     turn_id=record.turn_id,
                     parent_session_id=context.session_id,
                     parent_turn_id=context.turn_id,
-                    marketer_id=context.marketer_id,
+                    user_id=context.user_id,
                     company_id=context.company_id,
                     request=cast(dict[str, Any], record.request),
                     context=child_context,
